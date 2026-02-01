@@ -1,0 +1,28 @@
+[package]
+name = "specter-stealth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-level stealth address operations for SPECTER"
+
+[dependencies]
+specter-core = { path = "../specter-core" }
+specter-crypto = { path = "../specter-crypto" }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Security
+zeroize = { workspace = true }
+rand = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+proptest = { workspace = true }

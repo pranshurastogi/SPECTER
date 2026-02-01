@@ -1,0 +1,41 @@
+[package]
+name = "specter-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for SPECTER protocol"
+
+[[bin]]
+name = "specter"
+path = "src/main.rs"
+
+[dependencies]
+specter-core = { path = "../specter-core" }
+specter-crypto = { path = "../specter-crypto" }
+specter-stealth = { path = "../specter-stealth" }
+specter-registry = { path = "../specter-registry" }
+specter-scanner = { path = "../specter-scanner" }
+specter-ens = { path = "../specter-ens" }
+specter-api = { path = "../specter-api" }
+
+# CLI
+clap = { workspace = true }
+indicatif = { workspace = true }
+colored = { workspace = true }
+dialoguer = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }

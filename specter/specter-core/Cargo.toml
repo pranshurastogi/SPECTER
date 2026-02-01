@@ -1,0 +1,29 @@
+[package]
+name = "specter-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core types, errors, and traits for SPECTER protocol"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Security
+zeroize = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+test-case = { workspace = true }

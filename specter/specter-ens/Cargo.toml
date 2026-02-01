@@ -1,0 +1,49 @@
+[package]
+name = "specter-ens"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "ENS and IPFS integration for SPECTER"
+
+[dependencies]
+specter-core = { path = "../specter-core" }
+
+# Ethereum
+alloy = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Caching
+dashmap = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Hashing
+sha3 = { workspace = true }
+
+# Caching/Concurrency
+parking_lot = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+
+# URL parsing
+url = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+wiremock = { workspace = true }
