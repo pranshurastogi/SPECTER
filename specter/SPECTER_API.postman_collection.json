@@ -1,0 +1,248 @@
+{
+  "info": {
+    "name": "SPECTER API",
+    "description": "Post-quantum stealth address protocol for Ethereum. All API routes for keys, stealth payments, ENS resolution, IPFS upload, and announcement registry.\n\n**Base URL:** Start server with `cargo run --bin specter -- serve --port 3001`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001"
+    },
+    {
+      "key": "ens_name",
+      "value": "alice.eth"
+    },
+    {
+      "key": "meta_address",
+      "value": ""
+    },
+    {
+      "key": "viewing_sk",
+      "value": ""
+    },
+    {
+      "key": "spending_pk",
+      "value": ""
+    },
+    {
+      "key": "spending_sk",
+      "value": ""
+    },
+    {
+      "key": "ephemeral_key",
+      "value": ""
+    },
+    {
+      "key": "view_tag",
+      "value": "42"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Returns server status, version, uptime, and announcement count."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Keys",
+      "item": [
+        {
+          "name": "Generate Keys",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/keys/generate",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "keys", "generate"]
+            },
+            "description": "Generate new SPECTER key pair (spending + viewing). Response includes meta_address for ENS storage. Store response and use meta_address, viewing_sk, spending_pk, spending_sk in other requests."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stealth",
+      "item": [
+        {
+          "name": "Create Stealth Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"meta_address\": \"{{meta_address}}\",\n  \"channel_id\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/stealth/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "stealth", "create"]
+            },
+            "description": "Create a stealth payment to recipient's meta_address. Use meta_address from Generate Keys or from ENS Resolve. Optional channel_id (hex 32 bytes) for Yellow integration. Response: stealth_address (send funds here), ephemeral_key and view_tag to publish via Publish Announcement."
+          }
+        },
+        {
+          "name": "Scan for Payments",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"viewing_sk\": \"{{viewing_sk}}\",\n  \"spending_pk\": \"{{spending_pk}}\",\n  \"spending_sk\": \"{{spending_sk}}\",\n  \"view_tags\": null,\n  \"from_timestamp\": null,\n  \"to_timestamp\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/stealth/scan",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "stealth", "scan"]
+            },
+            "description": "Scan registry for payments addressed to your keys. Set viewing_sk, spending_pk, spending_sk from Generate Keys. Optional: view_tags (array of u8), from_timestamp, to_timestamp for filtering."
+          }
+        }
+      ]
+    },
+    {
+      "name": "ENS",
+      "item": [
+        {
+          "name": "Resolve ENS Name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ens/resolve/{{ens_name}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ens", "resolve", "{{ens_name}}"]
+            },
+            "description": "Resolve ENS name to meta-address. Requires ETH_RPC_URL configured on server. Response includes meta_address to use in Create Stealth Payment."
+          }
+        },
+        {
+          "name": "Upload Meta-Address to IPFS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"meta_address\": \"{{meta_address}}\",\n  \"name\": \"alice.eth-specter-profile\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ens/upload",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ens", "upload"]
+            },
+            "description": "Upload meta-address to IPFS via Pinata. Requires PINATA_API_KEY and PINATA_SECRET_KEY on server. Returns cid and text_record (ipfs://...) to set in ENS."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Registry",
+      "item": [
+        {
+          "name": "List Announcements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/registry/announcements?view_tag=&offset=0&limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "registry", "announcements"],
+              "query": [
+                {
+                  "key": "view_tag",
+                  "value": "",
+                  "description": "Filter by view tag (0-255)"
+                },
+                {
+                  "key": "from_timestamp",
+                  "value": "",
+                  "description": "Start of time range (Unix seconds)"
+                },
+                {
+                  "key": "to_timestamp",
+                  "value": "",
+                  "description": "End of time range (Unix seconds)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Pagination offset"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "description": "Pagination limit"
+                }
+              ]
+            },
+            "description": "List announcements. Use query params to filter by view_tag or time range, and paginate with offset/limit."
+          }
+        },
+        {
+          "name": "Publish Announcement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ephemeral_key\": \"{{ephemeral_key}}\",\n  \"view_tag\": {{view_tag}},\n  \"channel_id\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/registry/announcements",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "registry", "announcements"]
+            },
+            "description": "Publish an announcement (ephemeral_key + view_tag from Create Stealth Payment). Optional channel_id (hex 32 bytes) for Yellow. Recipients discover payments by scanning with their keys."
+          }
+        },
+        {
+          "name": "Registry Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/registry/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "registry", "stats"]
+            },
+            "description": "Get registry statistics: total announcements and view tag distribution."
+          }
+        }
+      ]
+    }
+  ]
+}

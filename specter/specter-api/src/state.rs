@@ -16,10 +16,13 @@ pub struct ApiConfig {
     pub enable_cache: bool,
 }
 
+/// Default Ethereum RPC URL (PublicNode; use ETH_RPC_URL for custom/backup).
+const DEFAULT_ETH_RPC_URL: &str = "https://ethereum.publicnode.com";
+
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            rpc_url: "https://eth.llamarpc.com".into(),
+            rpc_url: DEFAULT_ETH_RPC_URL.into(),
             pinata_api_key: None,
             pinata_secret_key: None,
             enable_cache: true,
@@ -34,7 +37,7 @@ impl ApiConfig {
         
         Self {
             rpc_url: std::env::var("ETH_RPC_URL")
-                .unwrap_or_else(|_| "https://eth.llamarpc.com".into()),
+                .unwrap_or_else(|_| DEFAULT_ETH_RPC_URL.into()),
             pinata_api_key: std::env::var("PINATA_API_KEY").ok(),
             pinata_secret_key: std::env::var("PINATA_SECRET_KEY").ok(),
             enable_cache: std::env::var("ENABLE_CACHE")

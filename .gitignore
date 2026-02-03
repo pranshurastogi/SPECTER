@@ -142,3 +142,19 @@ vite.config.ts.timestamp-*
 target/
 **/*.rs.bk
 
+# Security / Crypto
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets.json
+credentials.json
+wallet.json
+private_key*
+signing_key*
+
+# Local Development Data
+registry.json
+*.db
+*.sqlite

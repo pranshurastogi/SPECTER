@@ -21,10 +21,13 @@ pub struct EnsConfig {
     pub use_public_resolver: bool,
 }
 
+/// Default Ethereum RPC URL when none is provided.
+const DEFAULT_ETH_RPC_URL: &str = "https://ethereum.publicnode.com";
+
 impl Default for EnsConfig {
     fn default() -> Self {
         Self {
-            rpc_url: "https://eth.llamarpc.com".into(),
+            rpc_url: DEFAULT_ETH_RPC_URL.into(),
             timeout_seconds: 30,
             use_public_resolver: true,
         }

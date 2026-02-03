@@ -155,7 +155,7 @@ Using the meta-address from your keys (or someone else's), create a stealth paym
 cargo run --bin specter -- create <META_ADDRESS>
 
 # Or resolve from ENS (if configured)
-cargo run --bin specter -- create alice.eth --rpc-url https://eth.llamarpc.com
+cargo run --bin specter -- create alice.eth --rpc-url https://ethereum.publicnode.com
 ```
 
 **Output:**
@@ -285,7 +285,7 @@ Options:
 **Examples:**
 ```bash
 cargo run --bin specter -- resolve vitalik.eth
-cargo run --bin specter -- resolve alice.eth --rpc-url https://eth.llamarpc.com
+cargo run --bin specter -- resolve alice.eth --rpc-url https://ethereum.publicnode.com
 ```
 
 #### `create` - Create Stealth Payment
@@ -306,7 +306,7 @@ Options:
 cargo run --bin specter -- create 01abcd1234...
 
 # Using ENS name
-cargo run --bin specter -- create alice.eth --rpc-url https://eth.llamarpc.com
+cargo run --bin specter -- create alice.eth --rpc-url https://ethereum.publicnode.com
 ```
 
 #### `scan` - Scan for Payments
@@ -587,7 +587,7 @@ GET /api/v1/registry/stats
 
 ```bash
 # Ethereum RPC (for ENS resolution)
-export ETH_RPC_URL="https://eth.llamarpc.com"
+export ETH_RPC_URL="https://ethereum.publicnode.com"
 
 # IPFS/Pinata (for meta-address storage)
 export PINATA_API_KEY="your_api_key"
@@ -603,7 +603,7 @@ export RUST_LOG="specter=debug"  # debug, info, warn, error
 use specter_api::{ApiServer, ApiConfig};
 
 let config = ApiConfig {
-    rpc_url: "https://eth.llamarpc.com".into(),
+    rpc_url: "https://ethereum.publicnode.com".into(),
     pinata_api_key: Some("key".into()),
     pinata_secret_key: Some("secret".into()),
     enable_cache: true,

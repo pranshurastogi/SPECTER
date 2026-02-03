@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { formatAddress } from "@/lib/utils";
+import { useApiHealth } from "@/hooks/useApiHealth";
+import { api } from "@/lib/api";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const navLinks = [
   { path: "/", label: "Home" },
@@ -19,25 +27,68 @@ export function Header() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
+  const { ok: apiOk, loading: apiLoading } = useApiHealth();
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 group">
-            <motion.div
-              className="relative"
-              whileHover={{ scale: 1.05 }}
-              transition={{ type: "spring", stiffness: 400 }}
-            >
-              <img src="/SPECTER-logo.png" alt="SPECTER" className="h-8 w-8" />
-              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
-            </motion.div>
-            <span className="font-display font-bold text-xl tracking-tight">
-              SPECTER
-            </span>
-          </Link>
+          {/* Logo + API status */}
+          <div className="flex items-center gap-3">
+            <Link to="/" className="flex items-center gap-2 group">
+              <motion.div
+                className="relative"
+                whileHover={{ scale: 1.05 }}
+                transition={{ type: "spring", stiffness: 400 }}
+              >
+                <img src="/SPECTER-logo.png" alt="SPECTER" className="h-8 w-8" />
+                <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
+              </motion.div>
+              <span className="font-display font-bold text-xl tracking-tight">
+                SPECTER
+              </span>
+            </Link>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={`inline-flex h-2 w-2 rounded-full shrink-0 ${
+                      apiLoading
+                        ? "bg-muted-foreground"
+                        : apiOk
+                          ? "bg-green-500"
+                          : "bg-destructive"
+                    }`}
+                    title="API status"
+                    aria-label={
+                      apiLoading
+                        ? "Checking API..."
+                        : apiOk
+                          ? "API connected"
+                          : "API unreachable"
+                    }
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="font-medium">
+                    {apiLoading
+                      ? "Checking API..."
+                      : apiOk
+                        ? "API connected"
+                        : "API unreachable"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {api.getBaseUrl()}
+                  </p>
+                  {!apiOk && !apiLoading && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Start backend: cargo run --bin specter -- serve --port 3001
+                    </p>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center gap-1">

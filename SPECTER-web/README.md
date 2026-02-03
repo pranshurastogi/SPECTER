@@ -44,15 +44,20 @@ cd quantum-shield
 # Install dependencies
 npm install
 
-# Set up environment variables (optional for WalletConnect)
+# Set up environment variables
 cp .env.example .env
-# Edit .env and add your WalletConnect Project ID from https://cloud.walletconnect.com
+# Edit .env:
+# - VITE_API_BASE_URL: SPECTER backend URL (default http://localhost:3001)
+# - Optional: VITE_WALLET_CONNECT_PROJECT_ID for WalletConnect
 
-# Start development server
+# Start the SPECTER backend (in another terminal, from repo root/specter)
+cd ../specter && cargo run --bin specter -- serve --port 3001
+
+# Start development server (from SPECTER-web)
 npm run dev
 ```
 
-The application will be available at `http://localhost:8080`
+The application will be available at `http://localhost:8080`. The header shows a green/red dot for API status (backend must be running for Generate Keys, Send, and Scan).
 
 **Note**: For WalletConnect support, you'll need to:
 1. Create a free account at [WalletConnect Cloud](https://cloud.walletconnect.com)
