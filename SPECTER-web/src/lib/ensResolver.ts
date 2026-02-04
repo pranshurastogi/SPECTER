@@ -7,13 +7,18 @@
 
 import { createPublicClient, http, type PublicClient, type Address } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
-import { normalize } from 'viem/ens';
+import { normalize, namehash } from 'viem/ens';
+import { decode as decodeContentHash } from '@ensdomains/content-hash';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 const DEFAULT_IPFS_GATEWAY = import.meta.env.VITE_IPFS_GATEWAY || 'https://ipfs.io';
-const DEFAULT_TIMEOUT_MS = parseInt(import.meta.env.VITE_ENS_RESOLUTION_TIMEOUT_MS || '5000', 10);
+const DEFAULT_TIMEOUT_MS = parseInt(import.meta.env.VITE_ENS_RESOLUTION_TIMEOUT_MS || '8000', 10);
 const IPFS_GATEWAY_TIMEOUT_MS = parseInt(import.meta.env.VITE_IPFS_GATEWAY_TIMEOUT_MS || '10000', 10);
+
+// Use Cloudflare's public RPC (has CORS) as fallback
+const DEFAULT_MAINNET_RPC = import.meta.env.VITE_ALCHEMY_RPC_MAINNET || 'https://cloudflare-eth.com';
+const DEFAULT_SEPOLIA_RPC = import.meta.env.VITE_ALCHEMY_RPC_SEPOLIA || 'https://ethereum-sepolia-rpc.publicnode.com';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -59,9 +64,13 @@ const clientCache = new Map<number, PublicClient>();
 function getPublicClient(chainId: number = mainnet.id): PublicClient {
     if (!clientCache.has(chainId)) {
         const chain = chainId === mainnet.id ? mainnet : sepolia;
+        const rpcUrl = chainId === mainnet.id ? DEFAULT_MAINNET_RPC : DEFAULT_SEPOLIA_RPC;
+        
         const client = createPublicClient({
             chain,
-            transport: http(),
+            transport: http(rpcUrl, {
+                timeout: DEFAULT_TIMEOUT_MS,
+            }),
         }) as PublicClient;
         clientCache.set(chainId, client);
     }
@@ -191,14 +200,16 @@ export async function resolveEnsName(
                 );
             }
 
-            // Network-related errors
+            // Network-related errors (CORS, connection refused, etc.)
             if (
                 error.message.includes('fetch') ||
                 error.message.includes('network') ||
-                error.message.includes('ECONNREFUSED')
+                error.message.includes('ECONNREFUSED') ||
+                error.message.includes('CORS') ||
+                error.message.includes('Failed to fetch')
             ) {
                 throw new EnsResolverError(
-                    'Network error during ENS resolution. Please check your connection.',
+                    `ENS resolution network error. Please check: (1) Internet connection, (2) RPC endpoint has CORS enabled for ${window.location.origin}`,
                     EnsErrorCode.NETWORK_ERROR,
                     error
                 );
@@ -329,12 +340,24 @@ export function extractIpfsHash(contentHash: string | null): string | null {
     return null;
 }
 
+// ENS Resolver ABI: contenthash(bytes32 node) returns (bytes) - EIP-1577 / ENSIP-7
+const RESOLVER_CONTENTHASH_ABI = [
+    {
+        inputs: [{ name: 'node', type: 'bytes32' }],
+        name: 'contenthash',
+        outputs: [{ name: '', type: 'bytes' }],
+        stateMutability: 'view',
+        type: 'function',
+    },
+] as const;
+
 /**
- * Gets IPFS content hash from ENS name.
- * 
+ * Gets IPFS content hash from ENS name using the resolver's contenthash() (EIP-1577).
+ * Content hash is NOT a text record - it is stored via the resolver contract.
+ *
  * @param name - ENS name
  * @param chainId - Chain ID
- * @returns IPFS hash or null if not set
+ * @returns IPFS hash (CID) or null if not set
  */
 export async function getIpfsContentHash(
     name: string,
@@ -344,27 +367,47 @@ export async function getIpfsContentHash(
     const client = getPublicClient(chainId);
 
     try {
-        // Try to get content hash directly
-        const contentHash = await Promise.race([
-            client.getEnsText({ name: normalized as `${string}.eth`, key: 'contentHash' }),
-            new Promise<string | null>((resolve) =>
-                setTimeout(() => resolve(null), DEFAULT_TIMEOUT_MS)
+        const resolverAddress = await Promise.race([
+            client.getEnsResolver({ name: normalized as `${string}.eth` }),
+            new Promise<Address | null>((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout')), DEFAULT_TIMEOUT_MS)
             ),
         ]);
 
-        if (contentHash) {
-            const ipfsHash = extractIpfsHash(contentHash);
-            if (ipfsHash) return ipfsHash;
+        if (!resolverAddress || resolverAddress === '0x0000000000000000000000000000000000000000') {
+            return null;
         }
 
-        // Fallback: try common text record keys for IPFS
-        const ipfsText = await resolveEnsText(name, 'ipfs', chainId);
-        if (ipfsText) {
-            const ipfsHash = extractIpfsHash(ipfsText);
-            if (ipfsHash) return ipfsHash;
+        const node = namehash(normalized);
+        const rawBytes = await Promise.race([
+            client.readContract({
+                address: resolverAddress,
+                abi: RESOLVER_CONTENTHASH_ABI,
+                functionName: 'contenthash',
+                args: [node],
+            }),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout')), DEFAULT_TIMEOUT_MS)
+            ),
+        ]);
+
+        if (!rawBytes || typeof rawBytes !== 'string' || rawBytes === '0x') {
+            return null;
         }
 
-        return null;
+        const hex = rawBytes.startsWith('0x') ? rawBytes.slice(2) : rawBytes;
+        if (!hex || hex.length < 4) return null;
+
+        try {
+            // @ensdomains/content-hash decode() returns the raw CID (e.g. 'Qm...' or 'bafy...')
+            const decoded = decodeContentHash(hex);
+            if (decoded && (decoded.startsWith('Qm') || decoded.startsWith('baf') || decoded.startsWith('b'))) {
+                return decoded;
+            }
+            return null;
+        } catch {
+            return null;
+        }
     } catch (error) {
         console.warn(`Failed to get IPFS content hash for ${normalized}:`, error);
         return null;

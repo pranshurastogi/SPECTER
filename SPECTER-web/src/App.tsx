@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
 import ScanPayments from "./pages/ScanPayments";
+import EnsManager from "./pages/EnsManager";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
@@ -20,6 +21,7 @@ const App = () => (
           <Route path="/generate" element={<GenerateKeys />} />
           <Route path="/send" element={<SendPayment />} />
           <Route path="/scan" element={<ScanPayments />} />
+          <Route path="/ens" element={<EnsManager />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

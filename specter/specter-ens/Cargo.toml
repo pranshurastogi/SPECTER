@@ -34,6 +34,10 @@ tracing = { workspace = true }
 # Hashing
 sha3 = { workspace = true }
 
+# IPFS / content hash (EIP-1577)
+cid = "0.11"
+multihash = "0.19"
+
 # Caching/Concurrency
 parking_lot = { workspace = true }
 

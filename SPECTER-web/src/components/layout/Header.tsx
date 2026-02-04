@@ -19,6 +19,7 @@ const navLinks = [
   { path: "/generate", label: "Generate Keys" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
+  { path: "/ens", label: "ENS" },
 ];
 
 export function Header() {
@@ -52,13 +53,12 @@ export function Header() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span
-                    className={`inline-flex h-2 w-2 rounded-full shrink-0 ${
-                      apiLoading
+                    className={`inline-flex h-2 w-2 rounded-full shrink-0 ${apiLoading
                         ? "bg-muted-foreground"
                         : apiOk
                           ? "bg-green-500"
                           : "bg-destructive"
-                    }`}
+                      }`}
                     title="API status"
                     aria-label={
                       apiLoading
@@ -100,8 +100,8 @@ export function Header() {
               >
                 <span
                   className={`font-medium text-sm transition-colors ${location.pathname === link.path
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
                     }`}
                 >
                   {link.label}
@@ -190,8 +190,8 @@ export function Header() {
                 to={link.path}
                 onClick={() => setMobileMenuOpen(false)}
                 className={`px-4 py-3 rounded-lg font-medium transition-colors ${location.pathname === link.path
-                    ? "bg-primary/10 text-foreground"
-                    : "text-muted-foreground hover:bg-muted"
+                  ? "bg-primary/10 text-foreground"
+                  : "text-muted-foreground hover:bg-muted"
                   }`}
               >
                 {link.label}

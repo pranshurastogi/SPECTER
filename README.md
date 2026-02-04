@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/SPECTER-logo-with-tagline.png" alt="SPECTER Logo" width="300">
+  <img src="assets/SPECTER-logo-with-tagline.png" alt="SPECTER Logo" width="200">
 </div>
 
 # SPECTER
@@ -68,13 +68,13 @@ graph TD
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/your-username/SPECTER.git
+    git clone https://github.com/pranshurastogi/SPECTER.git
     cd SPECTER
     ```
 
 2.  **Build the Backend (Rust)**
     ```bash
-    cd specter-backend
+    cd specter
     cargo build --release
     ```
 

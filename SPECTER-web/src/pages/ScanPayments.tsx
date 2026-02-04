@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/landing/Footer";
@@ -14,6 +15,7 @@ import {
   Check,
   Zap,
   Upload,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto, type RegistryStatsResponse } from "@/lib/api";
@@ -98,12 +100,14 @@ export default function ScanPayments() {
     setStats(null);
     setDiscoveries([]);
     setRegistryStats(null);
+    const stripHex = (s: string) => s.replace(/^0x/i, "").trim();
     try {
       const [scanRes, regRes] = await Promise.all([
         api.scanPayments({
-          viewing_sk: keys.viewing_sk,
-          spending_pk: keys.spending_pk,
-          spending_sk: keys.spending_sk,
+          viewing_sk: stripHex(keys.viewing_sk),
+          spending_pk: stripHex(keys.spending_pk),
+          spending_sk: stripHex(keys.spending_sk),
+          view_tags: keys.view_tag !== undefined ? [keys.view_tag] : undefined,
         }),
         api.getRegistryStats().catch(() => null),
       ]);
@@ -118,7 +122,8 @@ export default function ScanPayments() {
       }
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Scan failed";
-      toast.error(message);
+      const isNetwork = err instanceof ApiError && (message.includes("reach") || message.includes("fetch") || message.includes("Failed to fetch"));
+      toast.error(isNetwork ? "Cannot reach SPECTER backend. Start it with: cargo run --bin specter -- serve --port 3001" : message);
       setScanState("error");
     }
   };
@@ -147,34 +152,36 @@ export default function ScanPayments() {
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
 
-      <main className="flex-1 pt-24 pb-12">
+      <main className="flex-1 pt-20 pb-12">
         <div className="container mx-auto px-4">
-          <div className="max-w-2xl mx-auto">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="text-center mb-12"
-            >
-              <h1 className="font-display text-3xl md:text-4xl font-bold mb-4">
-                Scan for Payments
-              </h1>
-              <p className="text-muted-foreground">
-                Find your stealth funds with quantum-safe scanning
-              </p>
-            </motion.div>
+          <div className="max-w-3xl mx-auto">
+            {/* Compact title */}
+            <div className="text-center mb-4">
+              <h1 className="font-display text-2xl font-bold">Scan for Payments</h1>
+              <p className="text-xs text-muted-foreground">Find stealth payments sent to you</p>
+            </div>
 
-            {/* Load keys */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              transition={{ delay: 0.1 }}
-              className="glass-card p-6 mb-6"
-            >
-              <h3 className="font-display font-semibold mb-3">Your keys</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Load keys from the JSON file you downloaded when generating keys, or paste JSON below.
-              </p>
-              <div className="space-y-3">
-                <div className="flex gap-2">
+            {/* STEP 1: LOAD KEYS - Primary action, highly visible */}
+            <div className="bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/40 rounded-xl p-6 mb-4 shadow-xl">
+              <div className="flex items-start gap-3 mb-4">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-lg shadow-md">
+                  1
+                </span>
+                <div>
+                  <h2 className="font-display font-bold text-xl mb-1">Load Your Keys</h2>
+                  <p className="text-sm text-foreground/80 leading-relaxed">
+                    Use the JSON file from <Link to="/generate" className="text-primary font-semibold hover:underline">Generate Keys</Link> page.
+                    That file contains <code className="text-xs bg-muted/70 px-1.5 py-0.5 rounded">viewing_sk</code>,{" "}
+                    <code className="text-xs bg-muted/70 px-1.5 py-0.5 rounded">spending_pk</code>, and{" "}
+                    <code className="text-xs bg-muted/70 px-1.5 py-0.5 rounded">spending_sk</code>.
+                  </p>
+                </div>
+              </div>
+
+              {/* File picker and paste - side by side */}
+              <div className="grid md:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Option A: Upload File</label>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -187,75 +194,48 @@ export default function ScanPayments() {
                     }}
                   />
                   <Button
-                    variant="outline"
+                    variant="default"
+                    size="lg"
                     onClick={() => fileInputRef.current?.click()}
+                    className="w-full"
                   >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Load from file
-                  </Button>
-                  {keys && (
-                    <div className="flex items-center gap-2 text-sm text-success">
-                      <Check className="h-4 w-4" />
-                      Keys loaded
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder='Paste JSON: {"viewing_sk":"...","spending_pk":"...","spending_sk":"..."}'
-                    value={keysPaste}
-                    onChange={(e) => setKeysPaste(e.target.value)}
-                    className="font-mono text-xs bg-background"
-                  />
-                  <Button variant="outline" onClick={loadKeysFromPaste} disabled={!keysPaste.trim()}>
-                    Load
+                    <Upload className="h-5 w-5 mr-2" />
+                    Choose JSON File
                   </Button>
                 </div>
-                {loadError && (
-                  <div className="flex items-center gap-2 text-sm text-destructive">
-                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                    {loadError}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-
-            {/* Registry stats (optional) */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              transition={{ delay: 0.15 }}
-              className="glass-card p-6 mb-6"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  {keys?.view_tag !== undefined && (
-                    <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                      <span className="font-mono font-bold text-primary">{keys.view_tag}</span>
-                    </div>
-                  )}
-                  <div>
-                    <div className="font-medium">Registry</div>
-                    <div className="text-sm text-muted-foreground">
-                      {registryStats !== null
-                        ? `${registryStats.total_announcements.toLocaleString()} announcements`
-                        : "Scan to see stats"}
-                    </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Option B: Paste JSON</label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder='{"viewing_sk":"...","spending_pk":"...",...}'
+                      value={keysPaste}
+                      onChange={(e) => setKeysPaste(e.target.value)}
+                      className="font-mono text-xs"
+                    />
+                    <Button variant="default" onClick={loadKeysFromPaste} disabled={!keysPaste.trim()}>
+                      Load
+                    </Button>
                   </div>
                 </div>
-                {!registryStats && keys && (
-                  <Button variant="ghost" size="sm" onClick={fetchRegistryStats}>
-                    Refresh stats
-                  </Button>
-                )}
-                <div className="flex items-center gap-2 text-accent">
-                  <Zap className="h-4 w-4" />
-                  <span className="text-sm font-medium">99.6% Efficiency</span>
-                </div>
               </div>
-            </motion.div>
 
-            {/* Main scan card */}
-            <div className="glass-card p-8">
+              {/* Status messages */}
+              {keys && (
+                <div className="mt-4 flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400 bg-green-100/80 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-lg px-4 py-3">
+                  <Check className="h-5 w-5 shrink-0" />
+                  Keys loaded successfully! Proceed to Step 2 below.
+                </div>
+              )}
+              {loadError && (
+                <div className="mt-4 flex items-center gap-2 text-sm text-red-700 dark:text-red-400 bg-red-100/80 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg px-4 py-3">
+                  <AlertTriangle className="h-5 w-5 shrink-0" />
+                  {loadError}
+                </div>
+              )}
+            </div>
+
+            {/* STEP 2: SCAN - Secondary action */}
+            <div className="glass-card p-6 border border-border/50">
               <AnimatePresence mode="wait">
                 {scanState === "idle" && (
                   <motion.div
@@ -263,27 +243,58 @@ export default function ScanPayments() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="text-center py-8"
+                    className="space-y-4"
                   >
-                    <div className="w-20 h-20 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-6">
-                      <Scan className="h-10 w-10 text-primary" />
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-foreground font-bold text-lg">
+                        2
+                      </span>
+                      <div>
+                        <h2 className="font-display font-bold text-xl mb-1">Run Scan</h2>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          Scan the SPECTER registry (this backend) for payments sent to your stealth addresses.
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-muted-foreground mb-8 max-w-md mx-auto">
-                      Scan the registry to find payments sent to your stealth addresses.
-                    </p>
-                    <Button
-                      variant="quantum"
-                      size="xl"
-                      onClick={handleScan}
-                      disabled={!keys}
-                    >
-                      Start Scan
-                    </Button>
-                    {!keys && (
-                      <p className="text-sm text-muted-foreground mt-4">
-                        Load your keys above first.
-                      </p>
+
+                    {keys && (
+                      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground border-t border-border/50 pt-4">
+                        {keys.view_tag !== undefined && (
+                          <span className="flex items-center gap-1.5 bg-accent/10 px-3 py-1.5 rounded-full">
+                            <Zap className="h-4 w-4 text-accent" />
+                            View tag {keys.view_tag}
+                          </span>
+                        )}
+                        {registryStats !== null ? (
+                          <span className="bg-muted px-3 py-1.5 rounded-full">
+                            {registryStats.total_announcements.toLocaleString()} announcements
+                          </span>
+                        ) : (
+                          <Button variant="ghost" size="sm" onClick={fetchRegistryStats} className="h-7 text-xs">
+                            Show registry stats
+                          </Button>
+                        )}
+                      </div>
                     )}
+
+                    <div className="text-center pt-2">
+                      <Button
+                        variant="quantum"
+                        size="xl"
+                        onClick={handleScan}
+                        disabled={!keys}
+                        className="min-w-[200px]"
+                      >
+                        <Scan className="h-5 w-5 mr-2" />
+                        Start Scan
+                      </Button>
+                      {!keys && (
+                        <p className="text-sm text-muted-foreground mt-3 flex items-center justify-center gap-2">
+                          <KeyRound className="h-4 w-4" />
+                          Complete Step 1 above first
+                        </p>
+                      )}
+                    </div>
                   </motion.div>
                 )}
 

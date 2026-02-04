@@ -96,6 +96,16 @@ pub async fn create_stealth(
 
 /// Scans announcements for payments.
 ///
+/// Strip optional "0x" prefix from hex strings (frontend may send with or without).
+fn strip_hex_prefix(s: &str) -> &str {
+    let s = s.trim();
+    if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
+        &s[2..]
+    } else {
+        s
+    }
+}
+
 /// POST /api/v1/stealth/scan
 pub async fn scan_payments(
     State(state): State<Arc<AppState>>,
@@ -103,10 +113,10 @@ pub async fn scan_payments(
 ) -> Result<Json<ScanResponse>> {
     let start = Instant::now();
 
-    // Parse keys
-    let viewing_sk = hex::decode(&req.viewing_sk)?;
-    let spending_pk = hex::decode(&req.spending_pk)?;
-    let spending_sk = hex::decode(&req.spending_sk)?;
+    // Parse keys (accept hex with or without 0x prefix)
+    let viewing_sk = hex::decode(strip_hex_prefix(&req.viewing_sk))?;
+    let spending_pk = hex::decode(strip_hex_prefix(&req.spending_pk))?;
+    let spending_sk = hex::decode(strip_hex_prefix(&req.spending_sk))?;
 
     // Get announcements to scan
     let announcements = if let Some(tags) = &req.view_tags {

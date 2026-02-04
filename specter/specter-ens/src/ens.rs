@@ -1,9 +1,10 @@
-//! ENS client for resolving text records.
+//! ENS client for resolving text records and content hash (EIP-1577).
 //!
-//! Provides functionality to query ENS text records to retrieve
-//! SPECTER meta-address CIDs stored on IPFS.
+//! Provides functionality to query ENS text records and the resolver's
+//! contenthash() to retrieve SPECTER meta-address CIDs stored on IPFS.
 
 use async_trait::async_trait;
+use cid::Cid;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument, warn};
 
@@ -93,6 +94,119 @@ impl EnsClient {
 
         debug!(name, "No SPECTER record found");
         Ok(None)
+    }
+
+    /// Gets the ENS Content Hash (EIP-1577) for an ENS name.
+    ///
+    /// Reads the resolver's `contenthash(node)` — the same field used for
+    /// decentralized websites. If the name has Content Hash set to an IPFS
+    /// CID (e.g. in the ENS app under "Content" → IPFS), this returns that CID.
+    ///
+    /// # Returns
+    ///
+    /// The IPFS CID (e.g. "bafybeifzy...") or None if not set or not IPFS.
+    #[instrument(skip(self))]
+    pub async fn get_content_hash(&self, name: &str) -> Result<Option<String>> {
+        let normalized = self.normalize_name(name)?;
+        let node = self.compute_namehash(&normalized);
+
+        // 1. Get resolver address from ENS Registry (mainnet)
+        let registry = "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e";
+        let resolver_selector = "0178b8bf"; // resolver(bytes32)
+        let data = format!("0x{}{}", resolver_selector, hex::encode(node));
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": registry, "data": data}, "latest"],
+            "id": 1
+        });
+        let response = self
+            .http_client
+            .post(&self.config.rpc_url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        if json.get("error").is_some() {
+            return Ok(None);
+        }
+        let result_hex = json
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x");
+        let result_bytes = hex::decode(result_hex.strip_prefix("0x").unwrap_or(result_hex))
+            .unwrap_or_default();
+        // ABI: address is right-padded to 32 bytes
+        if result_bytes.len() < 32 {
+            return Ok(None);
+        }
+        let resolver_addr_bytes = &result_bytes[result_bytes.len() - 20..];
+        let resolver_addr = format!("0x{}", hex::encode(resolver_addr_bytes));
+        if resolver_addr == "0x0000000000000000000000000000000000000000" {
+            return Ok(None);
+        }
+
+        // 2. Call contenthash(bytes32 node) on resolver
+        let contenthash_selector = "bc1c58d1"; // contenthash(bytes32)
+        let contenthash_data = format!("0x{}{}", contenthash_selector, hex::encode(node));
+        let request2 = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": resolver_addr, "data": contenthash_data}, "latest"],
+            "id": 1
+        });
+        let response2 = self
+            .http_client
+            .post(&self.config.rpc_url)
+            .json(&request2)
+            .send()
+            .await
+            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        let json2: serde_json::Value = response2
+            .json()
+            .await
+            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        if json2.get("error").is_some() {
+            return Ok(None);
+        }
+        let result_hex2 = json2
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x");
+        let raw = hex::decode(result_hex2.strip_prefix("0x").unwrap_or(result_hex2)).unwrap_or_default();
+        if raw.len() < 64 {
+            return Ok(None);
+        }
+        // ABI bytes: offset (32) + length (32) + data
+        let len = u64::from_be_bytes(raw[56..64].try_into().unwrap_or_default()) as usize;
+        if len == 0 || raw.len() < 64 + len {
+            return Ok(None);
+        }
+        let contenthash_bytes = &raw[64..64 + len];
+        if contenthash_bytes.is_empty() {
+            return Ok(None);
+        }
+        // EIP-1577: first byte is multicodec (0xe3 = ipfs-ns)
+        if contenthash_bytes[0] != 0xe3 {
+            return Ok(None);
+        }
+        let cid_bytes = &contenthash_bytes[1..];
+        match Cid::try_from(cid_bytes) {
+            Ok(c) => {
+                let s = c.to_string();
+                if s.starts_with("Qm") || s.starts_with("baf") || s.starts_with('b') {
+                    debug!(name, cid = %s, "Found IPFS content hash");
+                    Ok(Some(s))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     /// Gets a specific text record for an ENS name.

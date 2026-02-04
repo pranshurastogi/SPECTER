@@ -15,6 +15,8 @@ import {
   Loader2,
   Upload,
   ExternalLink,
+  Info,
+  Clipboard,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
@@ -279,12 +281,34 @@ export default function GenerateKeys() {
                             </Button>
                           </div>
                           {uploadResult && (
-                            <div className="p-3 rounded-lg bg-muted/50 text-sm space-y-1">
-                              <p className="font-medium">ENS text record value:</p>
-                              <code className="break-all text-xs">{uploadResult.text_record}</code>
-                              <p className="text-xs text-muted-foreground mt-2">
-                                Set this in ENS app (e.g. ENS Domains) for your .eth name, key &quot;specter&quot;.
-                              </p>
+                            <div className="p-4 rounded-lg border border-primary/20 bg-primary/5 space-y-4">
+                              <div className="flex items-start gap-2">
+                                <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                                <div className="text-sm space-y-3">
+                                  <p className="font-medium">Set this IPFS hash in ENS so others can send you private payments</p>
+                                  <p className="text-muted-foreground">
+                                    You must set your ENS name to point to this IPFS content. Choose <strong>one</strong> of the two methods below:
+                                  </p>
+                                  <div className="space-y-3 text-muted-foreground">
+                                    <div className="p-3 rounded-lg bg-background/80 border border-border">
+                                      <p className="font-medium text-foreground mb-1">Option A: Content Hash (recommended)</p>
+                                      <p className="text-xs mb-2">In the ENS app (e.g. app.ens.domains), go to your name → Records → <strong>Content Hash</strong>. Set the value to:</p>
+                                      <code className="block break-all text-xs bg-muted px-2 py-1 rounded">{uploadResult.text_record}</code>
+                                      <p className="text-xs mt-2">This is the standard ENS field for IPFS/decentralized content.</p>
+                                    </div>
+                                    <div className="p-3 rounded-lg bg-background/80 border border-border">
+                                      <p className="font-medium text-foreground mb-1">Option B: Text record &quot;specter&quot;</p>
+                                      <p className="text-xs mb-2">In the ENS app, add a text record with key <code className="bg-muted px-1 rounded">specter</code> and value:</p>
+                                      <code className="block break-all text-xs bg-muted px-2 py-1 rounded">{uploadResult.text_record}</code>
+                                      <p className="text-xs mt-2">The SPECTER backend resolves names using this record.</p>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Clipboard className="h-3 w-3" />
+                                    For step-by-step instructions and validation, use the <Link to="/ens" className="text-primary hover:underline">ENS Manager</Link>.
+                                  </p>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>

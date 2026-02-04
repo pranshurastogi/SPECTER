@@ -17,4 +17,8 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  optimizeDeps: {
+    // Pre-bundle so Vite doesn't reference removed packages or stale cache
+    include: ["@ensdomains/content-hash"],
+  },
 });

@@ -21,6 +21,7 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } from "@/lib/api";
 import { resolveEns, validateEnsName, EnsResolverError, EnsErrorCode } from "@/lib/ensResolver";
+import { Link } from "react-router-dom";
 
 type SendStep = "input" | "resolved" | "generated" | "published";
 
@@ -90,10 +91,15 @@ export default function SendPayment() {
         );
       }
 
-      // Try client-side resolution first (faster, more private)
+      // ENS lives on mainnet; resolve there regardless of wallet chain (send tx uses wallet chain later)
+      const ensChainId = 1;
       let clientResolved = false;
       try {
-        const clientResult = await resolveEns(normalized, chainId);
+        const clientResult = await resolveEns(normalized, ensChainId);
+
+        // Store IPFS info from client resolution (if available)
+        setIpfsHash(clientResult.ipfsHash || null);
+        setIpfsUrl(clientResult.ipfsUrl || null);
 
         // Try to get meta-address from backend for the resolved address
         // (SPECTER meta-address is stored in backend)
@@ -104,15 +110,13 @@ export default function SendPayment() {
             ipfs_cid: clientResult.ipfsHash || backendRes.ipfs_cid,
             ipfs_url: clientResult.ipfsUrl || backendRes.ipfs_url,
           });
-          setIpfsHash(clientResult.ipfsHash || backendRes.ipfs_cid || null);
-          setIpfsUrl(clientResult.ipfsUrl || backendRes.ipfs_url || null);
+          // Keep the IPFS info we already set from client
         } catch (backendErr) {
-          // Backend failed but we have client resolution
-          // This means the ENS exists but doesn't have SPECTER meta-address
-          setResolveError(
-            "ENS name found, but no SPECTER meta-address configured. Please set up SPECTER keys first."
-          );
-          toast.error("No SPECTER meta-address found for this ENS name");
+          // Backend failed but we have client resolution: ENS exists but no SPECTER record
+          // Keep the IPFS info from client resolution, just don't have meta_address
+          setResolveError("no-specter-setup");
+          setResolvedENS(null);
+          toast.error("No SPECTER keys found for this ENS name");
           setIsResolving(false);
           return;
         }
@@ -251,6 +255,9 @@ export default function SendPayment() {
               <p className="text-muted-foreground">
                 Quantum-safe stealth payments to any ENS name
               </p>
+              <p className="text-xs text-muted-foreground/80 mt-1">
+                ENS is resolved on Ethereum mainnet; the send transaction uses your connected network (e.g. Sepolia).
+              </p>
             </motion.div>
 
             <div className="glass-card p-8">
@@ -290,9 +297,53 @@ export default function SendPayment() {
                         </Button>
                       </div>
                       {resolveError && (
-                        <div className="mt-2 flex items-center gap-2 text-sm text-destructive">
-                          <AlertCircle className="h-4 w-4 shrink-0" />
-                          {resolveError}
+                        <div className="mt-2 space-y-2">
+                          {resolveError === "no-specter-setup" ? (
+                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
+                              <div className="flex items-start gap-2 text-amber-700 dark:text-amber-400">
+                                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="font-medium">ENS name found, but no SPECTER meta-address configured.</p>
+                                  {ipfsHash && (
+                                    <div className="mt-2 p-2 rounded bg-muted/50 text-xs">
+                                      <p className="font-medium text-foreground">IPFS Content Hash Found:</p>
+                                      <code className="break-all">{ipfsHash.slice(0, 20)}...{ipfsHash.slice(-10)}</code>
+                                      {ipfsUrl && (
+                                        <a
+                                          href={ipfsUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="block mt-1 text-primary hover:underline flex items-center gap-1"
+                                        >
+                                          View on IPFS
+                                          <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                      )}
+                                      <p className="mt-1 text-muted-foreground">
+                                        However, this IPFS content doesn't contain a valid SPECTER meta-address or the backend can't parse it.
+                                      </p>
+                                    </div>
+                                  )}
+                                  <p className="mt-2 text-muted-foreground">
+                                    To receive private payments at this name, the owner must:
+                                  </p>
+                                  <ol className="mt-2 list-decimal list-inside space-y-1 text-muted-foreground">
+                                    <li>Generate SPECTER keys on the <Link to="/generate" className="text-primary hover:underline">Generate Keys</Link> page</li>
+                                    <li>Upload the meta-address to IPFS (same page)</li>
+                                    <li>Set the IPFS hash in ENS: either add a text record <code className="bg-muted px-1 rounded">specter</code> with value <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code>, or set <strong>Content Hash</strong> to <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code> in the ENS app</li>
+                                  </ol>
+                                  <p className="mt-2 text-muted-foreground">
+                                    See the <Link to="/ens" className="text-primary hover:underline">ENS Manager</Link> for step-by-step instructions on setting the IPFS content hash.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 text-sm text-destructive">
+                              <AlertCircle className="h-4 w-4 shrink-0" />
+                              {resolveError}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
