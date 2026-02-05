@@ -1,23 +1,18 @@
 import { Header } from "@/components/layout/Header";
+import { HomeLayout } from "@/components/layout/HomeLayout";
 import { HeroSection } from "@/components/landing/HeroSection";
-import { FeaturesSection } from "@/components/landing/FeaturesSection";
-import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
-import { StatsSection } from "@/components/landing/StatsSection";
+import { TimelineSection } from "@/components/landing/TimelineSection";
 import { Footer } from "@/components/landing/Footer";
 
-const Index = () => {
+export default function Index() {
   return (
-    <div className="min-h-screen bg-background">
+    <HomeLayout>
       <Header />
-      <main>
+      <main className="flex-1">
         <HeroSection />
-        <FeaturesSection />
-        <HowItWorksSection />
-        <StatsSection />
+        <TimelineSection />
+        <Footer />
       </main>
-      <Footer />
-    </div>
+    </HomeLayout>
   );
-};
-
-export default Index;
+}

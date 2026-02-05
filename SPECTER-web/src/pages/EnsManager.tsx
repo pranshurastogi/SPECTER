@@ -22,6 +22,7 @@ import { toast } from "@/components/ui/sonner";
 import { EnsInfoCard } from "@/components/ens/EnsInfoCard";
 import { SetIpfsHash } from "@/components/ens/SetIpfsHash";
 import { EnsStepGuide, type Step } from "@/components/ens/EnsStepGuide";
+import { HeadingScramble } from "@/components/ui/heading-scramble";
 import { useEnsTexts } from "@/hooks/useEnsTexts";
 import { useEnsContentHash } from "@/hooks/useEnsContentHash";
 import {
@@ -178,7 +179,7 @@ export default function EnsManager() {
         .filter(item => item.value) || [];
 
     return (
-        <div className="min-h-screen bg-background flex flex-col">
+        <div className="min-h-screen flex flex-col">
             <Header />
 
             <main className="flex-1 pt-24 pb-12">
@@ -194,9 +195,12 @@ export default function EnsManager() {
                                 <Sparkles className="h-4 w-4 text-primary" />
                                 <span className="text-sm font-medium text-primary">ENS Management</span>
                             </div>
-                            <h1 className="font-display text-4xl md:text-5xl font-bold mb-4">
+                            <HeadingScramble
+                                as="h1"
+                                className="font-display text-4xl md:text-5xl font-bold mb-4 block"
+                              >
                                 Manage Your ENS
-                            </h1>
+                              </HeadingScramble>
                             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                                 Resolve ENS names, view all associated data, and manage IPFS content hashes
                             </p>

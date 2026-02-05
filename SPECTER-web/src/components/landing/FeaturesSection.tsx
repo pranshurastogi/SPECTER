@@ -1,93 +1,57 @@
 import { motion } from "framer-motion";
-import { Zap, Tag } from "lucide-react";
-
-function LogoIcon(props: React.ImgHTMLAttributes<HTMLImageElement>) {
-  return <img src="/SPECTER-logo.png" alt="SPECTER" {...props} />;
-}
+import { Zap, Tag, Shield } from "lucide-react";
 
 const features = [
   {
-    icon: LogoIcon,
+    icon: Shield,
     title: "Quantum-Proof",
-    description: "Uses ML-KEM-768 (NIST-standardized) post-quantum cryptography",
-    color: "primary",
+    description: "ML-KEM-768 post-quantum cryptography",
   },
   {
     icon: Zap,
     title: "66% Faster",
-    description: "View tag optimization enables lightning-fast scanning",
-    color: "accent",
+    description: "View tag optimization for fast scanning",
   },
   {
     icon: Tag,
     title: "ENS Native",
-    description: "Human-readable private payments with your ENS name",
-    color: "success",
+    description: "Human-readable private payments",
   },
 ];
 
-const container = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.15,
-    },
-  },
-};
-
-const item = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0 },
-};
-
 export function FeaturesSection() {
   return (
-    <section className="py-24 relative">
-      <div className="container mx-auto px-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
+    <section className="py-16 md:py-20 px-4">
+      <div className="container mx-auto max-w-4xl">
+        <motion.h2
+          initial={{ opacity: 0, y: 12 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="text-center mb-16"
+          className="font-display text-xl font-semibold text-muted-foreground text-center mb-10"
         >
-          <h2 className="font-display text-3xl md:text-4xl font-bold mb-4">
-            Built for the future
-          </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
-            SPECTER combines cutting-edge cryptography with intuitive design
-          </p>
-        </motion.div>
+          Built for the future
+        </motion.h2>
 
-        <motion.div
-          variants={container}
-          initial="hidden"
-          whileInView="show"
-          viewport={{ once: true }}
-          className="grid md:grid-cols-3 gap-6"
-        >
-          {features.map((feature) => (
+        <div className="grid md:grid-cols-3 gap-4 md:gap-6">
+          {features.map((feature, i) => (
             <motion.div
               key={feature.title}
-              variants={item}
-              className="group"
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.08 }}
+              className="glass-panel p-6 rounded-xl"
             >
-              <div className="glass-card p-8 h-full transition-all duration-300 hover:border-primary/40">
-                <div
-                  className={`w-14 h-14 rounded-xl bg-${feature.color}/10 border border-${feature.color}/20 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300`}
-                >
-                  <feature.icon className={`h-7 w-7 text-${feature.color}`} />
-                </div>
-                <h3 className="font-display text-xl font-semibold mb-3">
-                  {feature.title}
-                </h3>
-                <p className="text-muted-foreground leading-relaxed">
-                  {feature.description}
-                </p>
-              </div>
+              <feature.icon className="h-5 w-5 text-primary mb-3" />
+              <h3 className="font-display font-semibold mb-1.5">
+                {feature.title}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {feature.description}
+              </p>
             </motion.div>
           ))}
-        </motion.div>
+        </div>
       </div>
     </section>
   );

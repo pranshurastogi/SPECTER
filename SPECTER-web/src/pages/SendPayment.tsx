@@ -21,7 +21,11 @@ import { toast } from "@/components/ui/sonner";
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { HeadingScramble } from "@/components/ui/heading-scramble";
+import { PixelCanvas } from "@/components/ui/pixel-canvas";
 import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } from "@/lib/api";
+
+const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 import { resolveEns, validateEnsName, EnsResolverError, EnsErrorCode } from "@/lib/ensResolver";
 import { Link } from "react-router-dom";
 
@@ -231,7 +235,7 @@ export default function SendPayment() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <Header />
 
       <main className="flex-1 pt-24 pb-12">
@@ -242,9 +246,12 @@ export default function SendPayment() {
               animate={{ opacity: 1, y: 0 }}
               className="text-center mb-12"
             >
-              <h1 className="font-display text-3xl md:text-4xl font-bold mb-4">
+              <HeadingScramble
+                as="h1"
+                className="font-display text-3xl md:text-4xl font-bold mb-4 block"
+              >
                 Send Private Payment
-              </h1>
+              </HeadingScramble>
               <p className="text-muted-foreground">
                 Quantum-safe stealth payments to any ENS name
               </p>
@@ -253,7 +260,16 @@ export default function SendPayment() {
               </p>
             </motion.div>
 
-            <div className="glass-card p-8">
+            <div className="relative overflow-hidden rounded-xl glass-card">
+              <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+                <PixelCanvas
+                  gap={10}
+                  speed={25}
+                  colors={CARD_PIXEL_COLORS}
+                  variant="default"
+                />
+              </div>
+              <div className="relative z-10 p-8">
               <AnimatePresence mode="wait">
                 {step === "input" && (
                   <motion.div
@@ -564,6 +580,7 @@ export default function SendPayment() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              </div>
             </div>
           </div>
         </div>

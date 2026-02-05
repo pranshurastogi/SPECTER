@@ -93,10 +93,17 @@
 }
 
 @layer components {
-  /* Glass card effect */
-  .glass-card {
-    @apply bg-card/50 backdrop-blur-xl border border-border/50 rounded-xl;
-    box-shadow: var(--shadow-card);
+  /* Transparent cards – no fill, border + blur only */
+  .glass-card,
+  .glass-card-transparent {
+    @apply bg-transparent backdrop-blur-xl border border-white/[0.08] dark:border-white/[0.06] rounded-xl;
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.03);
+  }
+
+  /* Glass theme panel – transparent (same as card) */
+  .glass-panel {
+    @apply bg-transparent backdrop-blur-xl border border-white/[0.08] dark:border-white/[0.06] rounded-xl;
+    box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.03);
   }
 
   /* Quantum glow effect */

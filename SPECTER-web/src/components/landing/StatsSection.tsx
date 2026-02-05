@@ -1,88 +1,49 @@
-import { motion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, animate } from "framer-motion";
 import { useEffect, useState } from "react";
 
 const stats = [
-  {
-    value: 99.6,
-    suffix: "%",
-    label: "Scanning Efficiency",
-    description: "View tag filtering",
-  },
-  {
-    value: 1.5,
-    suffix: "s",
-    label: "Scan Time",
-    description: "For 80k announcements",
-  },
-  {
-    value: 2030,
-    suffix: "",
-    label: "Future-Proof",
-    description: "Quantum-safe cryptography",
-  },
+  { value: 99.6, suffix: "%", label: "Efficiency" },
+  { value: 1.5, suffix: "s", label: "Scan time" },
+  { value: 2030, suffix: "", label: "Future-proof" },
 ];
 
 function AnimatedNumber({ value, suffix }: { value: number; suffix: string }) {
-  const [displayValue, setDisplayValue] = useState(0);
-
+  const [n, setN] = useState(0);
   useEffect(() => {
-    const controls = animate(0, value, {
-      duration: 2,
+    const c = animate(0, value, {
+      duration: 1.8,
       ease: "easeOut",
-      onUpdate: (latest) => {
-        setDisplayValue(latest);
-      },
+      onUpdate: (v) => setN(v),
     });
-
-    return () => controls.stop();
+    return () => c.stop();
   }, [value]);
-
-  const formatValue = () => {
-    if (suffix === "%") {
-      return displayValue.toFixed(1);
-    } else if (suffix === "s") {
-      return displayValue.toFixed(1);
-    }
-    return Math.floor(displayValue).toString();
-  };
-
-  return (
-    <span className="gradient-text">
-      {formatValue()}
-      {suffix}
-    </span>
-  );
+  const str = suffix === "%" ? n.toFixed(1) : suffix === "s" ? n.toFixed(1) : Math.floor(n).toString();
+  return <span className="gradient-text">{str}{suffix}</span>;
 }
 
 export function StatsSection() {
   return (
-    <section className="py-24 relative">
-      <div className="container mx-auto px-4">
+    <section className="py-16 md:py-20 px-4">
+      <div className="container mx-auto max-w-3xl">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 12 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="glass-card p-12"
+          className="glass-panel p-8 rounded-2xl"
         >
-          <div className="grid md:grid-cols-3 gap-12">
-            {stats.map((stat, index) => (
+          <div className="grid grid-cols-3 gap-8 text-center">
+            {stats.map((s, i) => (
               <motion.div
-                key={stat.label}
-                initial={{ opacity: 0, y: 20 }}
+                key={s.label}
+                initial={{ opacity: 0, y: 8 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                transition={{ delay: index * 0.15 }}
-                className="text-center"
+                transition={{ delay: i * 0.1 }}
               >
-                <div className="font-display text-4xl md:text-5xl font-bold mb-2">
-                  <AnimatedNumber value={stat.value} suffix={stat.suffix} />
+                <div className="font-display text-2xl md:text-3xl font-bold">
+                  <AnimatedNumber value={s.value} suffix={s.suffix} />
                 </div>
-                <div className="font-display text-lg font-semibold mb-1">
-                  {stat.label}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  {stat.description}
-                </div>
+                <div className="text-xs text-muted-foreground mt-1">{s.label}</div>
               </motion.div>
             ))}
           </div>

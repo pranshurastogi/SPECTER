@@ -27,7 +27,11 @@ import { toast } from "@/components/ui/sonner";
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { HeadingScramble } from "@/components/ui/heading-scramble";
+import { PixelCanvas } from "@/components/ui/pixel-canvas";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
+
+const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 
 type GenerationStep = "idle" | "generating" | "complete";
 
@@ -91,7 +95,7 @@ export default function GenerateKeys() {
     : null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <Header />
 
       <main className="flex-1 pt-24 pb-12">
@@ -102,9 +106,12 @@ export default function GenerateKeys() {
               animate={{ opacity: 1, y: 0 }}
               className="text-center mb-12"
             >
-              <h1 className="font-display text-3xl md:text-4xl font-bold mb-4">
+              <HeadingScramble
+                as="h1"
+                className="font-display text-3xl md:text-4xl font-bold mb-4 block"
+              >
                 Generate Your Keys
-              </h1>
+              </HeadingScramble>
               <p className="text-muted-foreground max-w-xl mx-auto">
                 Create quantum-safe SPECTER identity for private payments
               </p>
@@ -112,7 +119,16 @@ export default function GenerateKeys() {
 
             <div className="grid md:grid-cols-3 gap-8">
               <div className="md:col-span-2">
-                <div className="glass-card p-8">
+                <div className="relative overflow-hidden rounded-xl glass-card">
+                  <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+                    <PixelCanvas
+                      gap={10}
+                      speed={25}
+                      colors={CARD_PIXEL_COLORS}
+                      variant="default"
+                    />
+                  </div>
+                  <div className="relative z-10 p-8">
                   <AnimatePresence mode="wait">
                     {step === "idle" && (
                       <motion.div
@@ -688,6 +704,7 @@ export default function GenerateKeys() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  </div>
                 </div>
               </div>
 

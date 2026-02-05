@@ -31,7 +31,7 @@ export function Header() {
   const { ok: apiOk, loading: apiLoading } = useApiHealth();
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
+    <header className="fixed top-0 left-0 right-0 z-50 glass-panel rounded-none border-b border-border/50 border-t-0 border-x-0">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           {/* Logo + API status */}
@@ -42,10 +42,10 @@ export function Header() {
                 whileHover={{ scale: 1.05 }}
                 transition={{ type: "spring", stiffness: 400 }}
               >
-                <img src="/SPECTER-logo.png" alt="SPECTER" className="h-8 w-8" />
+                <img src="/SPECTER-logo.png" alt="SPECTER" className="h-10 w-10" />
                 <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
               </motion.div>
-              <span className="font-display font-bold text-xl tracking-tight">
+              <span className="font-display font-bold text-2xl tracking-tight">
                 SPECTER
               </span>
             </Link>

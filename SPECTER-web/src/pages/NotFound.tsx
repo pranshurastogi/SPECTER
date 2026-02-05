@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { HeadingScramble } from "@/components/ui/heading-scramble";
 
 const NotFound = () => {
   const location = useLocation();
@@ -9,11 +10,16 @@ const NotFound = () => {
   }, [location.pathname]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">404</h1>
-        <p className="mb-4 text-xl text-muted-foreground">Oops! Page not found</p>
-        <a href="/" className="text-primary underline hover:text-primary/90">
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="glass-panel rounded-2xl p-10 text-center max-w-md">
+        <HeadingScramble
+          as="h1"
+          className="font-display mb-3 text-4xl font-bold block"
+        >
+          404
+        </HeadingScramble>
+        <p className="mb-6 text-muted-foreground">Page not found</p>
+        <a href="/" className="text-primary underline hover:text-primary/90 text-sm">
           Return to Home
         </a>
       </div>

@@ -27,6 +27,10 @@ import { api, ApiError, type DiscoveryDto, type ScanStatsDto, type RegistryStats
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { HeadingScramble } from "@/components/ui/heading-scramble";
+import { PixelCanvas } from "@/components/ui/pixel-canvas";
+
+const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -181,7 +185,7 @@ export default function ScanPayments() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen flex flex-col">
       <Header />
 
       <main className="flex-1 pt-20 pb-12">
@@ -189,12 +193,26 @@ export default function ScanPayments() {
           <div className="max-w-3xl mx-auto">
             {/* Compact title */}
             <div className="text-center mb-4">
-              <h1 className="font-display text-2xl font-bold">Scan for Payments</h1>
+              <HeadingScramble
+                as="h1"
+                className="font-display text-2xl font-bold block"
+              >
+                Scan for Payments
+              </HeadingScramble>
               <p className="text-xs text-muted-foreground">Find stealth payments sent to you</p>
             </div>
 
             {/* STEP 1: LOAD KEYS - Primary action, highly visible */}
-            <div className="bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/40 rounded-xl p-6 mb-4 shadow-xl">
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/40 p-6 mb-4 shadow-xl">
+              <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+                <PixelCanvas
+                  gap={10}
+                  speed={25}
+                  colors={CARD_PIXEL_COLORS}
+                  variant="default"
+                />
+              </div>
+              <div className="relative z-10">
               <div className="flex items-start gap-3 mb-4">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-lg shadow-md">
                   1
@@ -277,10 +295,20 @@ export default function ScanPayments() {
                   {loadError}
                 </div>
               )}
+              </div>
             </div>
 
             {/* STEP 2: SCAN - Secondary action */}
-            <div className="glass-card p-6 border border-border/50">
+            <div className="relative overflow-hidden rounded-xl glass-card border border-border/50">
+              <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+                <PixelCanvas
+                  gap={10}
+                  speed={25}
+                  colors={CARD_PIXEL_COLORS}
+                  variant="default"
+                />
+              </div>
+              <div className="relative z-10 p-6">
               <AnimatePresence mode="wait">
                 {scanState === "idle" && (
                   <motion.div
@@ -450,6 +478,7 @@ export default function ScanPayments() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              </div>
             </div>
 
             {/* Withdraw / details modal */}
@@ -469,9 +498,18 @@ export default function ScanPayments() {
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
-                    className="glass-card p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
+                    className="relative overflow-hidden rounded-xl glass-card max-w-md w-full max-h-[90vh] overflow-y-auto"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+                      <PixelCanvas
+                        gap={10}
+                        speed={25}
+                        colors={CARD_PIXEL_COLORS}
+                        variant="default"
+                      />
+                    </div>
+                    <div className="relative z-10 p-6">
                     <h3 className="font-display text-xl font-bold mb-4">Discovered payment</h3>
                     <div className="space-y-4">
                       <div>
@@ -628,6 +666,7 @@ export default function ScanPayments() {
                           tooltip="Save discovery details as JSON (no private key included unless you reveal it first)"
                         />
                       </div>
+                    </div>
                     </div>
                   </motion.div>
                 </motion.div>
