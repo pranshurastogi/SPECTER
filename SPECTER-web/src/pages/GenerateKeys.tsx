@@ -6,9 +6,6 @@ import { Button } from "@/components/ui/button";
 import {
   Key,
   Eye,
-  Copy,
-  Download,
-  Check,
   Lock,
   AlertTriangle,
   ArrowRight,
@@ -17,9 +14,13 @@ import {
   ExternalLink,
   Info,
   Clipboard,
+  Download,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
+import { CopyButton } from "@/components/ui/copy-button";
+import { DownloadJsonButton } from "@/components/ui/download-json-button";
+import { TooltipLabel } from "@/components/ui/tooltip-label";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
 
 type GenerationStep = "idle" | "generating" | "complete";
@@ -33,7 +34,6 @@ const securityTips = [
 export default function GenerateKeys() {
   const [step, setStep] = useState<GenerationStep>("idle");
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{ cid: string; text_record: string } | null>(null);
   const [ensName, setEnsName] = useState("");
@@ -73,40 +73,16 @@ export default function GenerateKeys() {
     }
   };
 
-  const copyToClipboard = (text: string, keyName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(keyName);
-    toast.success("Copied to clipboard");
-    setTimeout(() => setCopiedKey(null), 2000);
-  };
-
-  const downloadKeys = () => {
-    if (!keys) return;
-    const blob = new Blob(
-      [
-        JSON.stringify(
-          {
-            spending_pk: keys.spending_pk,
-            spending_sk: keys.spending_sk,
-            viewing_pk: keys.viewing_pk,
-            viewing_sk: keys.viewing_sk,
-            meta_address: keys.meta_address,
-            view_tag: keys.view_tag,
-          },
-          null,
-          2
-        ),
-      ],
-      { type: "application/json" }
-    );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "specter-keys.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Keys saved to specter-keys.json");
-  };
+  const keysJson = keys
+    ? {
+        spending_pk: keys.spending_pk,
+        spending_sk: keys.spending_sk,
+        viewing_pk: keys.viewing_pk,
+        viewing_sk: keys.viewing_sk,
+        meta_address: keys.meta_address,
+        view_tag: keys.view_tag,
+      }
+    : null;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -174,84 +150,85 @@ export default function GenerateKeys() {
                         exit={{ opacity: 0 }}
                         className="space-y-6"
                       >
-                        <div className="flex items-center gap-3 p-4 rounded-lg bg-success/10 border border-success/20">
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center gap-3 p-4 rounded-lg bg-success/10 border border-success/20"
+                        >
                           <img src="/SPECTER-logo.png" alt="SPECTER" className="h-5 w-5" />
                           <span className="text-sm font-medium text-success">
                             Keys Generated Successfully
                           </span>
-                        </div>
+                        </motion.div>
 
                         <div className="space-y-4">
-                          <div className="p-4 rounded-lg bg-muted/50 border border-border">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <Key className="h-4 w-4 text-primary" />
-                                <span className="text-sm font-medium">Spending Public Key</span>
+                          {[
+                            {
+                              icon: Key,
+                              label: "Spending Public Key",
+                              tooltip: "Used to derive stealth addresses. Safe to share with senders.",
+                              value: keys.spending_pk,
+                              preview: keys.spending_pk.slice(0, 32) + "...",
+                            },
+                            {
+                              icon: Eye,
+                              label: "Viewing Public Key",
+                              tooltip: "Used for scanning announcements. Safe to share with auditors.",
+                              value: keys.viewing_pk,
+                              preview: keys.viewing_pk.slice(0, 32) + "...",
+                            },
+                            {
+                              icon: null,
+                              label: "Meta-address (for ENS)",
+                              tooltip: "Publish this to ENS so others can send you private payments.",
+                              value: keys.meta_address,
+                              preview: keys.meta_address.slice(0, 40) + "...",
+                            },
+                          ].map((item, index) => (
+                            <motion.div
+                              key={item.label}
+                              initial={{ opacity: 0, y: 12 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: index * 0.06 }}
+                              className="p-4 rounded-lg bg-muted/50 border border-border"
+                            >
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  {item.icon && <item.icon className="h-4 w-4 text-primary" />}
+                                  <TooltipLabel
+                                    label={item.label}
+                                    tooltip={item.tooltip}
+                                    className="text-sm font-medium"
+                                  />
+                                </div>
+                                <CopyButton
+                                  text={item.value}
+                                  variant="ghost"
+                                  size="sm"
+                                  showLabel={false}
+                                  tooltip="Copy to clipboard"
+                                  tooltipCopied="Copied!"
+                                  successMessage="Copied to clipboard"
+                                />
                               </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => copyToClipboard(keys.spending_pk, "spending_pk")}
-                              >
-                                {copiedKey === "spending_pk" ? (
-                                  <Check className="h-4 w-4 text-success" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                            <code className="text-xs text-muted-foreground break-all">
-                              {keys.spending_pk.slice(0, 32)}...
-                            </code>
-                          </div>
+                              <code className="text-xs text-muted-foreground break-all">
+                                {item.preview}
+                              </code>
+                            </motion.div>
+                          ))}
 
-                          <div className="p-4 rounded-lg bg-muted/50 border border-border">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <Eye className="h-4 w-4 text-accent" />
-                                <span className="text-sm font-medium">Viewing Public Key</span>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => copyToClipboard(keys.viewing_pk, "viewing_pk")}
-                              >
-                                {copiedKey === "viewing_pk" ? (
-                                  <Check className="h-4 w-4 text-success" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                            <code className="text-xs text-muted-foreground break-all">
-                              {keys.viewing_pk.slice(0, 32)}...
-                            </code>
-                          </div>
-
-                          <div className="p-4 rounded-lg bg-muted/50 border border-border">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium">Meta-address (for ENS)</span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => copyToClipboard(keys.meta_address, "meta_address")}
-                              >
-                                {copiedKey === "meta_address" ? (
-                                  <Check className="h-4 w-4 text-success" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
-                              </Button>
-                            </div>
-                            <code className="text-xs text-muted-foreground break-all">
-                              {keys.meta_address.slice(0, 40)}...
-                            </code>
-                          </div>
-
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <span className="font-mono font-medium text-foreground">View tag:</span>
-                            <span className="font-mono">{keys.view_tag}</span>
-                          </div>
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.2 }}
+                            className="flex items-center gap-2 text-sm text-muted-foreground"
+                          >
+                            <TooltipLabel
+                              label="View tag"
+                              tooltip="First byte of shared secret; used to filter announcements when scanning."
+                            />
+                            <span className="font-mono font-medium text-foreground">{keys.view_tag}</span>
+                          </motion.div>
                         </div>
 
                         {/* Upload to IPFS */}
@@ -313,18 +290,28 @@ export default function GenerateKeys() {
                           )}
                         </div>
 
-                        <div className="flex flex-col sm:flex-row gap-3 pt-4">
-                          <Button variant="outline" className="flex-1" onClick={downloadKeys}>
-                            <Download className="mr-2 h-4 w-4" />
-                            Download Keys
-                          </Button>
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.25 }}
+                          className="flex flex-col sm:flex-row gap-3 pt-4"
+                        >
+                          {keysJson && (
+                            <DownloadJsonButton
+                              data={keysJson}
+                              filename="specter-keys.json"
+                              label="Download Keys"
+                              className="flex-1"
+                              tooltip="Save keys as specter-keys.json (backup securely)"
+                            />
+                          )}
                           <Button variant="quantum" className="flex-1" asChild>
                             <Link to="/send">
                               Continue
                               <ArrowRight className="ml-2 h-4 w-4" />
                             </Link>
                           </Button>
-                        </div>
+                        </motion.div>
                       </motion.div>
                     )}
                   </AnimatePresence>

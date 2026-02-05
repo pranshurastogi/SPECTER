@@ -15,9 +15,11 @@
 
 use pqcrypto_kyber::kyber768;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey, SecretKey, SharedSecret};
-use zeroize::Zeroize;
 
-use specter_core::constants::{KYBER_CIPHERTEXT_SIZE, KYBER_PUBLIC_KEY_SIZE, KYBER_SECRET_KEY_SIZE, KYBER_SHARED_SECRET_SIZE};
+#[allow(unused_imports)]
+use specter_core::constants::{
+    KYBER_CIPHERTEXT_SIZE, KYBER_PUBLIC_KEY_SIZE, KYBER_SECRET_KEY_SIZE, KYBER_SHARED_SECRET_SIZE,
+};
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{KeyPair, KyberPublicKey, KyberSecretKey};
 

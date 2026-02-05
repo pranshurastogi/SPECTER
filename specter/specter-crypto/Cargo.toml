@@ -24,6 +24,9 @@ rand = { workspace = true }
 # Utilities
 hex = { workspace = true }
 
+# Ethereum address from secp256k1 (so eth_private_key matches stealth_address)
+k256 = { version = "0.13", features = ["ecdsa"] }
+
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }

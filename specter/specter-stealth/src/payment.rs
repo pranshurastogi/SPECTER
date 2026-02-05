@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{Announcement, EthAddress, MetaAddress, StealthAddressResult};
-use specter_crypto::{compute_view_tag, encapsulate};
-use specter_crypto::derive::derive_stealth_address;
+use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
+use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys};
 
 /// A complete stealth payment ready to be sent.
 ///
@@ -319,6 +319,39 @@ mod tests {
         let payment = create_stealth_payment(&meta).unwrap();
 
         assert!(verify_payment(&payment, &meta).unwrap());
+    }
+
+    /// Full round-trip: create payment then "scan" with same keys.
+    /// Proves stealth_address matches the address derived from eth_private_key (wallet compatibility).
+    #[test]
+    fn test_stealth_address_matches_eth_private_key() {
+        let spending = generate_keypair();
+        let viewing = generate_keypair();
+        let meta = MetaAddress::new(spending.public.clone(), viewing.public.clone());
+
+        let payment = create_stealth_payment(&meta).unwrap();
+        let ciphertext = KyberCiphertext::from_bytes(&payment.announcement.ephemeral_key).unwrap();
+        let shared_secret = decapsulate(&ciphertext, &viewing.secret).unwrap();
+
+        let keys = derive_stealth_keys(
+            spending.public.as_bytes(),
+            spending.secret.as_bytes(),
+            &shared_secret,
+        )
+        .unwrap();
+
+        assert_eq!(
+            keys.address.as_bytes(),
+            payment.stealth_address.as_bytes(),
+            "scan-derived address must match create stealth_address"
+        );
+
+        let addr_from_pk = derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
+        assert_eq!(
+            keys.address.as_bytes(),
+            addr_from_pk.as_bytes(),
+            "eth_private_key must derive to stealth_address (MetaMask compatibility)"
+        );
     }
 
     #[test]

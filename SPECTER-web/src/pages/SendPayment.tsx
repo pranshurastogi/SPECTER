@@ -14,11 +14,13 @@ import {
   Loader2,
   Lock,
   Target,
-  Copy,
   AlertCircle,
   FileText,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { CopyButton } from "@/components/ui/copy-button";
+import { DownloadJsonButton } from "@/components/ui/download-json-button";
+import { TooltipLabel } from "@/components/ui/tooltip-label";
 import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } from "@/lib/api";
 import { resolveEns, validateEnsName, EnsResolverError, EnsErrorCode } from "@/lib/ensResolver";
 import { Link } from "react-router-dom";
@@ -37,7 +39,6 @@ export default function SendPayment() {
   const [stealthResult, setStealthResult] = useState<CreateStealthResponse | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [announcementId, setAnnouncementId] = useState<number | null>(null);
-  const [copied, setCopied] = useState(false);
   const [ipfsHash, setIpfsHash] = useState<string | null>(null);
   const [ipfsUrl, setIpfsUrl] = useState<string | null>(null);
 
@@ -205,7 +206,7 @@ export default function SendPayment() {
     try {
       const res = await api.publishAnnouncement({
         ephemeral_key: stealthResult.announcement.ephemeral_key,
-        view_tag: stealthResult.announcement.view_tag,
+        view_tag: stealthResult.view_tag,
       });
       setAnnouncementId(res.id);
       toast.success(`Announcement published (#${res.id})`);
@@ -215,14 +216,6 @@ export default function SendPayment() {
     } finally {
       setIsPublishing(false);
     }
-  };
-
-  const copyStealthAddress = () => {
-    if (!stealthResult?.stealth_address) return;
-    navigator.clipboard.writeText(stealthResult.stealth_address);
-    setCopied(true);
-    toast.success("Stealth address copied");
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const resetForm = () => {
@@ -272,7 +265,10 @@ export default function SendPayment() {
                   >
                     <div>
                       <label className="block text-sm font-medium mb-2">
-                        Recipient ENS or meta-address (hex)
+                        <TooltipLabel
+                          label="Recipient ENS or meta-address (hex)"
+                          tooltip="Enter an ENS name (e.g. bob.eth) or paste the recipient's full meta-address hex from Generate Keys."
+                        />
                       </label>
                       <div className="flex gap-2">
                         <Input
@@ -452,23 +448,25 @@ export default function SendPayment() {
                         <div className="flex items-start gap-3">
                           <Target className="h-5 w-5 text-primary mt-0.5 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <div className="text-xs text-muted-foreground mb-1">Address (send ETH here)</div>
+                            <div className="text-xs text-muted-foreground mb-1">
+                              <TooltipLabel
+                                label="Address (send ETH here)"
+                                tooltip="Paste this address in your wallet (e.g. MetaMask) to send the payment. Only the recipient can discover it."
+                              />
+                            </div>
                             <code className="text-sm font-mono break-all block">
                               {stealthResult.stealth_address}
                             </code>
-                            <Button
+                            <CopyButton
+                              text={stealthResult.stealth_address}
+                              label="Copy address"
                               variant="ghost"
                               size="sm"
                               className="mt-2"
-                              onClick={copyStealthAddress}
-                            >
-                              {copied ? (
-                                <Check className="h-4 w-4 mr-2 text-success" />
-                              ) : (
-                                <Copy className="h-4 w-4 mr-2" />
-                              )}
-                              {copied ? "Copied" : "Copy address"}
-                            </Button>
+                              tooltip="Copy stealth address to paste in your wallet"
+                              tooltipCopied="Copied!"
+                              successMessage="Stealth address copied"
+                            />
                           </div>
                         </div>
                         <div className="grid grid-cols-2 gap-4">
@@ -530,12 +528,33 @@ export default function SendPayment() {
                         <p className="text-sm text-muted-foreground">
                           Send <strong>{amount} ETH</strong> to the stealth address above using your wallet (e.g. MetaMask).
                         </p>
-                        <div className="flex gap-3">
-                          <Button variant="outline" className="flex-1" onClick={copyStealthAddress}>
-                            <Copy className="h-4 w-4 mr-2" />
-                            Copy address
-                          </Button>
-                          <Button variant="quantum" className="flex-1" onClick={resetForm}>
+                        <div className="flex flex-wrap gap-3">
+                          <CopyButton
+                            text={stealthResult.stealth_address}
+                            label="Copy address"
+                            variant="outline"
+                            className="flex-1 min-w-[120px]"
+                            tooltip="Copy address for your wallet"
+                            successMessage="Stealth address copied"
+                          />
+                          {stealthResult && announcementId !== null && (
+                            <DownloadJsonButton
+                              data={{
+                                stealth_address: stealthResult.stealth_address,
+                                amount_eth: amount,
+                                announcement_id: announcementId,
+                                view_tag: stealthResult.view_tag,
+                                recipient: resolvedENS?.ens_name,
+                              }}
+                              filename="specter-payment-details.json"
+                              label="Download details"
+                              variant="outline"
+                              size="default"
+                              className="min-w-[120px]"
+                              tooltip="Save payment details as JSON"
+                            />
+                          )}
+                          <Button variant="quantum" className="flex-1 min-w-[120px]" onClick={resetForm}>
                             Send Another
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Button>

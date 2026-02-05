@@ -25,8 +25,10 @@
 
 use zeroize::Zeroize;
 
+use k256::ecdsa::SigningKey;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use specter_core::constants::{
-    DOMAIN_STEALTH_PK, DOMAIN_STEALTH_SK, ETH_ADDRESS_SIZE, KYBER_PUBLIC_KEY_SIZE,
+    DOMAIN_ETH_KEY, DOMAIN_STEALTH_PK, DOMAIN_STEALTH_SK, ETH_ADDRESS_SIZE, KYBER_PUBLIC_KEY_SIZE,
     KYBER_SECRET_KEY_SIZE,
 };
 use specter_core::error::{Result, SpecterError};
@@ -37,7 +39,7 @@ use crate::hash::{keccak256, shake256};
 /// Result of stealth key derivation.
 #[derive(Debug)]
 pub struct StealthKeys {
-    /// The stealth public key (1184 bytes)
+    /// The secp256k1 uncompressed public key (65 bytes); hashes to the Ethereum address.
     pub public_key: Vec<u8>,
     /// The stealth private key (2400 bytes, zeroized on drop)
     pub private_key: StealthPrivateKey,
@@ -178,22 +180,40 @@ pub fn derive_stealth_private_key(
 // ETHEREUM ADDRESS DERIVATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Derives an Ethereum address from a stealth public key.
-///
-/// # Algorithm
-///
-/// For Kyber keys, we use a simplified derivation:
-/// ```text
-/// address = keccak256(stealth_pk)[12..32]
-/// ```
-///
-/// Note: This is different from secp256k1-based derivation. In a real
-/// implementation, we might want to derive an intermediate secp256k1 key
-/// for full Ethereum compatibility.
-///
-/// # Arguments
-///
-/// * `stealth_pk` - The stealth public key (1184 bytes)
+/// Derives a 32-byte secp256k1 key seed from (shared_secret, spending_pk).
+/// Both sender and recipient can compute this; used for stealth address and eth_private_key.
+/// Retries with re-hashed seed if the first candidate is not a valid secp256k1 scalar.
+fn derive_eth_key_seed(shared_secret: &[u8], spending_pk: &[u8]) -> Result<[u8; 32]> {
+    let mut seed = [0u8; 32];
+    let mut raw = shake256(DOMAIN_ETH_KEY, &[shared_secret, spending_pk].concat(), 32);
+    seed.copy_from_slice(&raw[..32]);
+    loop {
+        if SigningKey::from_slice(&seed).is_ok() {
+            return Ok(seed);
+        }
+        raw = keccak256(&seed).to_vec();
+        seed.copy_from_slice(&raw);
+    }
+}
+
+/// Derives an Ethereum address from a secp256k1 private key (32 bytes).
+/// This matches how MetaMask/wallets derive address from private key.
+pub fn derive_eth_address_from_seed(seed: &[u8; 32]) -> Result<EthAddress> {
+    let signing_key = SigningKey::from_slice(seed).map_err(|_| SpecterError::InvalidStealthAddress(
+        "invalid secp256k1 key from seed".to_string(),
+    ))?;
+    let verifying_key = signing_key.verifying_key();
+    let encoded = verifying_key.to_encoded_point(false);
+    // Skip the 0x04 prefix - Ethereum only hashes the 64-byte public key (x, y)
+    let pubkey_bytes = &encoded.as_bytes()[1..];
+    let hash = keccak256(pubkey_bytes);
+    let mut address_bytes = [0u8; ETH_ADDRESS_SIZE];
+    address_bytes.copy_from_slice(&hash[32 - ETH_ADDRESS_SIZE..]);
+    Ok(EthAddress::from_array(address_bytes))
+}
+
+/// Derives an Ethereum address from a stealth public key (legacy Kyber-based; 1184 bytes).
+/// Prefer the secp256k1 path via derive_stealth_address / derive_stealth_keys for wallet compatibility.
 pub fn derive_eth_address(stealth_pk: &[u8]) -> Result<EthAddress> {
     if stealth_pk.len() != KYBER_PUBLIC_KEY_SIZE {
         return Err(SpecterError::InvalidKeySize {
@@ -203,7 +223,7 @@ pub fn derive_eth_address(stealth_pk: &[u8]) -> Result<EthAddress> {
     }
 
     let hash = keccak256(stealth_pk);
-    
+
     // Take last 20 bytes as Ethereum address
     let mut address_bytes = [0u8; ETH_ADDRESS_SIZE];
     address_bytes.copy_from_slice(&hash[32 - ETH_ADDRESS_SIZE..]);
@@ -216,23 +236,24 @@ pub fn derive_eth_address(stealth_pk: &[u8]) -> Result<EthAddress> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Derives complete stealth keys (public, private, and address).
-///
-/// This is the main function used by recipients to derive keys for discovered
-/// payments.
-///
-/// # Arguments
+/// Uses secp256k1 so address and eth_private_key match (import key in wallet to spend).
 ///
 /// * `spending_pk` - The recipient's spending public key
-/// * `spending_sk` - The recipient's spending secret key
+/// * `spending_sk` - Unused for secp256k1 path; kept for API compatibility
 /// * `shared_secret` - The shared secret from Kyber decapsulation
 pub fn derive_stealth_keys(
     spending_pk: &[u8],
-    spending_sk: &[u8],
+    _spending_sk: &[u8],
     shared_secret: &[u8],
 ) -> Result<StealthKeys> {
-    let public_key = derive_stealth_public_key(spending_pk, shared_secret)?;
-    let private_key = derive_stealth_private_key(spending_sk, shared_secret)?;
-    let address = derive_eth_address(&public_key)?;
+    let seed = derive_eth_key_seed(shared_secret, spending_pk)?;
+    let address = derive_eth_address_from_seed(&seed)?;
+    let signing_key = SigningKey::from_slice(&seed).map_err(|_| SpecterError::InvalidStealthAddress(
+        "invalid secp256k1 key".to_string(),
+    ))?;
+    let verifying_key = signing_key.verifying_key();
+    let public_key = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+    let private_key = StealthPrivateKey::from_bytes(seed.to_vec());
 
     Ok(StealthKeys {
         public_key,
@@ -242,11 +263,10 @@ pub fn derive_stealth_keys(
 }
 
 /// Derives only the address (for senders who don't need the private key).
-///
-/// This is the function used by senders to compute where to send funds.
+/// Uses secp256k1 so the address matches the eth_private_key when imported in a wallet.
 pub fn derive_stealth_address(spending_pk: &[u8], shared_secret: &[u8]) -> Result<EthAddress> {
-    let stealth_pk = derive_stealth_public_key(spending_pk, shared_secret)?;
-    derive_eth_address(&stealth_pk)
+    let seed = derive_eth_key_seed(shared_secret, spending_pk)?;
+    derive_eth_address_from_seed(&seed)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -347,9 +367,13 @@ mod tests {
 
         let keys = derive_stealth_keys(&spending_pk, &spending_sk, &shared_secret).unwrap();
 
-        assert_eq!(keys.public_key.len(), KYBER_PUBLIC_KEY_SIZE);
-        assert_eq!(keys.private_key.as_bytes().len(), KYBER_SECRET_KEY_SIZE);
+        // secp256k1 path: 65-byte uncompressed pubkey, 32-byte eth private key
+        assert_eq!(keys.public_key.len(), 65);
+        assert_eq!(keys.private_key.as_bytes().len(), 32);
         assert_eq!(keys.address.as_bytes().len(), ETH_ADDRESS_SIZE);
+        // eth_private_key must derive to the same address (wallet compatibility)
+        let addr_from_pk = derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
+        assert_eq!(keys.address.as_bytes(), addr_from_pk.as_bytes());
     }
 
     #[test]

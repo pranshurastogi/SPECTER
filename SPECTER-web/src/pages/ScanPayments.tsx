@@ -1,6 +1,7 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { privateKeyToAddress } from "viem/accounts";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/landing/Footer";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,16 @@ import {
   Zap,
   Upload,
   KeyRound,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto, type RegistryStatsResponse } from "@/lib/api";
+import { CopyButton } from "@/components/ui/copy-button";
+import { DownloadJsonButton } from "@/components/ui/download-json-button";
+import { TooltipLabel } from "@/components/ui/tooltip-label";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -38,7 +46,31 @@ export default function ScanPayments() {
   const [selectedPayment, setSelectedPayment] = useState<DiscoveryDto | null>(null);
   const [registryStats, setRegistryStats] = useState<RegistryStatsResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [revealedPk, setRevealedPk] = useState(false);
+  const [derivedAddress, setDerivedAddress] = useState<string | null>(null);
+  const [addressMatch, setAddressMatch] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Derive address from private key when revealed
+  useEffect(() => {
+    if (selectedPayment && revealedPk) {
+      try {
+        const pkHex = selectedPayment.eth_private_key.startsWith("0x")
+          ? selectedPayment.eth_private_key
+          : `0x${selectedPayment.eth_private_key}`;
+        const derived = privateKeyToAddress(pkHex as `0x${string}`);
+        setDerivedAddress(derived.toLowerCase());
+        setAddressMatch(derived.toLowerCase() === selectedPayment.stealth_address.toLowerCase());
+      } catch (err) {
+        console.error("Failed to derive address:", err);
+        setDerivedAddress(null);
+        setAddressMatch(null);
+      }
+    } else {
+      setDerivedAddress(null);
+      setAddressMatch(null);
+    }
+  }, [selectedPayment, revealedPk]);
 
   const loadKeysFromFile = (file: File) => {
     setLoadError(null);
@@ -168,7 +200,14 @@ export default function ScanPayments() {
                   1
                 </span>
                 <div>
-                  <h2 className="font-display font-bold text-xl mb-1">Load Your Keys</h2>
+                  <h2 className="font-display font-bold text-xl mb-1 flex items-center gap-2">
+                    Load Your Keys
+                    <TooltipLabel
+                      label=""
+                      tooltip="Load the JSON from Generate Keys. It contains viewing_sk (decrypt announcements), spending_pk/spending_sk (derive stealth addresses and sign withdrawals)."
+                      className="text-muted-foreground"
+                    />
+                  </h2>
                   <p className="text-sm text-foreground/80 leading-relaxed">
                     Use the JSON file from <Link to="/generate" className="text-primary font-semibold hover:underline">Generate Keys</Link> page.
                     That file contains <code className="text-xs bg-muted/70 px-1.5 py-0.5 rounded">viewing_sk</code>,{" "}
@@ -181,7 +220,10 @@ export default function ScanPayments() {
               {/* File picker and paste - side by side */}
               <div className="grid md:grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Option A: Upload File</label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    Option A: Upload File
+                    <TooltipLabel label="" tooltip="Upload the keys JSON from Generate Keys (viewing_sk, spending_pk, spending_sk)." className="text-muted-foreground" />
+                  </label>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -204,7 +246,10 @@ export default function ScanPayments() {
                   </Button>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Option B: Paste JSON</label>
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    Option B: Paste JSON
+                    <TooltipLabel label="" tooltip="Paste the same keys JSON here if you don't have the file." className="text-muted-foreground" />
+                  </label>
                   <div className="flex gap-2">
                     <Input
                       placeholder='{"viewing_sk":"...","spending_pk":"...",...}'
@@ -250,7 +295,14 @@ export default function ScanPayments() {
                         2
                       </span>
                       <div>
-                        <h2 className="font-display font-bold text-xl mb-1">Run Scan</h2>
+                        <h2 className="font-display font-bold text-xl mb-1 flex items-center gap-2">
+                          Run Scan
+                          <TooltipLabel
+                            label=""
+                            tooltip="The backend scans announcements and uses your viewing key to find payments intended for you. Only you can see which announcements match."
+                            className="text-muted-foreground"
+                          />
+                        </h2>
                         <p className="text-sm text-muted-foreground leading-relaxed">
                           Scan the SPECTER registry (this backend) for payments sent to your stealth addresses.
                         </p>
@@ -330,30 +382,25 @@ export default function ScanPayments() {
 
                     {stats && (
                       <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 rounded-lg bg-muted/50">
-                          <div className="text-2xl font-display font-bold">
-                            {stats.total_scanned.toLocaleString()}
-                          </div>
-                          <div className="text-xs text-muted-foreground">Scanned</div>
-                        </div>
-                        <div className="p-4 rounded-lg bg-muted/50">
-                          <div className="text-2xl font-display font-bold text-accent">
-                            {stats.discoveries}
-                          </div>
-                          <div className="text-xs text-muted-foreground">Discoveries</div>
-                        </div>
-                        <div className="p-4 rounded-lg bg-muted/50">
-                          <div className="text-2xl font-display font-bold">
-                            {stats.duration_ms}ms
-                          </div>
-                          <div className="text-xs text-muted-foreground">Duration</div>
-                        </div>
-                        <div className="p-4 rounded-lg bg-muted/50">
-                          <div className="text-2xl font-display font-bold">
-                            {stats.rate.toFixed(0)}/s
-                          </div>
-                          <div className="text-xs text-muted-foreground">Rate</div>
-                        </div>
+                        {[
+                          { value: stats.total_scanned.toLocaleString(), label: "Scanned", accent: false },
+                          { value: String(stats.discoveries), label: "Discoveries", accent: true },
+                          { value: `${stats.duration_ms}ms`, label: "Duration", accent: false },
+                          { value: `${stats.rate.toFixed(0)}/s`, label: "Rate", accent: false },
+                        ].map((item, i) => (
+                          <motion.div
+                            key={item.label}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.05, duration: 0.2 }}
+                            className="p-4 rounded-lg bg-muted/50"
+                          >
+                            <div className={`text-2xl font-display font-bold ${item.accent ? "text-accent" : ""}`}>
+                              {item.value}
+                            </div>
+                            <div className="text-xs text-muted-foreground">{item.label}</div>
+                          </motion.div>
+                        ))}
                       </div>
                     )}
 
@@ -413,7 +460,10 @@ export default function ScanPayments() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-                  onClick={() => setSelectedPayment(null)}
+                  onClick={() => {
+                    setSelectedPayment(null);
+                    setRevealedPk(false);
+                  }}
                 >
                   <motion.div
                     initial={{ scale: 0.95, opacity: 0 }}
@@ -425,13 +475,34 @@ export default function ScanPayments() {
                     <h3 className="font-display text-xl font-bold mb-4">Discovered payment</h3>
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xs text-muted-foreground mb-1">Stealth address</div>
-                        <code className="text-sm font-mono break-all block">
-                          {selectedPayment.stealth_address}
-                        </code>
+                        <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+                          <TooltipLabel
+                            label="Stealth address"
+                            tooltip="One-time address for this payment. Use it or the private key to withdraw in your wallet."
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-sm font-mono break-all flex-1 min-w-0">
+                            {selectedPayment.stealth_address}
+                          </code>
+                          <CopyButton
+                            text={selectedPayment.stealth_address}
+                            label="Copy"
+                            successMessage="Address copied"
+                            variant="outline"
+                            size="sm"
+                            showLabel={true}
+                            tooltip="Copy stealth address"
+                          />
+                        </div>
                       </div>
                       <div>
-                        <div className="text-xs text-muted-foreground mb-1">Announcement #</div>
+                        <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+                          <TooltipLabel
+                            label="Announcement #"
+                            tooltip="Registry ID of the announcement that revealed this payment."
+                          />
+                        </div>
                         <span className="font-mono">{selectedPayment.announcement_id}</span>
                       </div>
                       <div className="p-4 rounded-lg bg-warning/10 border border-warning/20">
@@ -448,24 +519,114 @@ export default function ScanPayments() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex gap-3">
+                      {!revealedPk ? (
                         <Button
                           variant="outline"
-                          className="flex-1"
-                          onClick={() => setSelectedPayment(null)}
+                          className="w-full"
+                          onClick={() => setRevealedPk(true)}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          View / export private key
+                        </Button>
+                      ) : (
+                        <div className="space-y-3 p-4 rounded-lg bg-muted/50 border border-border">
+                          <p className="text-xs text-muted-foreground">
+                            Only use in a secure wallet; don't share.
+                          </p>
+                          <code className="text-xs font-mono break-all block bg-background/80 p-3 rounded border overflow-x-auto">
+                            {selectedPayment.eth_private_key}
+                          </code>
+                          
+                          {/* Address Verification Section */}
+                          {derivedAddress && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className={`p-3 rounded-lg border ${
+                                addressMatch
+                                  ? "bg-success/10 border-success/30"
+                                  : "bg-destructive/10 border-destructive/30"
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                {addressMatch ? (
+                                  <CheckCircle2 className="h-5 w-5 text-success shrink-0 mt-0.5" />
+                                ) : (
+                                  <XCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                                )}
+                                <div className="flex-1 space-y-2">
+                                  <div className="font-medium text-sm flex items-center gap-2">
+                                    {addressMatch ? (
+                                      <span className="text-success">✓ Address Verified</span>
+                                    ) : (
+                                      <span className="text-destructive">⚠️ Address Mismatch</span>
+                                    )}
+                                  </div>
+                                  <div className="space-y-1.5 text-xs">
+                                    <div>
+                                      <span className="text-muted-foreground">Derived from private key:</span>
+                                      <code className="block font-mono mt-1 break-all">{derivedAddress}</code>
+                                    </div>
+                                    {!addressMatch && (
+                                      <div className="pt-2 border-t border-border/50">
+                                        <span className="text-destructive font-medium">
+                                          Backend needs rebuild! Run: cd specter && cargo build --release
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+
+                          <div className="flex gap-2 flex-wrap">
+                            <CopyButton
+                              text={selectedPayment.eth_private_key}
+                              label="Copy private key"
+                              successMessage="Private key copied. Import in MetaMask: Account menu → Import account."
+                              variant="quantum"
+                              size="default"
+                              className="flex-1 min-w-[140px]"
+                              showLabel={true}
+                              tooltip="Copy to import in MetaMask or another wallet"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setRevealedPk(false)}
+                            >
+                              <EyeOff className="h-4 w-4 mr-2" />
+                              Hide private key
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-3">
+                        <Button
+                          variant="outline"
+                          className="flex-1 min-w-[100px]"
+                          onClick={() => {
+                            setSelectedPayment(null);
+                            setRevealedPk(false);
+                          }}
                         >
                           Close
                         </Button>
-                        <Button
-                          variant="quantum"
-                          className="flex-1"
-                          onClick={() => {
-                            navigator.clipboard.writeText(selectedPayment.stealth_address);
-                            toast.success("Address copied");
+                        <DownloadJsonButton
+                          data={{
+                            stealth_address: selectedPayment.stealth_address,
+                            announcement_id: selectedPayment.announcement_id,
+                            timestamp: selectedPayment.timestamp,
+                            ...(revealedPk ? { eth_private_key: selectedPayment.eth_private_key } : {}),
+                            ...(revealedPk ? { note: "Keep eth_private_key secure. Do not share." } : {}),
                           }}
-                        >
-                          Copy address
-                        </Button>
+                          filename={`specter-discovery-${selectedPayment.announcement_id}-${selectedPayment.stealth_address.slice(2, 10)}.json`}
+                          label="Download details"
+                          variant="outline"
+                          size="default"
+                          tooltip="Save discovery details as JSON (no private key included unless you reveal it first)"
+                        />
                       </div>
                     </div>
                   </motion.div>

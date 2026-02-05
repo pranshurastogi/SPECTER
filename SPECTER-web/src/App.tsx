@@ -12,7 +12,7 @@ import NotFound from "./pages/NotFound";
 
 const App = () => (
   <WalletProvider>
-    <TooltipProvider>
+    <TooltipProvider delayDuration={300}>
       <Toaster />
       <Sonner />
       <BrowserRouter>
