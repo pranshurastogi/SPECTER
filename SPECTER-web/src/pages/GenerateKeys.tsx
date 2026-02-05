@@ -15,6 +15,12 @@ import {
   Info,
   Clipboard,
   Download,
+  CheckCircle2,
+  Circle,
+  ChevronRight,
+  Globe,
+  Database,
+  Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
@@ -231,64 +237,431 @@ export default function GenerateKeys() {
                           </motion.div>
                         </div>
 
-                        {/* Upload to IPFS */}
-                        <div className="space-y-3 pt-2 border-t border-border">
-                          <label className="block text-sm font-medium">Upload to IPFS (optional)</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              placeholder="e.g. alice.eth (for Pinata metadata)"
-                              value={ensName}
-                              onChange={(e) => setEnsName(e.target.value)}
-                              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                            />
-                            <Button
-                              variant="outline"
-                              onClick={handleUploadToIpfs}
-                              disabled={uploading}
-                            >
-                              {uploading ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <>
-                                  <Upload className="h-4 w-4 mr-2" />
-                                  Upload
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                          {uploadResult && (
-                            <div className="p-4 rounded-lg border border-primary/20 bg-primary/5 space-y-4">
-                              <div className="flex items-start gap-2">
-                                <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                                <div className="text-sm space-y-3">
-                                  <p className="font-medium">Set this IPFS hash in ENS so others can send you private payments</p>
-                                  <p className="text-muted-foreground">
-                                    You must set your ENS name to point to this IPFS content. Choose <strong>one</strong> of the two methods below:
-                                  </p>
-                                  <div className="space-y-3 text-muted-foreground">
-                                    <div className="p-3 rounded-lg bg-background/80 border border-border">
-                                      <p className="font-medium text-foreground mb-1">Option A: Content Hash (recommended)</p>
-                                      <p className="text-xs mb-2">In the ENS app (e.g. app.ens.domains), go to your name → Records → <strong>Content Hash</strong>. Set the value to:</p>
-                                      <code className="block break-all text-xs bg-muted px-2 py-1 rounded">{uploadResult.text_record}</code>
-                                      <p className="text-xs mt-2">This is the standard ENS field for IPFS/decentralized content.</p>
-                                    </div>
-                                    <div className="p-3 rounded-lg bg-background/80 border border-border">
-                                      <p className="font-medium text-foreground mb-1">Option B: Text record &quot;specter&quot;</p>
-                                      <p className="text-xs mb-2">In the ENS app, add a text record with key <code className="bg-muted px-1 rounded">specter</code> and value:</p>
-                                      <code className="block break-all text-xs bg-muted px-2 py-1 rounded">{uploadResult.text_record}</code>
-                                      <p className="text-xs mt-2">The SPECTER backend resolves names using this record.</p>
-                                    </div>
+                        {/* ENS Setup Flow - Step by Step */}
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.2 }}
+                          className="pt-6 border-t border-border space-y-6"
+                        >
+                          {/* Section Header with Flow Diagram */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-3">
+                              <Sparkles className="h-5 w-5 text-primary animate-pulse" />
+                              <h3 className="font-display text-lg font-bold bg-gradient-to-r from-primary via-accent to-primary bg-clip-text text-transparent">
+                                Enable ENS Payments (Optional)
+                              </h3>
+                            </div>
+                            <p className="text-sm text-muted-foreground">
+                              Let others send you private payments to your ENS name (e.g. alice.eth) by following these steps:
+                            </p>
+                            
+                            {/* Visual Flow Diagram */}
+                            <div className="relative">
+                              <div className="flex items-center justify-between gap-2 p-4 rounded-lg bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5 border border-primary/20">
+                                <div className="flex flex-col items-center flex-1 text-center">
+                                  <div className="w-10 h-10 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center mb-2">
+                                    <Database className="h-5 w-5 text-primary" />
                                   </div>
-                                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                                    <Clipboard className="h-3 w-3" />
-                                    For step-by-step instructions and validation, use the <Link to="/ens" className="text-primary hover:underline">ENS Manager</Link>.
-                                  </p>
+                                  <p className="text-xs font-medium">Upload to<br/>IPFS</p>
+                                </div>
+                                <ChevronRight className="h-5 w-5 text-primary/50 shrink-0" />
+                                <div className="flex flex-col items-center flex-1 text-center">
+                                  <div className="w-10 h-10 rounded-full bg-accent/10 border-2 border-accent/30 flex items-center justify-center mb-2">
+                                    <Clipboard className="h-5 w-5 text-accent" />
+                                  </div>
+                                  <p className="text-xs font-medium">Copy IPFS<br/>Hash</p>
+                                </div>
+                                <ChevronRight className="h-5 w-5 text-primary/50 shrink-0" />
+                                <div className="flex flex-col items-center flex-1 text-center">
+                                  <div className="w-10 h-10 rounded-full bg-primary/10 border-2 border-primary/30 flex items-center justify-center mb-2">
+                                    <Globe className="h-5 w-5 text-primary" />
+                                  </div>
+                                  <p className="text-xs font-medium">Set in<br/>ENS</p>
+                                </div>
+                                <ChevronRight className="h-5 w-5 text-primary/50 shrink-0" />
+                                <div className="flex flex-col items-center flex-1 text-center">
+                                  <div className="w-10 h-10 rounded-full bg-success/10 border-2 border-success/30 flex items-center justify-center mb-2">
+                                    <CheckCircle2 className="h-5 w-5 text-success" />
+                                  </div>
+                                  <p className="text-xs font-medium">Receive<br/>Payments</p>
                                 </div>
                               </div>
                             </div>
-                          )}
-                        </div>
+                          </div>
+
+                          {/* Step 1: Upload to IPFS */}
+                          <motion.div
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.3 }}
+                            className="relative"
+                          >
+                            <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-primary/50 to-transparent" />
+                            <div className={`p-5 rounded-xl border-2 transition-all duration-300 ${
+                              uploadResult 
+                                ? "bg-success/5 border-success/30" 
+                                : "bg-gradient-to-br from-primary/10 to-accent/10 border-primary/30"
+                            }`}>
+                              <div className="flex items-start gap-4">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                                  uploadResult 
+                                    ? "bg-success/20 border-success text-success" 
+                                    : "bg-primary/20 border-primary text-primary"
+                                }`}>
+                                  {uploadResult ? (
+                                    <CheckCircle2 className="h-5 w-5" />
+                                  ) : (
+                                    <span className="font-bold">1</span>
+                                  )}
+                                </div>
+                                <div className="flex-1 space-y-3">
+                                  <div>
+                                    <h4 className="font-display font-semibold text-base mb-1 flex items-center gap-2">
+                                      Upload Your Meta-Address to IPFS
+                                      {uploadResult && <CheckCircle2 className="h-4 w-4 text-success" />}
+                                    </h4>
+                                    <p className="text-sm text-muted-foreground">
+                                      Store your SPECTER keys on IPFS so they can be resolved via ENS
+                                    </p>
+                                  </div>
+                                  
+                                  {!uploadResult && (
+                                    <div className="space-y-2">
+                                      <div className="flex gap-2">
+                                        <input
+                                          type="text"
+                                          placeholder="Your ENS name (e.g. alice.eth)"
+                                          value={ensName}
+                                          onChange={(e) => setEnsName(e.target.value)}
+                                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                        <Button
+                                          variant="quantum"
+                                          onClick={handleUploadToIpfs}
+                                          disabled={uploading}
+                                          className="shrink-0"
+                                        >
+                                          {uploading ? (
+                                            <>
+                                              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                              Uploading...
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Upload className="h-4 w-4 mr-2" />
+                                              Upload
+                                            </>
+                                          )}
+                                        </Button>
+                                      </div>
+                                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                        <Info className="h-3 w-3" />
+                                        ENS name is optional but helps with metadata on IPFS
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  {uploadResult && (
+                                    <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                                      <p className="text-sm font-medium text-success mb-1 flex items-center gap-2">
+                                        <CheckCircle2 className="h-4 w-4" />
+                                        Successfully uploaded to IPFS
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        CID: <code className="font-mono">{uploadResult.cid.slice(0, 20)}...</code>
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Step 2: Copy IPFS Hash */}
+                          <motion.div
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: uploadResult ? 1 : 0.4, x: 0 }}
+                            transition={{ delay: 0.4 }}
+                            className="relative"
+                          >
+                            <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-primary/50 to-transparent" />
+                            <div className={`p-5 rounded-xl border-2 transition-all duration-300 ${
+                              uploadResult 
+                                ? "bg-gradient-to-br from-primary/10 to-accent/10 border-primary/30" 
+                                : "bg-muted/20 border-border"
+                            }`}>
+                              <div className="flex items-start gap-4">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                                  uploadResult 
+                                    ? "bg-primary/20 border-primary text-primary" 
+                                    : "bg-muted border-muted-foreground/30 text-muted-foreground"
+                                }`}>
+                                  <span className="font-bold">2</span>
+                                </div>
+                                <div className="flex-1 space-y-3">
+                                  <div>
+                                    <h4 className="font-display font-semibold text-base mb-1">
+                                      Copy the IPFS Hash
+                                    </h4>
+                                    <p className="text-sm text-muted-foreground">
+                                      This is the exact value you'll add to your ENS name
+                                    </p>
+                                  </div>
+                                  
+                                  {uploadResult ? (
+                                    <div className="space-y-3">
+                                      <div className="p-4 rounded-lg bg-background border-2 border-primary/30 shadow-lg shadow-primary/10">
+                                        <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+                                          📋 Value to Add in ENS
+                                        </p>
+                                        <div className="flex items-center gap-2 p-3 rounded-md bg-muted/50 border border-border">
+                                          <code className="flex-1 text-sm font-mono break-all select-all text-foreground">
+                                            {uploadResult.text_record}
+                                          </code>
+                                          <CopyButton
+                                            text={uploadResult.text_record}
+                                            variant="default"
+                                            size="sm"
+                                            showLabel={true}
+                                            label="Copy"
+                                            successMessage="✓ Copied! Now paste this in ENS"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="flex items-start gap-2 p-3 rounded-lg bg-accent/10 border border-accent/20">
+                                        <Info className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+                                        <p className="text-xs text-muted-foreground">
+                                          <strong className="text-foreground">Important:</strong> Copy this exact value including the <code className="bg-muted px-1 rounded">ipfs://</code> prefix
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
+                                      <p className="text-sm text-muted-foreground text-center">
+                                        Complete Step 1 to get your IPFS hash
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Step 3: Set in ENS */}
+                          <motion.div
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: uploadResult ? 1 : 0.4, x: 0 }}
+                            transition={{ delay: 0.5 }}
+                            className="relative"
+                          >
+                            <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-primary/50 to-transparent" />
+                            <div className={`p-5 rounded-xl border-2 transition-all duration-300 ${
+                              uploadResult 
+                                ? "bg-gradient-to-br from-accent/10 to-primary/10 border-accent/30" 
+                                : "bg-muted/20 border-border"
+                            }`}>
+                              <div className="flex items-start gap-4">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                                  uploadResult 
+                                    ? "bg-accent/20 border-accent text-accent" 
+                                    : "bg-muted border-muted-foreground/30 text-muted-foreground"
+                                }`}>
+                                  <span className="font-bold">3</span>
+                                </div>
+                                <div className="flex-1 space-y-4">
+                                  <div>
+                                    <h4 className="font-display font-semibold text-base mb-1">
+                                      Set the Value in Your ENS Name
+                                    </h4>
+                                    <p className="text-sm text-muted-foreground">
+                                      Add the IPFS hash to your ENS records so others can resolve your SPECTER keys
+                                    </p>
+                                  </div>
+                                  
+                                  {uploadResult ? (
+                                    <div className="space-y-4">
+                                      {/* Sub-step 3.1 */}
+                                      <div className="pl-4 border-l-2 border-accent/30 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold">
+                                            a
+                                          </div>
+                                          <p className="text-sm font-medium">Open the ENS Manager</p>
+                                        </div>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          asChild
+                                          className="w-full sm:w-auto"
+                                        >
+                                          <a
+                                            href={ensName.trim() ? `https://app.ens.domains/${ensName.replace(/\.eth$/i, "")}.eth` : "https://app.ens.domains"}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-2"
+                                          >
+                                            <Globe className="h-4 w-4" />
+                                            Open app.ens.domains
+                                            <ExternalLink className="h-3 w-3" />
+                                          </a>
+                                        </Button>
+                                        {ensName.trim() && (
+                                          <p className="text-xs text-muted-foreground pl-8">
+                                            Opens directly to: <code className="bg-muted px-1 rounded">{ensName.replace(/\.eth$/i, "")}.eth</code>
+                                          </p>
+                                        )}
+                                      </div>
+
+                                      {/* Sub-step 3.2 */}
+                                      <div className="pl-4 border-l-2 border-accent/30 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold">
+                                            b
+                                          </div>
+                                          <p className="text-sm font-medium">Connect your wallet</p>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground pl-8">
+                                          Use the wallet that controls your ENS name (owner or manager)
+                                        </p>
+                                      </div>
+
+                                      {/* Sub-step 3.3 */}
+                                      <div className="pl-4 border-l-2 border-accent/30 space-y-3">
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold">
+                                            c
+                                          </div>
+                                          <p className="text-sm font-medium">Choose ONE of these options:</p>
+                                        </div>
+                                        
+                                        <div className="pl-8 space-y-3">
+                                          {/* Option A */}
+                                          <div className="p-3 rounded-lg bg-primary/10 border border-primary/30">
+                                            <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                              <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-bold">RECOMMENDED</span>
+                                              Option A: Content Hash
+                                            </p>
+                                            <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                                              <li>Navigate to <strong>Records</strong> tab</li>
+                                              <li>Find the <strong>Content Hash</strong> field</li>
+                                              <li>Click Edit and paste the IPFS hash (from Step 2)</li>
+                                              <li>Save changes</li>
+                                            </ol>
+                                          </div>
+
+                                          {/* Option B */}
+                                          <div className="p-3 rounded-lg bg-muted/30 border border-border">
+                                            <p className="text-sm font-medium mb-2">
+                                              Option B: Text Record "specter"
+                                            </p>
+                                            <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                                              <li>Navigate to <strong>Records</strong> tab</li>
+                                              <li>Add a new <strong>Text Record</strong></li>
+                                              <li>Set key to: <code className="bg-muted px-1 rounded">specter</code></li>
+                                              <li>Set value to: the IPFS hash (from Step 2)</li>
+                                              <li>Save changes</li>
+                                            </ol>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Sub-step 3.4 */}
+                                      <div className="pl-4 border-l-2 border-accent/30 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-xs font-bold">
+                                            d
+                                          </div>
+                                          <p className="text-sm font-medium">Sign the transaction</p>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground pl-8">
+                                          Confirm the transaction in your wallet. Gas fees typically range from $5-20 depending on network conditions.
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 rounded-lg bg-muted/30 border border-dashed border-muted-foreground/30">
+                                      <p className="text-sm text-muted-foreground text-center">
+                                        Complete Steps 1 & 2 first
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Step 4: Success */}
+                          <motion.div
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: uploadResult ? 1 : 0.4, x: 0 }}
+                            transition={{ delay: 0.6 }}
+                            className="relative"
+                          >
+                            <div className={`p-5 rounded-xl border-2 transition-all duration-300 ${
+                              uploadResult 
+                                ? "bg-gradient-to-br from-success/10 to-primary/10 border-success/30" 
+                                : "bg-muted/20 border-border"
+                            }`}>
+                              <div className="flex items-start gap-4">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border-2 ${
+                                  uploadResult 
+                                    ? "bg-success/20 border-success text-success" 
+                                    : "bg-muted border-muted-foreground/30 text-muted-foreground"
+                                }`}>
+                                  <CheckCircle2 className="h-5 w-5" />
+                                </div>
+                                <div className="flex-1 space-y-3">
+                                  <div>
+                                    <h4 className="font-display font-semibold text-base mb-1">
+                                      You're All Set!
+                                    </h4>
+                                    <p className="text-sm text-muted-foreground">
+                                      Once the ENS transaction confirms, others can send you private payments to your ENS name
+                                    </p>
+                                  </div>
+                                  
+                                  {uploadResult && (
+                                    <div className="space-y-3">
+                                      <div className="p-4 rounded-lg bg-gradient-to-r from-success/10 to-primary/10 border border-success/20">
+                                        <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                          <Sparkles className="h-4 w-4 text-success" />
+                                          What happens next:
+                                        </p>
+                                        <ul className="text-xs text-muted-foreground space-y-1.5">
+                                          <li className="flex items-start gap-2">
+                                            <ChevronRight className="h-3 w-3 text-success shrink-0 mt-0.5" />
+                                            <span>Anyone can resolve your ENS name to get your SPECTER keys</span>
+                                          </li>
+                                          <li className="flex items-start gap-2">
+                                            <ChevronRight className="h-3 w-3 text-success shrink-0 mt-0.5" />
+                                            <span>Senders generate unique stealth addresses for each payment</span>
+                                          </li>
+                                          <li className="flex items-start gap-2">
+                                            <ChevronRight className="h-3 w-3 text-success shrink-0 mt-0.5" />
+                                            <span>Only you can discover and spend from those addresses</span>
+                                          </li>
+                                        </ul>
+                                      </div>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        asChild
+                                        className="w-full sm:w-auto"
+                                      >
+                                        <Link to="/ens" className="inline-flex items-center gap-2">
+                                          <Globe className="h-4 w-4" />
+                                          Verify in ENS Manager
+                                          <ArrowRight className="h-3 w-3" />
+                                        </Link>
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </motion.div>
 
                         <motion.div
                           initial={{ opacity: 0 }}

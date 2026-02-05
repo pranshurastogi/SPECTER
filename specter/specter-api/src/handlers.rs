@@ -21,12 +21,6 @@ use crate::state::AppState;
 
 type Result<T> = std::result::Result<T, ApiError>;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// KEY GENERATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Generates a new SPECTER key set.
-///
 /// POST /api/v1/keys/generate
 pub async fn generate_keys(
     State(_state): State<Arc<AppState>>,
@@ -54,26 +48,17 @@ pub async fn generate_keys(
     Ok(Json(response))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// STEALTH ADDRESS CREATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Creates a stealth payment address.
-///
 /// POST /api/v1/stealth/create
 pub async fn create_stealth(
     State(_state): State<Arc<AppState>>,
     Json(req): Json<CreateStealthRequest>,
 ) -> Result<Json<CreateStealthResponse>> {
-    // Parse meta-address
     let meta = MetaAddress::from_hex(&req.meta_address)
         .map_err(|e| ApiError::bad_request(format!("Invalid meta_address: {}", e)))?;
 
-    // Create stealth payment
     let payment = create_stealth_payment(&meta)
         .map_err(|e| ApiError::internal(format!("Failed to create stealth payment: {}", e)))?;
 
-    // Build response
     let response = CreateStealthResponse {
         stealth_address: payment.stealth_address.to_checksum_string(),
         ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
@@ -90,13 +75,6 @@ pub async fn create_stealth(
     Ok(Json(response))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SCANNING
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Scans announcements for payments.
-///
-/// Strip optional "0x" prefix from hex strings (frontend may send with or without).
 fn strip_hex_prefix(s: &str) -> &str {
     let s = s.trim();
     if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
@@ -113,14 +91,11 @@ pub async fn scan_payments(
 ) -> Result<Json<ScanResponse>> {
     let start = Instant::now();
 
-    // Parse keys (accept hex with or without 0x prefix)
     let viewing_sk = hex::decode(strip_hex_prefix(&req.viewing_sk))?;
     let spending_pk = hex::decode(strip_hex_prefix(&req.spending_pk))?;
     let spending_sk = hex::decode(strip_hex_prefix(&req.spending_sk))?;
 
-    // Get announcements to scan
     let announcements = if let Some(tags) = &req.view_tags {
-        // Filter by view tags
         let mut all = Vec::new();
         for tag in tags {
             let matching = state.registry.get_by_view_tag(*tag).await
@@ -129,17 +104,14 @@ pub async fn scan_payments(
         }
         all
     } else if let (Some(from), Some(to)) = (req.from_timestamp, req.to_timestamp) {
-        // Filter by time range
         state.registry.get_by_time_range(from, to).await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else {
-        // Get all (expensive for large registries)
         state.registry.all_announcements()
     };
 
     let total_scanned = announcements.len() as u64;
 
-    // Scan for discoveries
     let discoveries = specter_stealth::discovery::scan_with_context(
         &announcements,
         &viewing_sk,
@@ -149,7 +121,6 @@ pub async fn scan_payments(
 
     let elapsed = start.elapsed();
 
-    // Build response
     let discovery_dtos: Vec<DiscoveryDto> = discoveries
         .into_iter()
         .map(|d| DiscoveryDto {
@@ -164,7 +135,7 @@ pub async fn scan_payments(
 
     let stats = ScanStatsDto {
         total_scanned,
-        view_tag_matches: discovery_dtos.len() as u64, // Approximation
+        view_tag_matches: discovery_dtos.len() as u64,
         discoveries: discovery_dtos.len() as u64,
         duration_ms: elapsed.as_millis() as u64,
         rate: if elapsed.as_secs_f64() > 0.0 {
@@ -187,12 +158,6 @@ pub async fn scan_payments(
     }))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ENS RESOLUTION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Resolves an ENS name to a meta-address.
-///
 /// GET /api/v1/ens/resolve/:name
 pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
@@ -212,8 +177,6 @@ pub async fn resolve_ens(
     Ok(Json(response))
 }
 
-/// Uploads a meta-address to IPFS.
-///
 /// POST /api/v1/ens/upload
 pub async fn upload_ipfs(
     State(state): State<Arc<AppState>>,
@@ -230,12 +193,6 @@ pub async fn upload_ipfs(
     Ok(Json(UploadIpfsResponse { cid, text_record }))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// REGISTRY
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Publishes an announcement to the registry.
-///
 /// POST /api/v1/registry/announcements
 pub async fn publish_announcement(
     State(state): State<Arc<AppState>>,
@@ -270,8 +227,6 @@ pub async fn publish_announcement(
     Ok(Json(PublishAnnouncementResponse { id, success: true }))
 }
 
-/// Lists announcements from the registry.
-///
 /// GET /api/v1/registry/announcements
 pub async fn list_announcements(
     State(state): State<Arc<AppState>>,
@@ -289,7 +244,6 @@ pub async fn list_announcements(
 
     let total = announcements.len() as u64;
 
-    // Apply pagination
     let offset = params.offset.unwrap_or(0) as usize;
     let limit = params.limit.unwrap_or(100) as usize;
     
@@ -306,8 +260,6 @@ pub async fn list_announcements(
     }))
 }
 
-/// Gets registry statistics.
-///
 /// GET /api/v1/registry/stats
 pub async fn get_registry_stats(
     State(state): State<Arc<AppState>>,
@@ -331,14 +283,8 @@ pub async fn get_registry_stats(
     }))
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HEALTH CHECK
-// ═══════════════════════════════════════════════════════════════════════════════
-
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
-/// Health check endpoint.
-///
 /// GET /health
 pub async fn health_check(
     State(state): State<Arc<AppState>>,

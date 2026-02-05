@@ -10,28 +10,17 @@ use axum::{
 use crate::handlers;
 use crate::state::AppState;
 
-/// Creates the API router with all routes configured.
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
-        // Health check
         .route("/health", get(handlers::health_check))
-        
-        // Key generation
         .route("/api/v1/keys/generate", post(handlers::generate_keys))
-        
-        // Stealth operations
         .route("/api/v1/stealth/create", post(handlers::create_stealth))
         .route("/api/v1/stealth/scan", post(handlers::scan_payments))
-        
-        // ENS integration
         .route("/api/v1/ens/resolve/:name", get(handlers::resolve_ens))
         .route("/api/v1/ens/upload", post(handlers::upload_ipfs))
-        
-        // Registry
         .route("/api/v1/registry/announcements", get(handlers::list_announcements))
         .route("/api/v1/registry/announcements", post(handlers::publish_announcement))
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
-        
         .with_state(state)
 }
 

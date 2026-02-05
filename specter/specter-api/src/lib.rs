@@ -1,25 +1,4 @@
-//! # SPECTER API Server
-//!
-//! REST API for the SPECTER protocol, designed to be consumed by the Next.js frontend.
-//!
-//! ## Endpoints
-//!
-//! - `POST /api/v1/keys/generate` - Generate new SPECTER keys
-//! - `POST /api/v1/stealth/create` - Create stealth payment address
-//! - `POST /api/v1/stealth/scan` - Scan announcements for payments
-//! - `GET /api/v1/ens/resolve/:name` - Resolve ENS to meta-address
-//! - `POST /api/v1/registry/publish` - Publish announcement
-//! - `GET /api/v1/registry/announcements` - Get announcements
-//!
-//! ## Example
-//!
-//! ```rust,ignore
-//! use specter_api::{ApiServer, ApiConfig};
-//!
-//! let config = ApiConfig::default();
-//! let server = ApiServer::new(config);
-//! server.run("0.0.0.0:3001").await?;
-//! ```
+//! SPECTER REST API. See README and routes for endpoints.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]

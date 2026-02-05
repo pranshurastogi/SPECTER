@@ -3,7 +3,7 @@
 # that the discovered eth_private_key derives to the stealth_address (wallet compatibility).
 #
 # Prerequisites:
-#   - Server running from specter/ (not specter-backend): cd specter && cargo run --bin specter -- serve --port 3001
+#   - Server: cd specter && cargo run --bin specter -- serve --port 3001
 #   - curl, jq
 #   - Node (with ethers) or Python (with eth_account) to verify address from private key
 set -e

@@ -32,3 +32,7 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 rand_chacha = { workspace = true }
 
+[[bench]]
+name = "crypto_bench"
+harness = false
+

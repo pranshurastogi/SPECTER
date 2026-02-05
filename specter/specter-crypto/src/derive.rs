@@ -88,27 +88,7 @@ impl std::fmt::Debug for StealthPrivateKey {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// STEALTH PUBLIC KEY DERIVATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Derives a stealth public key from the spending public key and shared secret.
-///
-/// # Algorithm
-///
-/// ```text
-/// stealth_factor = SHAKE256(DOMAIN_STEALTH_PK || shared_secret, 1184)
-/// stealth_pk = spending_pk ⊕ stealth_factor
-/// ```
-///
-/// # Arguments
-///
-/// * `spending_pk` - The recipient's spending public key (1184 bytes)
-/// * `shared_secret` - The shared secret from Kyber encapsulation
-///
-/// # Returns
-///
-/// The stealth public key (1184 bytes)
+/// stealth_factor = SHAKE256(DOMAIN_STEALTH_PK || shared_secret, 1184); stealth_pk = spending_pk ⊕ stealth_factor
 pub fn derive_stealth_public_key(spending_pk: &[u8], shared_secret: &[u8]) -> Result<Vec<u8>> {
     if spending_pk.len() != KYBER_PUBLIC_KEY_SIZE {
         return Err(SpecterError::InvalidKeySize {
@@ -117,7 +97,6 @@ pub fn derive_stealth_public_key(spending_pk: &[u8], shared_secret: &[u8]) -> Re
         });
     }
 
-    // Derive stealth factor
     let stealth_factor = shake256(DOMAIN_STEALTH_PK, shared_secret, KYBER_PUBLIC_KEY_SIZE);
 
     // XOR with spending public key
@@ -130,28 +109,7 @@ pub fn derive_stealth_public_key(spending_pk: &[u8], shared_secret: &[u8]) -> Re
     Ok(stealth_pk)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// STEALTH PRIVATE KEY DERIVATION
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Derives a stealth private key from the spending secret key and shared secret.
-///
-/// # Algorithm
-///
-/// ```text
-/// stealth_factor = SHAKE256(DOMAIN_STEALTH_SK || shared_secret, 2400)
-/// stealth_sk = spending_sk ⊕ stealth_factor
-/// ```
-///
-/// # Security
-///
-/// This function handles sensitive key material. The output is automatically
-/// zeroized when dropped.
-///
-/// # Arguments
-///
-/// * `spending_sk` - The recipient's spending secret key (2400 bytes)
-/// * `shared_secret` - The shared secret from Kyber decapsulation
+/// stealth_factor = SHAKE256(DOMAIN_STEALTH_SK || shared_secret, 2400); stealth_sk = spending_sk ⊕ stealth_factor. Output is zeroized on drop.
 pub fn derive_stealth_private_key(
     spending_sk: &[u8],
     shared_secret: &[u8],
@@ -163,7 +121,6 @@ pub fn derive_stealth_private_key(
         });
     }
 
-    // Derive stealth factor
     let stealth_factor = shake256(DOMAIN_STEALTH_SK, shared_secret, KYBER_SECRET_KEY_SIZE);
 
     // XOR with spending secret key

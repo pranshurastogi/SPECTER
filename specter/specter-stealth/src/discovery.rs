@@ -1,7 +1,4 @@
-//! Payment discovery (scanning) for recipients.
-//!
-//! This module provides the recipient-side operations for discovering
-//! incoming stealth payments by scanning announcements.
+//! Payment discovery (recipient scan).
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{Announcement, EthAddress};
@@ -93,39 +90,17 @@ impl ScanStats {
 }
 
 
-/// Scans a single announcement to check if it's addressed to us.
-///
-/// # Algorithm
-///
-/// 1. Decapsulate the ephemeral key using our viewing secret key
-/// 2. Compute the view tag from the shared secret
-/// 3. If view tag matches, derive the stealth keys
-/// 4. Return the stealth address and private key for spending
-///
-/// # Arguments
-///
-/// * `announcement` - The announcement to scan
-/// * `viewing_sk` - Our viewing secret key (for decapsulation)
-/// * `spending_pk` - Our spending public key (for address derivation)
-/// * `spending_sk` - Our spending secret key (for private key derivation)
-///
-/// # Performance
-///
-/// This function performs one Kyber decapsulation (~20µs) per call.
-/// The view tag check happens after decapsulation because we need the
-/// shared secret to compute the expected view tag.
+/// Decapsulate with viewing_sk; if view tag matches, derive stealth keys.
 pub fn scan_announcement(
     announcement: &Announcement,
     viewing_sk: &[u8],
     spending_pk: &[u8],
     spending_sk: &[u8],
 ) -> ScanResult {
-    // Validate announcement
     if let Err(e) = announcement.validate() {
         return ScanResult::DecapsulationFailed(e);
     }
 
-    // Decapsulate to get shared secret
     let ciphertext = match KyberCiphertext::from_bytes(&announcement.ephemeral_key) {
         Ok(ct) => ct,
         Err(e) => return ScanResult::DecapsulationFailed(e),
@@ -141,22 +116,17 @@ pub fn scan_announcement(
         Err(e) => return ScanResult::DecapsulationFailed(e),
     };
 
-    // Compute expected view tag
     let expected_view_tag = compute_view_tag(&shared_secret);
-
-    // Check if view tag matches
     if expected_view_tag != announcement.view_tag {
         return ScanResult::NotForUs;
     }
 
-    // View tag matches! Derive stealth keys
     match derive_stealth_keys(spending_pk, spending_sk, &shared_secret) {
         Ok(keys) => ScanResult::Discovered(keys),
         Err(e) => ScanResult::DecapsulationFailed(e),
     }
 }
 
-/// Scans multiple announcements and returns all discovered payments.
 pub fn scan_announcements(
     announcements: &[Announcement],
     viewing_sk: &[u8],
@@ -175,18 +145,13 @@ pub fn scan_announcements(
         .collect()
 }
 
-/// Discovery result with full context.
 #[derive(Debug)]
 pub struct DiscoveryResult {
-    /// The announcement that was discovered
     pub announcement: Announcement,
-    /// The derived stealth keys
     pub keys: StealthKeys,
-    /// Index in the scanned batch
     pub index: usize,
 }
 
-/// Scans announcements and returns full discovery results.
 pub fn scan_with_context(
     announcements: &[Announcement],
     viewing_sk: &[u8],
@@ -209,7 +174,6 @@ pub fn scan_with_context(
         .collect()
 }
 
-/// Verifies an address was derived from an announcement.
 pub fn verify_address_from_announcement(
     announcement: &Announcement,
     viewing_sk: &[u8],

@@ -1,10 +1,4 @@
-//! Stealth payment creation for senders.
-//!
-//! This module provides the sender-side operations for creating
-//! stealth payments to a recipient's meta-address.
-//!
-//! This module provides the sender-side functionality for creating
-//! stealth payments to recipients.
+//! Stealth payment creation (sender side).
 
 use serde::{Deserialize, Serialize};
 
@@ -13,11 +7,7 @@ use specter_core::types::{Announcement, EthAddress, MetaAddress, StealthAddressR
 use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
 use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys};
 
-/// A complete stealth payment ready to be sent.
-///
-/// Contains everything needed to:
-/// 1. Send funds to the stealth address
-/// 2. Publish the announcement for the recipient
+/// Stealth payment: address to send to and announcement to publish.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StealthPayment {
     /// The one-time Ethereum address to send funds to
@@ -41,58 +31,16 @@ pub struct PaymentMetadata {
     pub memo: Option<String>,
 }
 
-/// Creates a stealth payment to a recipient's meta-address.
-///
-/// # Flow
-///
-/// 1. Encapsulate to viewing public key → (ciphertext, shared_secret)
-/// 2. Compute view tag from shared_secret
-/// 3. Derive stealth address from spending_pk + shared_secret
-/// 4. Build announcement with ciphertext + view_tag
-///
-/// # Arguments
-///
-/// * `meta_address` - The recipient's published meta-address
-///
-/// # Returns
-///
-/// A `StealthPayment` containing the address to send to and the announcement to publish.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use specter_stealth::create_stealth_payment;
-///
-/// // Resolve recipient's meta-address from ENS
-/// let meta_address = ens_resolve("alice.eth").await?;
-///
-/// // Create the stealth payment
-/// let payment = create_stealth_payment(&meta_address)?;
-///
-/// // Send funds to the stealth address
-/// send_eth(payment.stealth_address, amount).await?;
-///
-/// // Publish the announcement so recipient can discover it
-/// registry.publish(payment.announcement).await?;
-/// ```
+/// Creates a stealth payment: encapsulate to viewing key, derive stealth address, build announcement.
 pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayment> {
-    // Validate meta-address
     meta_address.validate()?;
 
-    // Encapsulate to the viewing public key
-    // This creates the ephemeral key that goes in the announcement
     let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
-
-    // Compute view tag for efficient scanning
     let view_tag = compute_view_tag(&shared_secret);
-
-    // Derive the stealth address using the spending public key
     let stealth_address = derive_stealth_address(
         meta_address.spending_pk.as_bytes(),
         &shared_secret,
     )?;
-
-    // Build the announcement
     let announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
 
     Ok(StealthPayment {
@@ -102,7 +50,6 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
     })
 }
 
-/// Creates a stealth payment with metadata.
 pub fn create_stealth_payment_with_metadata(
     meta_address: &MetaAddress,
     metadata: PaymentMetadata,
@@ -112,7 +59,6 @@ pub fn create_stealth_payment_with_metadata(
     Ok(payment)
 }
 
-/// Builder for creating stealth payments with various options.
 #[derive(Default)]
 pub struct StealthPaymentBuilder {
     meta_address: Option<MetaAddress>,
@@ -124,48 +70,40 @@ pub struct StealthPaymentBuilder {
 }
 
 impl StealthPaymentBuilder {
-    /// Creates a new payment builder.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets the recipient's meta-address (required).
     pub fn recipient(mut self, meta_address: MetaAddress) -> Self {
         self.meta_address = Some(meta_address);
         self
     }
 
-    /// Sets the recipient's ENS name (for metadata).
     pub fn recipient_ens(mut self, name: impl Into<String>) -> Self {
         self.recipient_ens = Some(name.into());
         self
     }
 
-    /// Sets the payment amount (for metadata).
     pub fn amount(mut self, amount: impl Into<String>) -> Self {
         self.amount = Some(amount.into());
         self
     }
 
-    /// Sets the token type (for metadata).
     pub fn token(mut self, token: impl Into<String>) -> Self {
         self.token = Some(token.into());
         self
     }
 
-    /// Sets a memo (for metadata).
     pub fn memo(mut self, memo: impl Into<String>) -> Self {
         self.memo = Some(memo.into());
         self
     }
 
-    /// Sets a Yellow channel ID for trading integration.
     pub fn channel_id(mut self, id: [u8; 32]) -> Self {
         self.channel_id = Some(id);
         self
     }
 
-    /// Builds the stealth payment.
     pub fn build(self) -> Result<StealthPayment> {
         let meta_address = self
             .meta_address
@@ -173,15 +111,12 @@ impl StealthPaymentBuilder {
 
         meta_address.validate()?;
 
-        // Create the core payment
         let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
         let view_tag = compute_view_tag(&shared_secret);
         let stealth_address = derive_stealth_address(
             meta_address.spending_pk.as_bytes(),
             &shared_secret,
         )?;
-
-        // Build announcement (with optional channel ID)
         let announcement = if let Some(channel_id) = self.channel_id {
             Announcement::with_channel(ciphertext.into_bytes(), view_tag, channel_id)
         } else {
@@ -203,14 +138,8 @@ impl StealthPaymentBuilder {
     }
 }
 
-/// Verifies that a payment was created correctly.
-///
-/// This is useful for testing and debugging.
 pub fn verify_payment(payment: &StealthPayment, meta_address: &MetaAddress) -> Result<bool> {
-    // We can't fully verify without the shared secret, but we can check structure
     payment.announcement.validate()?;
-    
-    // Check that the announcement ephemeral key is the right size
     if payment.announcement.ephemeral_key.len() != specter_core::constants::KYBER_CIPHERTEXT_SIZE {
         return Ok(false);
     }

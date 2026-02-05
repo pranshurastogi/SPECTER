@@ -1,7 +1,4 @@
-/**
- * SPECTER API client – all backend routes with typed requests/responses and error handling.
- * Base URL: VITE_API_BASE_URL from .env (default http://localhost:3001).
- */
+/** SPECTER API client. Base URL: VITE_API_BASE_URL (default http://localhost:3001). */
 
 export class ApiError extends Error {
   constructor(
@@ -75,8 +72,6 @@ async function request<T>(
     throw new ApiError(err instanceof Error ? err.message : "Unknown error");
   }
 }
-
-// ─── Types (match backend DTOs) ─────────────────────────────────────────────
 
 export interface HealthResponse {
   status: string;
@@ -196,8 +191,6 @@ export interface RegistryStatsResponse {
   total_announcements: number;
   view_tag_distribution: ViewTagCount[];
 }
-
-// ─── API functions ─────────────────────────────────────────────────────────
 
 export const api = {
   getBaseUrl,

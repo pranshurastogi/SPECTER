@@ -1,11 +1,7 @@
-//! Data transfer objects for API requests and responses.
+//! DTOs for API requests and responses.
 
 use serde::{Deserialize, Serialize};
 use specter_core::types::{Announcement, MetaAddress, EthAddress};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// KEY GENERATION
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Response for key generation.
 #[derive(Debug, Serialize)]
@@ -23,10 +19,6 @@ pub struct GenerateKeysResponse {
     /// Base view tag for this wallet
     pub view_tag: u8,
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// STEALTH ADDRESS CREATION
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Request to create a stealth payment.
 #[derive(Debug, Deserialize)]
@@ -49,10 +41,6 @@ pub struct CreateStealthResponse {
     /// Full announcement to publish
     pub announcement: AnnouncementDto,
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SCANNING
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Request to scan for payments.
 #[derive(Debug, Deserialize)]
@@ -112,10 +100,6 @@ pub struct ScanStatsDto {
     pub rate: f64,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ENS RESOLUTION
-// ═══════════════════════════════════════════════════════════════════════════════
-
 /// Response for ENS resolution.
 #[derive(Debug, Serialize)]
 pub struct ResolveEnsResponse {
@@ -148,10 +132,6 @@ pub struct UploadIpfsResponse {
     /// Formatted text record value for ENS
     pub text_record: String,
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// REGISTRY
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Announcement DTO.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,10 +253,6 @@ pub struct ViewTagCount {
     /// Number of announcements
     pub count: u64,
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HEALTH CHECK
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Health check response.
 #[derive(Debug, Serialize)]

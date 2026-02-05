@@ -1,22 +1,16 @@
-//! Application state shared across handlers.
+//! App state: registry, ENS resolver, config.
 
 use specter_registry::MemoryRegistry;
 use specter_ens::{SpecterResolver, ResolverConfig};
 
-/// API configuration.
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
-    /// Ethereum RPC URL
     pub rpc_url: String,
-    /// Pinata API key (optional)
     pub pinata_api_key: Option<String>,
-    /// Pinata secret key (optional)
     pub pinata_secret_key: Option<String>,
-    /// Enable caching
     pub enable_cache: bool,
 }
 
-/// Default Ethereum RPC URL (PublicNode; use ETH_RPC_URL for custom/backup).
 const DEFAULT_ETH_RPC_URL: &str = "https://ethereum.publicnode.com";
 
 impl Default for ApiConfig {
@@ -31,7 +25,6 @@ impl Default for ApiConfig {
 }
 
 impl ApiConfig {
-    /// Loads configuration from environment variables.
     pub fn from_env() -> Self {
         let _ = dotenvy::dotenv();
         
@@ -47,18 +40,13 @@ impl ApiConfig {
     }
 }
 
-/// Shared application state.
 pub struct AppState {
-    /// Configuration
     pub config: ApiConfig,
-    /// In-memory announcement registry
     pub registry: MemoryRegistry,
-    /// ENS + IPFS resolver
     pub resolver: SpecterResolver,
 }
 
 impl AppState {
-    /// Creates new application state.
     pub fn new(config: ApiConfig) -> Self {
         let mut resolver_config = ResolverConfig::with_rpc(&config.rpc_url);
         
