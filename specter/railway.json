@@ -1,8 +1,11 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "cargo build --release -p specter-cli"
+  },
   "deploy": {
-    "startCommand": "./bin/specter serve --port $PORT",
+    "startCommand": "./target/release/specter serve --port $PORT",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 30
+    "healthcheckTimeout": 300
   }
 }
