@@ -261,8 +261,8 @@ export default function SendPayment() {
           </motion.div>
 
           <div className="w-full max-w-2xl flex flex-col items-center">
-            <div className="relative overflow-hidden rounded-2xl glass-card w-full">
-              <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none">
+            <div className="relative rounded-2xl glass-card w-full overflow-hidden">
+              <div className="absolute inset-0 overflow-hidden opacity-60 blur-[5px] pointer-events-none rounded-2xl">
                 <PixelCanvas
                   gap={10}
                   speed={25}
@@ -270,7 +270,7 @@ export default function SendPayment() {
                   variant="default"
                 />
               </div>
-              <div className="relative z-10 p-8">
+              <div className="relative z-10 p-8 overflow-visible">
                 <AnimatePresence mode="wait">
                   {step === "input" && (
                     <motion.div

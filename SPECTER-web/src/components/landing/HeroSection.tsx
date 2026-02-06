@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { HeadingScramble } from "@/components/ui/heading-scramble";
 
 const HEADLINE_PREFIX = "Privacy that survives ";
-const HEADLINE_HIGHLIGHT = "quantum computers";
+const HEADLINE_HIGHLIGHT = "Quantum Computers";
 
 export function HeroSection() {
   const [hoverTrigger, setHoverTrigger] = useState(0);
