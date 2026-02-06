@@ -8,7 +8,7 @@ use cid::Cid;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument, warn};
 
-use specter_core::constants::{ENS_TEXT_KEY, ENS_TEXT_KEY_ALT};
+use specter_core::constants::ENS_TEXT_KEY;
 use specter_core::error::{Result, SpecterError};
 
 /// ENS client configuration.
@@ -72,26 +72,17 @@ impl EnsClient {
 
     /// Gets the SPECTER text record for an ENS name.
     ///
-    /// Tries the primary key first ("specter"), then falls back to
-    /// the alternate key ("pq-stealth").
+    /// Reads the "specter" text record (value: ipfs://CID).
     ///
     /// # Returns
     ///
     /// The IPFS CID stored in the text record, or None if not found.
     #[instrument(skip(self))]
     pub async fn get_specter_record(&self, name: &str) -> Result<Option<String>> {
-        // Try primary key
         if let Some(value) = self.get_text_record(name, ENS_TEXT_KEY).await? {
             debug!(name, key = ENS_TEXT_KEY, "Found SPECTER record");
             return Ok(Some(value));
         }
-
-        // Try alternate key
-        if let Some(value) = self.get_text_record(name, ENS_TEXT_KEY_ALT).await? {
-            debug!(name, key = ENS_TEXT_KEY_ALT, "Found SPECTER record (alternate key)");
-            return Ok(Some(value));
-        }
-
         debug!(name, "No SPECTER record found");
         Ok(None)
     }

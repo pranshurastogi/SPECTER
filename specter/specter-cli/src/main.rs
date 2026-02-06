@@ -199,7 +199,8 @@ async fn cmd_create(recipient: &str, rpc_url: Option<String>) -> Result<()> {
         .context("Failed to create stealth payment")?;
 
     println!("\n{}", "✅ Stealth payment created:".green().bold());
-    println!("   {} {}", "Address:".yellow(), payment.stealth_address.to_checksum_string());
+    println!("   {} {}", "ETH Address:".yellow(), payment.stealth_address.to_checksum_string());
+    println!("   {} {}", "Sui Address:".yellow(), payment.stealth_sui_address.to_hex_string());
     println!("   {} {}", "View tag:".dimmed(), payment.announcement.view_tag);
     println!("   {} {}...", "Ephemeral key:".dimmed(), hex::encode(&payment.announcement.ephemeral_key[..16]));
 

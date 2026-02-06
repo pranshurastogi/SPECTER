@@ -61,6 +61,7 @@ pub async fn create_stealth(
 
     let response = CreateStealthResponse {
         stealth_address: payment.stealth_address.to_checksum_string(),
+        stealth_sui_address: payment.stealth_sui_address.to_hex_string(),
         ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
         view_tag: payment.announcement.view_tag,
         announcement: AnnouncementDto::from(payment.announcement),
@@ -125,6 +126,7 @@ pub async fn scan_payments(
         .into_iter()
         .map(|d| DiscoveryDto {
             stealth_address: d.keys.address.to_checksum_string(),
+            stealth_sui_address: d.keys.sui_address.to_hex_string(),
             stealth_sk: hex::encode(d.keys.private_key.as_bytes()),
             eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
             announcement_id: d.announcement.id,

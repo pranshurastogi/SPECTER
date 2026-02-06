@@ -92,6 +92,9 @@ pub const MIN_PROTOCOL_VERSION: u8 = 1;
 /// Size of Ethereum address in bytes (20 bytes = 160 bits).
 pub const ETH_ADDRESS_SIZE: usize = 20;
 
+/// Size of Sui address in bytes (32 bytes = 256 bits).
+pub const SUI_ADDRESS_SIZE: usize = 32;
+
 /// Size of Ethereum private key in bytes (32 bytes = 256 bits).
 pub const ETH_PRIVATE_KEY_SIZE: usize = 32;
 
@@ -104,9 +107,6 @@ pub const KECCAK256_SIZE: usize = 32;
 
 /// ENS text record key for SPECTER meta-addresses.
 pub const ENS_TEXT_KEY: &str = "specter";
-
-/// Alternative ENS text record key (for compatibility).
-pub const ENS_TEXT_KEY_ALT: &str = "pq-stealth";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SERIALIZATION CONSTANTS

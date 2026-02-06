@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::KyberPublicKey;
-use crate::constants::{ETH_ADDRESS_SIZE, PROTOCOL_VERSION};
+use crate::constants::{ETH_ADDRESS_SIZE, PROTOCOL_VERSION, SUI_ADDRESS_SIZE};
 use crate::error::{Result, SpecterError};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -245,6 +245,81 @@ impl std::fmt::Display for EthAddress {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SUI ADDRESS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A 32-byte Sui address derived from the same secp256k1 key as the Ethereum address.
+///
+/// Sui uses blake2b-256(scheme_flag || compressed_pubkey) where scheme_flag is 0x01 for secp256k1.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SuiAddress {
+    bytes: [u8; SUI_ADDRESS_SIZE],
+}
+
+impl SuiAddress {
+    /// Creates an address from raw bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != SUI_ADDRESS_SIZE {
+            return Err(SpecterError::InvalidStealthAddress(format!(
+                "expected {} bytes for Sui address, got {}",
+                SUI_ADDRESS_SIZE,
+                bytes.len()
+            )));
+        }
+
+        let mut arr = [0u8; SUI_ADDRESS_SIZE];
+        arr.copy_from_slice(bytes);
+        Ok(Self { bytes: arr })
+    }
+
+    /// Creates from a fixed-size array.
+    pub fn from_array(bytes: [u8; SUI_ADDRESS_SIZE]) -> Self {
+        Self { bytes }
+    }
+
+    /// Returns the raw bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns hex string with 0x prefix (Sui format).
+    pub fn to_hex_string(&self) -> String {
+        format!("0x{}", hex::encode(&self.bytes))
+    }
+
+    /// Parses from hex string (with or without 0x prefix).
+    pub fn from_hex(s: &str) -> Result<Self> {
+        let s = s.strip_prefix("0x").unwrap_or(s);
+        let bytes = hex::decode(s)?;
+        Self::from_bytes(&bytes)
+    }
+
+    /// Returns the zero address.
+    pub fn zero() -> Self {
+        Self {
+            bytes: [0u8; SUI_ADDRESS_SIZE],
+        }
+    }
+
+    /// Returns true if this is the zero address.
+    pub fn is_zero(&self) -> bool {
+        self.bytes.iter().all(|&b| b == 0)
+    }
+}
+
+impl std::fmt::Debug for SuiAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SuiAddress({})", self.to_hex_string())
+    }
+}
+
+impl std::fmt::Display for SuiAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex_string())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // STEALTH ADDRESS RESULT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -256,6 +331,8 @@ impl std::fmt::Display for EthAddress {
 pub struct StealthAddressResult {
     /// The Ethereum address to send funds to
     pub address: EthAddress,
+    /// The Sui address (same key, derived via blake2b-256)
+    pub sui_address: SuiAddress,
     /// The ephemeral ciphertext (for announcement)
     #[serde(with = "hex")]
     pub ephemeral_ciphertext: Vec<u8>,
@@ -270,12 +347,14 @@ impl StealthAddressResult {
     /// Creates a new stealth address result.
     pub fn new(
         address: EthAddress,
+        sui_address: SuiAddress,
         ephemeral_ciphertext: Vec<u8>,
         view_tag: u8,
         stealth_pk: Vec<u8>,
     ) -> Self {
         Self {
             address,
+            sui_address,
             ephemeral_ciphertext,
             view_tag,
             stealth_pk,

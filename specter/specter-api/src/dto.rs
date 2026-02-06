@@ -34,6 +34,8 @@ pub struct CreateStealthRequest {
 pub struct CreateStealthResponse {
     /// The stealth Ethereum address to send funds to
     pub stealth_address: String,
+    /// The stealth Sui address (same key)
+    pub stealth_sui_address: String,
     /// The ephemeral ciphertext (hex)
     pub ephemeral_ciphertext: String,
     /// View tag for the announcement
@@ -71,8 +73,10 @@ pub struct ScanResponse {
 /// A discovered payment.
 #[derive(Debug, Serialize)]
 pub struct DiscoveryDto {
-    /// Stealth address (checksummed)
+    /// Stealth Ethereum address (checksummed)
     pub stealth_address: String,
+    /// Stealth Sui address
+    pub stealth_sui_address: String,
     /// Stealth private key (hex) - HANDLE WITH CARE
     pub stealth_sk: String,
     /// Ethereum-compatible private key (32 bytes, hex)

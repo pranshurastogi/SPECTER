@@ -45,4 +45,7 @@ pub mod derive;
 pub use kyber::{generate_keypair, encapsulate, decapsulate, KyberCiphertext};
 pub use hash::{shake256, shake256_xof};
 pub use view_tag::compute_view_tag;
-pub use derive::{derive_stealth_keys, derive_eth_address, derive_eth_address_from_seed};
+pub use derive::{
+    derive_stealth_keys, derive_eth_address, derive_eth_address_from_seed,
+    derive_sui_address_from_seed, derive_stealth_sui_address,
+};

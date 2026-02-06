@@ -64,7 +64,7 @@ impl ResolverConfig {
 /// SPECTER resolver that combines ENS and IPFS.
 ///
 /// Resolves ENS names to meta-addresses by:
-/// 1. Looking up the ENS text record "specter" (or "pq-stealth"), or
+/// 1. Looking up the ENS text record "specter", or
 ///    if missing, the ENS Content Hash (EIP-1577) from the resolver's contenthash()
 /// 2. Parsing the IPFS CID from the record or content hash
 /// 3. Fetching the meta-address from IPFS
@@ -126,7 +126,7 @@ impl SpecterResolver {
 
         debug!(ens_name, "Cache miss, resolving");
 
-        // Get IPFS CID: try "specter" text record first, then Content Hash (EIP-1577)
+        // Get IPFS CID: try "specter" text record, then Content Hash (EIP-1577)
         let cid = if let Some(record_value) = self.ens.get_specter_record(ens_name).await? {
             self.parse_cid(&record_value)?
         } else if let Some(content_cid) = self.ens.get_content_hash(ens_name).await? {
