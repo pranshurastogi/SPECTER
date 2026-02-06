@@ -1,9 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
-import { Menu, X, Wallet } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Menu, X } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
-import { formatAddress } from "@/lib/utils";
 import { useApiHealth } from "@/hooks/useApiHealth";
 import { api } from "@/lib/api";
 import {
@@ -16,7 +13,6 @@ const navLinks = [
   { path: "/setup", label: "Setup" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
-  { path: "/ens", label: "ENS" },
 ];
 
 const NavLink = ({
@@ -43,9 +39,6 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [headerShapeClass, setHeaderShapeClass] = useState("rounded-full");
   const shapeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
-  const { disconnect } = useDisconnect();
   const { ok: apiOk, loading: apiLoading } = useApiHealth();
 
   const toggleMenu = () => {
@@ -74,7 +67,7 @@ export function Header() {
 
   const logoElement = (
     <Link to="/" className="flex items-center gap-2 group">
-      <div className="h-14 w-14 sm:h-14 sm:w-14 shrink-0 overflow-hidden flex items-center justify-center">
+      <div className="h-6 w-6 flex items-center justify-center">
         <img
           src="/SPECTER-logo.png"
           alt="SPECTER"
@@ -125,52 +118,6 @@ export function Header() {
     </Link>
   );
 
-  const walletElement = (
-    <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-      {isConnected ? (
-        <>
-          <div className="px-3 py-1.5 rounded-full border border-border bg-background/60 text-muted-foreground text-xs sm:text-sm w-full sm:w-auto flex justify-center">
-            <div className="flex items-center gap-1.5">
-              <Wallet className="h-3.5 w-3.5 text-primary" />
-              <span className="font-mono text-primary">{formatAddress(address)}</span>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-full h-8 px-3 text-xs sm:text-sm border-border bg-background/60 hover:border-foreground/30 w-full sm:w-auto"
-            onClick={() => {
-              disconnect();
-              setMobileMenuOpen(false);
-            }}
-          >
-            Disconnect
-          </Button>
-        </>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-full h-8 px-3 text-xs sm:text-sm border-border bg-background/60 hover:border-foreground/30 w-full sm:w-auto"
-          onClick={() => {
-            connect({ connector: connectors[0] });
-            setMobileMenuOpen(false);
-          }}
-          disabled={isPending}
-        >
-          {isPending ? (
-            "Connecting..."
-          ) : (
-            <>
-              <Wallet className="h-3.5 w-3.5 mr-1.5" />
-              Connect Wallet
-            </>
-          )}
-        </Button>
-      )}
-    </div>
-  );
-
   return (
     <header
       className={`fixed top-6 left-1/2 -translate-x-1/2 z-50
@@ -178,13 +125,13 @@ export function Header() {
         pl-6 pr-6 py-3 backdrop-blur-xl
         ${headerShapeClass}
         border border-border bg-background/60
-        w-[calc(100%-2rem)] sm:w-auto
+        w-[calc(100%-2rem)] sm:min-w-[680px] sm:w-auto
         transition-[border-radius] duration-300 ease-in-out`}
     >
-      <div className="flex items-center justify-between w-full gap-x-6 sm:gap-x-8">
-        <div className="flex items-center">{logoElement}</div>
+      <div className="flex items-center w-full gap-x-6 sm:gap-x-8">
+        <div className="flex items-center shrink-0">{logoElement}</div>
 
-        <nav className="hidden sm:flex items-center gap-4 sm:gap-6 text-sm shrink-0">
+        <nav className="flex-1 hidden sm:flex items-center justify-evenly text-sm">
           {navLinks.map((link) => (
             <NavLink
               key={link.path}
@@ -196,21 +143,19 @@ export function Header() {
           ))}
         </nav>
 
-        <div className="hidden sm:flex items-center gap-2 sm:gap-3">
-          {walletElement}
+        <div className="w-8 flex justify-end shrink-0">
+          <button
+            className="sm:hidden flex items-center justify-center w-8 h-8 text-muted-foreground focus:outline-none hover:text-foreground transition-colors"
+            onClick={toggleMenu}
+            aria-label={mobileMenuOpen ? "Close Menu" : "Open Menu"}
+          >
+            {mobileMenuOpen ? (
+              <X className="w-6 h-6" />
+            ) : (
+              <Menu className="w-6 h-6" />
+            )}
+          </button>
         </div>
-
-        <button
-          className="sm:hidden flex items-center justify-center w-8 h-8 text-muted-foreground focus:outline-none hover:text-foreground transition-colors"
-          onClick={toggleMenu}
-          aria-label={mobileMenuOpen ? "Close Menu" : "Open Menu"}
-        >
-          {mobileMenuOpen ? (
-            <X className="w-6 h-6" />
-          ) : (
-            <Menu className="w-6 h-6" />
-          )}
-        </button>
       </div>
 
       <div
@@ -233,9 +178,6 @@ export function Header() {
             </Link>
           ))}
         </nav>
-        <div className="flex flex-col items-center space-y-3 mt-4 w-full">
-          {walletElement}
-        </div>
       </div>
     </header>
   );

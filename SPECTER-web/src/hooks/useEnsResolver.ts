@@ -7,7 +7,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useChainId } from 'wagmi';
 import type { Address } from 'viem';
 import {
     resolveEns,
@@ -93,7 +92,6 @@ export function useEnsResolver(
         onError,
     } = options;
 
-    const walletChainId = useChainId();
     const queryClient = useQueryClient();
     const [ensName, setEnsName] = useState<string | null>(initialName || null);
     const [debouncedName, setDebouncedName] = useState<string | null>(initialName || null);
@@ -107,8 +105,8 @@ export function useEnsResolver(
         return () => clearTimeout(timer);
     }, [ensName, debounceMs]);
 
-    // Determine which chain ID to use
-    const effectiveChainId = chainIdOverride || walletChainId;
+    // ENS lives on mainnet; default to chain 1
+    const effectiveChainId = chainIdOverride || 1;
 
     // Query key for caching
     const queryKey = ['ens-resolution', debouncedName, effectiveChainId];

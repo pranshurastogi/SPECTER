@@ -1,10 +1,13 @@
 /**
  * Custom hook for fetching multiple ENS text records
  * Based on ENS documentation: https://docs.ens.domains/web/records
+ *
+ * Uses viem public client directly (no wagmi dependency).
  */
 
-import { useEnsText } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
 import { normalize } from 'viem/ens';
+import { publicClient } from '@/lib/viemClient';
 
 export interface TextRecordKey {
     key: string;
@@ -44,27 +47,32 @@ export function useEnsTexts({ name, keys }: UseEnsTextsProps): {
 } {
     const normalizedName = name ? normalize(name) : '';
 
-    // Use multiple useEnsText hooks for each key
-    const results = keys.map((key) => {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        return useEnsText({
-            name: normalizedName as `${string}.eth`,
-            key,
-            chainId: 1, // Always use mainnet for ENS
-        });
+    const { data, isLoading, error } = useQuery<TextRecord[], Error>({
+        queryKey: ['ens-texts', normalizedName, keys],
+        queryFn: async () => {
+            const results = await Promise.all(
+                keys.map(async (key) => {
+                    try {
+                        const value = await publicClient.getEnsText({
+                            name: normalize(normalizedName),
+                            key,
+                        });
+                        return { key, value };
+                    } catch {
+                        return { key, value: null };
+                    }
+                }),
+            );
+            return results;
+        },
+        enabled: !!normalizedName && keys.length > 0,
+        staleTime: 2 * 60 * 1000,
+        gcTime: 5 * 60 * 1000,
     });
 
-    const isLoading = results.some((r) => r.isLoading);
-    const error = results.find((r) => r.error)?.error || null;
-
-    const data = results.map((result, index) => ({
-        key: keys[index],
-        value: result.data,
-    }));
-
     return {
-        data: isLoading ? undefined : data,
+        data,
         isLoading,
-        error,
+        error: error ?? null,
     };
 }

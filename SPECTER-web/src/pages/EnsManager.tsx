@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { useAccount, useEnsName, useEnsAddress, useEnsAvatar } from "wagmi";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { normalize } from "viem/ens";
+import { useQuery } from "@tanstack/react-query";
+import { publicClient } from "@/lib/viemClient";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
@@ -53,28 +55,38 @@ const STEPS: Step[] = [
 ];
 
 export default function EnsManager() {
-    const { address, isConnected } = useAccount();
+    const { primaryWallet } = useDynamicContext();
+    const address = primaryWallet?.address as `0x${string}` | undefined;
+    const isConnected = !!primaryWallet;
 
     const [currentStep, setCurrentStep] = useState(0);
     const [ensInput, setEnsInput] = useState("");
     const [resolvedName, setResolvedName] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // Fetch primary ENS name from connected wallet
-    const { data: primaryName, isLoading: fetchingPrimaryName } = useEnsName({
-        address: address,
-        chainId: 1,
+    // Fetch primary ENS name from connected wallet (viem)
+    const { data: primaryName, isLoading: fetchingPrimaryName } = useQuery({
+        queryKey: ['ens-name-from-address', address],
+        queryFn: () => publicClient.getEnsName({ address: address! }),
+        enabled: !!address,
+        staleTime: 2 * 60 * 1000,
     });
 
-    // Fetch ENS data for resolved name
-    const { data: ensAddress, isLoading: loadingAddress } = useEnsAddress({
-        name: resolvedName ? normalize(resolvedName) : undefined,
-        chainId: 1,
+    // Fetch ENS data for resolved name (viem)
+    const normalizedResolved = resolvedName ? normalize(resolvedName) : undefined;
+
+    const { data: ensAddress, isLoading: loadingAddress } = useQuery({
+        queryKey: ['ens-address', normalizedResolved],
+        queryFn: () => publicClient.getEnsAddress({ name: normalize(normalizedResolved!) }),
+        enabled: !!normalizedResolved,
+        staleTime: 2 * 60 * 1000,
     });
 
-    const { data: ensAvatar, isLoading: loadingAvatar } = useEnsAvatar({
-        name: resolvedName ? normalize(resolvedName) : undefined,
-        chainId: 1,
+    const { data: ensAvatar, isLoading: loadingAvatar } = useQuery({
+        queryKey: ['ens-avatar', normalizedResolved],
+        queryFn: () => publicClient.getEnsAvatar({ name: normalize(normalizedResolved!) }),
+        enabled: !!normalizedResolved,
+        staleTime: 2 * 60 * 1000,
     });
 
     // Content hash comes from resolver's contenthash(), not a text record (EIP-1577)

@@ -17,7 +17,7 @@ const DEFAULT_TIMEOUT_MS = parseInt(import.meta.env.VITE_ENS_RESOLUTION_TIMEOUT_
 const IPFS_GATEWAY_TIMEOUT_MS = parseInt(import.meta.env.VITE_IPFS_GATEWAY_TIMEOUT_MS || '10000', 10);
 
 // Use Cloudflare's public RPC (has CORS) as fallback
-const DEFAULT_MAINNET_RPC = import.meta.env.VITE_ALCHEMY_RPC_MAINNET || 'https://cloudflare-eth.com';
+const DEFAULT_MAINNET_RPC = import.meta.env.VITE_RPC_ETH_MAINNET || 'https://cloudflare-eth.com';
 const DEFAULT_SEPOLIA_RPC = import.meta.env.VITE_ALCHEMY_RPC_SEPOLIA || 'https://ethereum-sepolia-rpc.publicnode.com';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

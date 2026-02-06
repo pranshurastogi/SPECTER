@@ -7,7 +7,6 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useChainId } from 'wagmi';
 import { getIpfsContentHash } from '@/lib/ensResolver';
 
 export interface UseEnsContentHashOptions {
@@ -27,8 +26,8 @@ export function useEnsContentHash(
     refetch: () => void;
 } {
     const { enabled = true, chainId: chainIdOverride } = options;
-    const chainId = useChainId();
-    const effectiveChainId = chainIdOverride ?? chainId;
+    // ENS lives on mainnet; default to chain 1
+    const effectiveChainId = chainIdOverride ?? 1;
 
     const {
         data: ipfsHash,
