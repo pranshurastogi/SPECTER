@@ -137,6 +137,15 @@ pub struct UploadIpfsResponse {
     pub text_record: String,
 }
 
+/// Response for IPFS retrieve.
+#[derive(Debug, Serialize)]
+pub struct RetrieveIpfsResponse {
+    /// IPFS CID
+    pub cid: String,
+    /// Retrieved meta-address (hex)
+    pub meta_address: String,
+}
+
 /// Announcement DTO.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnouncementDto {
@@ -269,4 +278,6 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
     /// Total announcements in registry
     pub announcements_count: u64,
+    /// When true, backend uses Sepolia ENS
+    pub use_testnet: bool,
 }

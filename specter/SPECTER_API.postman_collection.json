@@ -1,13 +1,17 @@
 {
   "info": {
     "name": "SPECTER API",
-    "description": "Post-quantum stealth address protocol for Ethereum. All API routes for keys, stealth payments, ENS resolution, IPFS upload, and announcement registry.\n\n**Base URL:** Start server with `cargo run --bin specter -- serve --port 3001`",
+    "description": "Post-quantum stealth address protocol for Ethereum. All API routes for keys, stealth payments, ENS resolution, IPFS upload, and announcement registry.\n\n**Base URL:** Start server with `cargo run --bin specter -- serve --port 3001`\n\n**Config:** USE_TESTNET=true for Sepolia ENS; otherwise mainnet. PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN required for IPFS.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "baseUrl",
       "value": "http://localhost:3001"
+    },
+    {
+      "key": "cid",
+      "value": ""
     },
     {
       "key": "ens_name",
@@ -52,7 +56,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["health"]
             },
-            "description": "Returns server status, version, uptime, and announcement count."
+            "description": "Returns server status, version, uptime_seconds, announcements_count, and use_testnet (true when Sepolia ENS)."
           }
         }
       ]
@@ -137,9 +141,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "ens", "resolve", "{{ens_name}}"]
             },
-            "description": "Resolve ENS name to meta-address. Requires ETH_RPC_URL configured on server. Response includes meta_address to use in Create Stealth Payment."
+            "description": "Resolve ENS name to meta-address. Uses mainnet when USE_TESTNET=false, Sepolia when USE_TESTNET=true. Requires ETH_RPC_URL, PINATA_GATEWAY_URL, PINATA_GATEWAY_TOKEN. Response includes meta_address for Create Stealth Payment."
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "IPFS",
+      "item": [
         {
           "name": "Upload Meta-Address to IPFS",
           "request": {
@@ -155,11 +164,24 @@
               "raw": "{\n  \"meta_address\": \"{{meta_address}}\",\n  \"name\": \"alice.eth-specter-profile\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/api/v1/ens/upload",
+              "raw": "{{baseUrl}}/api/v1/ipfs/upload",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "ens", "upload"]
+              "path": ["api", "v1", "ipfs", "upload"]
             },
-            "description": "Upload meta-address to IPFS via Pinata. Requires PINATA_API_KEY and PINATA_SECRET_KEY on server. Returns cid and text_record (ipfs://...) to set in ENS."
+            "description": "Upload meta-address to IPFS via Pinata v3. Requires PINATA_JWT on server. Returns cid and text_record (ipfs://...) to set in ENS."
+          }
+        },
+        {
+          "name": "Retrieve Meta-Address from IPFS",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ipfs/retrieve/{{cid}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ipfs", "retrieve", "{{cid}}"]
+            },
+            "description": "Retrieve meta-address from IPFS by CID. Requires PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN on server."
           }
         }
       ]

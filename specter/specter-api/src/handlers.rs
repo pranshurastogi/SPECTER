@@ -165,21 +165,25 @@ pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ResolveEnsResponse>> {
-    let meta = state.resolver.resolve(&name).await
+    let result = state.resolver.resolve_full(&name).await
         .map_err(ApiError::from)?;
 
     let response = ResolveEnsResponse {
-        ens_name: name,
-        meta_address: meta.to_hex(),
-        spending_pk: meta.spending_pk.to_hex(),
-        viewing_pk: meta.viewing_pk.to_hex(),
-        ipfs_cid: None, // Would need to track this separately
+        ens_name: result.ens_name,
+        meta_address: result.meta_address.to_hex(),
+        spending_pk: result.meta_address.spending_pk.to_hex(),
+        viewing_pk: result.meta_address.viewing_pk.to_hex(),
+        ipfs_cid: if result.ipfs_cid.is_empty() {
+            None
+        } else {
+            Some(result.ipfs_cid)
+        },
     };
 
     Ok(Json(response))
 }
 
-/// POST /api/v1/ens/upload
+/// POST /api/v1/ipfs/upload
 pub async fn upload_ipfs(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UploadIpfsRequest>,
@@ -193,6 +197,27 @@ pub async fn upload_ipfs(
     let text_record = state.resolver.format_text_record(&cid);
 
     Ok(Json(UploadIpfsResponse { cid, text_record }))
+}
+
+/// GET /api/v1/ipfs/retrieve/:cid
+pub async fn retrieve_ipfs(
+    State(state): State<Arc<AppState>>,
+    Path(cid): Path<String>,
+) -> Result<Json<RetrieveIpfsResponse>> {
+    let meta = state.resolver.retrieve(&cid).await
+        .map_err(|e| ApiError::internal(format!("IPFS retrieve failed: {}", e)))?;
+
+    let parsed_cid = cid
+        .strip_prefix("ipfs://")
+        .unwrap_or(cid.as_str())
+        .strip_prefix("/ipfs/")
+        .unwrap_or(cid.as_str())
+        .to_string();
+
+    Ok(Json(RetrieveIpfsResponse {
+        cid: parsed_cid,
+        meta_address: meta.to_hex(),
+    }))
 }
 
 /// POST /api/v1/registry/announcements
@@ -301,5 +326,6 @@ pub async fn health_check(
         version: env!("CARGO_PKG_VERSION").into(),
         uptime_seconds: uptime,
         announcements_count: count,
+        use_testnet: state.config.use_testnet,
     })
 }

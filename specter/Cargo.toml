@@ -2,10 +2,12 @@
 resolver = "2"
 members = [
     "specter-core",
+    "specter-cache",
     "specter-crypto",
     "specter-stealth",
     "specter-registry",
     "specter-scanner",
+    "specter-ipfs",
     "specter-ens",
     "specter-api",
     "specter-cli",

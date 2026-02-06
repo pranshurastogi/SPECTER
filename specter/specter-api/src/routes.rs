@@ -17,7 +17,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/stealth/create", post(handlers::create_stealth))
         .route("/api/v1/stealth/scan", post(handlers::scan_payments))
         .route("/api/v1/ens/resolve/:name", get(handlers::resolve_ens))
-        .route("/api/v1/ens/upload", post(handlers::upload_ipfs))
+        .route("/api/v1/ipfs/upload", post(handlers::upload_ipfs))
+        .route("/api/v1/ipfs/retrieve/:cid", get(handlers::retrieve_ipfs))
         .route("/api/v1/registry/announcements", get(handlers::list_announcements))
         .route("/api/v1/registry/announcements", post(handlers::publish_announcement))
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
@@ -28,7 +29,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 mod tests {
     use super::*;
     use axum::http::StatusCode;
-    use axum::body::Body;
+    use axum::body::{Body, to_bytes};
     use tower::ServiceExt;
     use crate::state::ApiConfig;
 
@@ -40,7 +41,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_check() {
         let app = test_app();
-        
+
         let response = app
             .oneshot(
                 axum::http::Request::builder()
@@ -52,6 +53,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert!(json.get("version").is_some());
+        assert!(json.get("uptime_seconds").is_some());
+        assert_eq!(json["announcements_count"], 0);
+        assert_eq!(json["use_testnet"], false);
     }
 
     #[tokio::test]
