@@ -3865,6 +3865,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "specter-cache"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde",
+ "specter-core",
+]
+
+[[package]]
 name = "specter-cli"
 version = "0.1.0"
 dependencies = [
@@ -3928,23 +3937,33 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "async-trait",
- "chrono",
  "cid",
- "dashmap 5.5.3",
  "hex",
  "multihash",
- "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
  "sha3",
+ "specter-cache",
  "specter-core",
+ "specter-ipfs",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "specter-ipfs"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "specter-core",
+ "tracing",
 ]
 
 [[package]]
