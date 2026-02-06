@@ -17,6 +17,8 @@ export default {
         display: ['JetBrains Mono', 'monospace'],
         body: ['Inter', 'sans-serif'],
         cursive: ['Dancing Script', 'cursive'],
+        signika: ['Signika', 'sans-serif'],
+        'dm-sans': ['DM Sans', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",
