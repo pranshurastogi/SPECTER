@@ -42,7 +42,7 @@ export function HeroSection() {
             transition={{ delay: 0.2, duration: 0.5 }}
             className="text-muted-foreground text-2xl md:text-3xl lg:text-4xl mb-12 max-w-2xl mx-auto"
           >
-            Send to any ENS name; recipient stays hidden.
+            Send to any name. Recipient stays hidden.
           </motion.p>
 
           <motion.div
