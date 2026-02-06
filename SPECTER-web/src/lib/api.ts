@@ -145,7 +145,8 @@ export interface ResolveEnsResponse {
   meta_address: string;
   spending_pk: string;
   viewing_pk: string;
-  ipfs_cid?: string | null;
+  ipfs_cid?: string;
+  ipfs_url?: string;
 }
 
 export interface UploadIpfsRequest {

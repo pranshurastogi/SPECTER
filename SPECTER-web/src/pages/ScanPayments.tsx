@@ -21,12 +21,15 @@ import {
   EyeOff,
   CheckCircle2,
   XCircle,
+  Receipt,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto, type RegistryStatsResponse } from "@/lib/api";
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { AnimatedTicket } from "@/components/ui/ticket-confirmation-card";
 import { HeadingScramble } from "@/components/ui/heading-scramble";
 import { PixelCanvas } from "@/components/ui/pixel-canvas";
 
@@ -53,9 +56,14 @@ export default function ScanPayments() {
   const [revealedPk, setRevealedPk] = useState(false);
   const [derivedAddress, setDerivedAddress] = useState<string | null>(null);
   const [addressMatch, setAddressMatch] = useState<boolean | null>(null);
+  const [showReceipt, setShowReceipt] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Derive address from private key when revealed
+  useEffect(() => {
+    if (!selectedPayment) setShowReceipt(false);
+  }, [selectedPayment]);
+
   useEffect(() => {
     if (selectedPayment && revealedPk) {
       try {
@@ -651,6 +659,15 @@ export default function ScanPayments() {
                         >
                           Close
                         </Button>
+                        <Button
+                          variant="outline"
+                          size="default"
+                          className="flex-1 min-w-[100px]"
+                          onClick={() => setShowReceipt(true)}
+                        >
+                          <Receipt className="h-4 w-4 mr-2" />
+                          View receipt
+                        </Button>
                         <DownloadJsonButton
                           data={{
                             stealth_address: selectedPayment.stealth_address,
@@ -660,10 +677,10 @@ export default function ScanPayments() {
                             ...(revealedPk ? { note: "Keep eth_private_key secure. Do not share." } : {}),
                           }}
                           filename={`specter-discovery-${selectedPayment.announcement_id}-${selectedPayment.stealth_address.slice(2, 10)}.json`}
-                          label="Download details"
+                          label="Download"
                           variant="outline"
                           size="default"
-                          tooltip="Save discovery details as JSON (no private key included unless you reveal it first)"
+                          tooltip="Save discovery details as JSON"
                         />
                       </div>
                     </div>
@@ -671,7 +688,24 @@ export default function ScanPayments() {
                   </motion.div>
                 </motion.div>
               )}
+
             </AnimatePresence>
+
+            <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
+              <DialogContent className="max-w-sm border-0 bg-transparent shadow-none p-0 overflow-visible">
+                {selectedPayment && (
+                  <AnimatedTicket
+                    ticketId={String(selectedPayment.announcement_id)}
+                    amount={0}
+                    date={new Date(selectedPayment.timestamp * 1000)}
+                    cardHolder={`Payment #${selectedPayment.announcement_id}`}
+                    last4Digits={selectedPayment.stealth_address.replace(/^0x/, "").slice(-4)}
+                    barcodeValue={`${selectedPayment.announcement_id}${selectedPayment.stealth_address.slice(2, 14)}`}
+                    currency="ETH"
+                  />
+                )}
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </main>
