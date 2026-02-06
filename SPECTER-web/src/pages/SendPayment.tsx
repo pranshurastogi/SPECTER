@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useChainId } from "wagmi";
 import { Header } from "@/components/layout/Header";
-import { Footer } from "@/components/landing/Footer";
+import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { SearchBar } from "@/components/ui/search-bar";
 import { Input } from "@/components/ui/input";
@@ -35,7 +34,6 @@ import { Link } from "react-router-dom";
 type SendStep = "input" | "resolved" | "generated" | "published";
 
 export default function SendPayment() {
-  const chainId = useChainId();
   const [step, setStep] = useState<SendStep>("input");
   const [ensName, setEnsName] = useState("");
   const [amount, setAmount] = useState("");

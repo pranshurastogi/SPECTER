@@ -25,7 +25,7 @@ export function Footer() {
             className="flex items-center gap-x-2"
             aria-label="SPECTER"
           >
-            <div className="h-14 w-14 sm:h-14 sm:w-14 shrink-0 overflow-hidden flex items-center justify-center">
+            <div className="h-6 w-6 flex items-center justify-center">
               <img
                 src="/SPECTER-logo.png"
                 alt=""

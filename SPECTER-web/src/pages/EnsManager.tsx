@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useAccount, useEnsName, useEnsAddress, useEnsAvatar } from "wagmi";
 import { normalize } from "viem/ens";
 import { Header } from "@/components/layout/Header";
-import { Footer } from "@/components/landing/Footer";
+import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

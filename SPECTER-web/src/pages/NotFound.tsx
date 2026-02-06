@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Ghost } from "lucide-react";
 import { Header } from "@/components/layout/Header";
-import { Footer } from "@/components/landing/Footer";
+import { Footer } from "@/components/layout/Footer";
 
 const ease = [0.43, 0.13, 0.23, 0.96] as const;
 
