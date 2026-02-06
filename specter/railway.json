@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "./bin/specter serve --port $PORT",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30
+  }
+}
