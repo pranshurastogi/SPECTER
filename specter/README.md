@@ -441,7 +441,7 @@ GET /api/v1/registry/stats
 | `POST` | `/api/v1/stealth/scan` | Scan for payments |
 | `GET` | `/api/v1/ens/resolve/:name` | Resolve ENS to meta-address |
 | `POST` | `/api/v1/ipfs/upload` | Upload meta-address to IPFS |
-| `GET` | `/api/v1/ipfs/retrieve/:cid` | Retrieve meta-address from IPFS by CID |
+| `GET` | `/api/v1/ipfs/:cid` | Get IPFS content (raw bytes) by CID |
 | `GET` | `/api/v1/registry/announcements` | List all announcements |
 | `POST` | `/api/v1/registry/announcements` | Publish announcement |
 | `GET` | `/api/v1/registry/stats` | Get registry statistics |

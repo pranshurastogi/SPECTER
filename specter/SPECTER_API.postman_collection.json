@@ -168,20 +168,32 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "ipfs", "upload"]
             },
-            "description": "Upload meta-address to IPFS via Pinata v3. Requires PINATA_JWT on server. Returns cid and text_record (ipfs://...) to set in ENS."
+            "description": "Upload meta-address to IPFS via Pinata v3. Requires PINATA_JWT on server. Returns cid and text_record (ipfs://...) to set in ENS. Saves cid to collection variable for Get IPFS Content.",
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "var json = pm.response.json();",
+                    "if (json && json.cid) { pm.collectionVariables.set('cid', json.cid); }"
+                  ],
+                  "type": "text/javascript"
+                }
+              }
+            ]
           }
         },
         {
-          "name": "Retrieve Meta-Address from IPFS",
+          "name": "Get IPFS Content",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/ipfs/retrieve/{{cid}}",
+              "raw": "{{baseUrl}}/api/v1/ipfs/{{cid}}",
               "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "ipfs", "retrieve", "{{cid}}"]
+              "path": ["api", "v1", "ipfs", "{{cid}}"]
             },
-            "description": "Retrieve meta-address from IPFS by CID. Requires PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN on server."
+            "description": "Get IPFS content (raw bytes) by CID. Requires PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN on server."
           }
         }
       ]

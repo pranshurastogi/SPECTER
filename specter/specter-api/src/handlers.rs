@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use axum::{
     extract::{Path, Query, State},
+    http::header,
+    response::IntoResponse,
     Json,
 };
 use tracing::{debug, info};
@@ -199,25 +201,18 @@ pub async fn upload_ipfs(
     Ok(Json(UploadIpfsResponse { cid, text_record }))
 }
 
-/// GET /api/v1/ipfs/retrieve/:cid
-pub async fn retrieve_ipfs(
+/// GET /api/v1/ipfs/:cid - returns raw bytes (for "View on IPFS" via backend)
+pub async fn ipfs_get(
     State(state): State<Arc<AppState>>,
     Path(cid): Path<String>,
-) -> Result<Json<RetrieveIpfsResponse>> {
-    let meta = state.resolver.retrieve(&cid).await
+) -> Result<impl IntoResponse> {
+    let data = state.resolver.download_raw(&cid).await
         .map_err(|e| ApiError::internal(format!("IPFS retrieve failed: {}", e)))?;
 
-    let parsed_cid = cid
-        .strip_prefix("ipfs://")
-        .unwrap_or(cid.as_str())
-        .strip_prefix("/ipfs/")
-        .unwrap_or(cid.as_str())
-        .to_string();
-
-    Ok(Json(RetrieveIpfsResponse {
-        cid: parsed_cid,
-        meta_address: meta.to_hex(),
-    }))
+    Ok((
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        data,
+    ))
 }
 
 /// POST /api/v1/registry/announcements

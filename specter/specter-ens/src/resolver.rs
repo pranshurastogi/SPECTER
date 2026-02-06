@@ -178,12 +178,18 @@ impl SpecterResolver {
     /// Uses the configured gateway (including dedicated Pinata gateway with token if set).
     #[instrument(skip(self))]
     pub async fn retrieve(&self, cid: &str) -> Result<MetaAddress> {
-        let cid = self.parse_cid(cid)?;
-        let data = self.ipfs.download(&cid).await?;
+        let data = self.download_raw(cid).await?;
         let meta = MetaAddress::from_bytes(&data)?;
         meta.validate()?;
         info!(cid, "Retrieved meta-address from IPFS");
         Ok(meta)
+    }
+
+    /// Downloads raw bytes from IPFS by CID (for proxying to frontend).
+    #[instrument(skip(self))]
+    pub async fn download_raw(&self, cid: &str) -> Result<Vec<u8>> {
+        let cid = self.parse_cid(cid)?;
+        self.ipfs.download(&cid).await
     }
 
     /// Returns the formatted ENS text record value for a CID.

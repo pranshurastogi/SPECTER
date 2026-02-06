@@ -60,7 +60,7 @@ echo "    CID: $CID"
 echo "    Text record value: $TEXT_RECORD"
 echo ""
 echo "    Verifying IPFS retrieval..."
-RETRIEVE=$(curl -s -w "\n%{http_code}" --max-time 15 "$BASE_URL/api/v1/ipfs/retrieve/$CID")
+RETRIEVE=$(curl -s -w "\n%{http_code}" --max-time 15 "$BASE_URL/api/v1/ipfs/$CID")
 RETRIEVE_CODE=$(echo "$RETRIEVE" | tail -1)
 if [ "$RETRIEVE_CODE" = "200" ]; then
     echo "    IPFS OK (meta-address retrievable)"

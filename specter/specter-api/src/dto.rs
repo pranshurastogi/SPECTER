@@ -137,15 +137,6 @@ pub struct UploadIpfsResponse {
     pub text_record: String,
 }
 
-/// Response for IPFS retrieve.
-#[derive(Debug, Serialize)]
-pub struct RetrieveIpfsResponse {
-    /// IPFS CID
-    pub cid: String,
-    /// Retrieved meta-address (hex)
-    pub meta_address: String,
-}
-
 /// Announcement DTO.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnouncementDto {
