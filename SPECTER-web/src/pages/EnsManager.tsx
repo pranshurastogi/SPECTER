@@ -182,7 +182,7 @@ export default function EnsManager() {
         <div className="min-h-screen flex flex-col">
             <Header />
 
-            <main className="flex-1 pt-24 pb-12">
+            <main className="flex-1 pt-48 pb-12">
                 <div className="container mx-auto px-4">
                     <div className="max-w-5xl mx-auto">
                         {/* Header */}

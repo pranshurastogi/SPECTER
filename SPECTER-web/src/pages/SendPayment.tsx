@@ -241,7 +241,7 @@ export default function SendPayment() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 pt-24 pb-12 flex flex-col items-center">
+      <main className="flex-1 pt-48 pb-12 flex flex-col items-center">
         <div className="container mx-auto px-4 w-full max-w-2xl flex flex-col items-center">
           <motion.div
             initial={{ opacity: 0, y: 20 }}

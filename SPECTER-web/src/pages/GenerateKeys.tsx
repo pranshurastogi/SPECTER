@@ -98,7 +98,7 @@ export default function GenerateKeys() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 pt-20 pb-12 flex flex-col items-center">
+      <main className="flex-1 pt-48 pb-12 flex flex-col items-center">
         <div className="w-full max-w-lg mx-auto px-4 flex flex-col items-center">
           {/* Title — centered, minimal */}
           <div className="text-center mb-8">

@@ -16,6 +16,7 @@ export default {
       fontFamily: {
         display: ['JetBrains Mono', 'monospace'],
         body: ['Inter', 'sans-serif'],
+        cursive: ['Dancing Script', 'cursive'],
       },
       colors: {
         border: "hsl(var(--border))",
