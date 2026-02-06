@@ -1,5 +1,6 @@
 # Build stage
-FROM rust:1.83-bookworm AS builder
+# Rust 1.85+ required for dependencies using edition2024 (e.g. ruint)
+FROM rust:1.85-bookworm AS builder
 WORKDIR /app
 
 # Copy workspace manifests and lockfile
