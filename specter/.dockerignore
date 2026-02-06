@@ -1,0 +1,7 @@
+target/
+.git/
+.env
+.env.*
+*.md
+*.postman_collection.json
+start.sh
