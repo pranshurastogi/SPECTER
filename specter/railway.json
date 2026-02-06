@@ -4,7 +4,7 @@
     "buildCommand": "cargo build --release -p specter-cli"
   },
   "deploy": {
-    "startCommand": "find target/release -name \"specter\" -type f -exec {} serve --port $PORT \\;",
+    "startCommand": "sh start.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300
   }
