@@ -331,7 +331,7 @@ export default function SendPayment() {
                                       <li>Set the IPFS hash in ENS: either add a text record <code className="bg-muted px-1 rounded">specter</code> with value <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code>, or set <strong>Content Hash</strong> to <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code> in the ENS app</li>
                                     </ol>
                                     <p className="mt-2 text-muted-foreground">
-                                      See the <Link to="/ens" className="text-primary hover:underline">ENS Manager</Link> for step-by-step instructions on setting the IPFS content hash.
+                                      See the <Link to="/setup" className="text-primary hover:underline">Setup</Link> page for step-by-step instructions on setting the IPFS content hash.
                                     </p>
                                   </div>
                                 </div>
