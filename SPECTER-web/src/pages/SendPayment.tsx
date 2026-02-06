@@ -28,7 +28,7 @@ import { AnimatedTicket } from "@/components/ui/ticket-confirmation-card";
 import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } from "@/lib/api";
 
 const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
-import { resolveEns, validateEnsName, EnsResolverError, EnsErrorCode } from "@/lib/ensResolver";
+import { validateEnsName, EnsResolverError } from "@/lib/ensResolver";
 import { Link } from "react-router-dom";
 
 type SendStep = "input" | "resolved" | "generated" | "published";
@@ -83,99 +83,28 @@ export default function SendPayment() {
     setIpfsUrl(null);
 
     try {
-      // Validate ENS name format first
-      try {
-        validateEnsName(normalized);
-      } catch (validationError) {
-        if (validationError instanceof EnsResolverError) {
-          throw validationError;
-        }
-        throw new EnsResolverError(
-          "Invalid ENS name format",
-          EnsErrorCode.INVALID_NAME,
-          validationError
-        );
-      }
+      validateEnsName(normalized);
+    } catch (validationError) {
+      const msg = validationError instanceof EnsResolverError
+        ? validationError.message
+        : "Invalid ENS name format";
+      setResolveError(msg);
+      toast.error(msg);
+      setIsResolving(false);
+      return;
+    }
 
-      // ENS lives on mainnet; resolve there regardless of wallet chain (send tx uses wallet chain later)
-      const ensChainId = 1;
-      let clientResolved = false;
-      try {
-        const clientResult = await resolveEns(normalized, ensChainId);
-
-        // Store IPFS info from client resolution (if available)
-        setIpfsHash(clientResult.ipfsHash || null);
-        setIpfsUrl(clientResult.ipfsUrl || null);
-
-        // Try to get meta-address from backend for the resolved address
-        // (SPECTER meta-address is stored in backend)
-        try {
-          const backendRes = await api.resolveEns(normalized);
-          setResolvedENS({
-            ...backendRes,
-            ipfs_cid: clientResult.ipfsHash || backendRes.ipfs_cid,
-            ipfs_url: clientResult.ipfsUrl || backendRes.ipfs_url,
-          });
-          // Keep the IPFS info we already set from client
-        } catch (backendErr) {
-          // Backend failed but we have client resolution: ENS exists but no SPECTER record
-          // Keep the IPFS info from client resolution, just don't have meta_address
-          setResolveError("no-specter-setup");
-          setResolvedENS(null);
-          toast.error("No SPECTER keys found for this ENS name");
-          setIsResolving(false);
-          return;
-        }
-
-        clientResolved = true;
-        setStep("resolved");
-        toast.success(`Resolved ${normalized} (client-side)`);
-      } catch (clientError) {
-        // Client-side resolution failed, try backend as fallback
-        console.warn("Client-side ENS resolution failed, trying backend:", clientError);
-
-        try {
-          const backendRes = await api.resolveEns(normalized);
-          setResolvedENS(backendRes);
-          setIpfsHash(backendRes.ipfs_cid || null);
-          setIpfsUrl(backendRes.ipfs_url || null);
-          setStep("resolved");
-          toast.success(`Resolved ${backendRes.ens_name} (backend)`);
-        } catch (backendErr) {
-          // Both client and backend failed
-          let errorMessage = "Failed to resolve ENS name";
-
-          if (clientError instanceof EnsResolverError) {
-            switch (clientError.code) {
-              case EnsErrorCode.INVALID_NAME:
-                errorMessage = `Invalid ENS name: ${clientError.message}`;
-                break;
-              case EnsErrorCode.NAME_NOT_FOUND:
-                errorMessage = `ENS name "${normalized}" not found or not registered`;
-                break;
-              case EnsErrorCode.NETWORK_ERROR:
-                errorMessage = "Network error. Please check your connection and try again.";
-                break;
-              case EnsErrorCode.TIMEOUT:
-                errorMessage = "ENS resolution timed out. Please try again.";
-                break;
-              default:
-                errorMessage = clientError.message;
-            }
-          } else if (backendErr instanceof ApiError) {
-            errorMessage = backendErr.message;
-          }
-
-          setResolveError(errorMessage);
-          toast.error(errorMessage);
-        }
-      }
+    try {
+      const res = await api.resolveEns(normalized);
+      setResolvedENS(res);
+      const cid = res.ipfs_cid ?? null;
+      setIpfsHash(cid);
+      setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
+      setResolveError(null);
+      setStep("resolved");
+      toast.success(`Resolved ${res.ens_name}`);
     } catch (err) {
-      const message = err instanceof EnsResolverError
-        ? err.message
-        : err instanceof ApiError
-          ? err.message
-          : "Failed to resolve ENS";
+      const message = err instanceof ApiError ? err.message : "Failed to resolve ENS";
       setResolveError(message);
       toast.error(message);
     } finally {

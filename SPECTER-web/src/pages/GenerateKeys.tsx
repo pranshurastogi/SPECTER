@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { isEthereumWallet } from "@dynamic-labs/ethereum";
+import { useQuery } from "@tanstack/react-query";
+import { publicClient } from "@/lib/viemClient";
+import { chain, useTestnet } from "@/lib/chainConfig";
+import { setEnsTextRecord } from "@/lib/ensSetText";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Key,
-  Eye,
   Lock,
   AlertTriangle,
   ArrowRight,
@@ -16,8 +21,8 @@ import {
   Info,
   Download,
   CheckCircle2,
-  ChevronRight,
   Globe,
+  Wallet,
   Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -26,13 +31,9 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { formatAddress } from "@/lib/utils";
 
-type GenerationStep = "idle" | "generating" | "complete";
+type SetupStep = 1 | 2 | 3 | 4;
 
 const securityTips = [
   { icon: Lock, text: "Your keys, your control" },
@@ -41,45 +42,92 @@ const securityTips = [
 ];
 
 export default function GenerateKeys() {
-  const [step, setStep] = useState<GenerationStep>("idle");
+  const [currentStep, setCurrentStep] = useState<SetupStep>(1);
+  const [step1Status, setStep1Status] = useState<"idle" | "generating" | "complete">("idle");
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ cid: string; text_record: string } | null>(null);
-  const [ensName, setEnsName] = useState("");
-  const [ensOpen, setEnsOpen] = useState(false);
+  const [ensUploading, setEnsUploading] = useState(false);
+  const [ensTxHash, setEnsTxHash] = useState<string | null>(null);
+  const [ensUploadResult, setEnsUploadResult] = useState<{ cid: string; text_record: string; ensName: string } | null>(null);
+
+  const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
+  const evmAddress = primaryWallet?.address as `0x${string}` | undefined;
+  const evmConnected = !!primaryWallet;
+
+  const { data: primaryEnsName, isLoading: fetchingEns } = useQuery({
+    queryKey: ["ens-name-from-address", evmAddress],
+    queryFn: () => publicClient.getEnsName({ address: evmAddress! }),
+    enabled: !!evmAddress,
+    staleTime: 2 * 60 * 1000,
+  });
 
   const handleGenerate = async () => {
-    setStep("generating");
+    setStep1Status("generating");
     setKeys(null);
-    setUploadResult(null);
+    setEnsUploadResult(null);
     try {
       const response = await api.generateKeys();
       setKeys(response);
-      setStep("complete");
+      setStep1Status("complete");
       toast.success("Keys generated successfully");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to generate keys";
       toast.error(message);
-      setStep("idle");
+      setStep1Status("idle");
     }
   };
 
-  const handleUploadToIpfs = async () => {
+  const handleAttachToEns = async () => {
     if (!keys?.meta_address) return;
-    setUploading(true);
-    setUploadResult(null);
+    const ensName = primaryEnsName || "";
+    if (!ensName) {
+      toast.error("No ENS name found for your wallet");
+      return;
+    }
+    if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
+      toast.error("Connect an EVM wallet to set the ENS record");
+      return;
+    }
+    setEnsUploading(true);
+    setEnsUploadResult(null);
+    setEnsTxHash(null);
     try {
+      // 1. Upload meta-address to IPFS (backend)
       const res = await api.uploadIpfs({
         meta_address: keys.meta_address,
-        name: ensName.trim() ? `${ensName.replace(/\.eth$/i, "")}.eth-specter-profile` : undefined,
+        name: `${ensName.replace(/\.eth$/i, "")}.eth-specter-profile`,
       });
-      setUploadResult({ cid: res.cid, text_record: res.text_record });
-      toast.success("Meta-address uploaded to IPFS");
+      const textRecordValue = res.text_record; // ipfs://<CID>
+
+      // 2. Sign tx to set ENS text record
+      const walletClient = await primaryWallet.getWalletClient(chain.id.toString());
+      const account = walletClient?.account;
+      if (!walletClient || !account?.address) {
+        toast.error("Could not get wallet. Please try again.");
+        return;
+      }
+      const txHash = await setEnsTextRecord({
+        ensName,
+        value: textRecordValue,
+        walletClient,
+        publicClient,
+        account: account.address,
+      });
+
+      setEnsTxHash(txHash);
+      toast.info("Transaction submitted. Waiting for confirmation…");
+
+      // 3. Wait for tx confirmation
+      await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      setEnsUploadResult({ cid: res.cid, text_record: textRecordValue, ensName });
+      setEnsTxHash(null);
+      toast.success("Meta address attached to ENS.");
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Upload failed";
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
       toast.error(message);
+      setEnsTxHash(null);
     } finally {
-      setUploading(false);
+      setEnsUploading(false);
     }
   };
 
@@ -94,249 +142,375 @@ export default function GenerateKeys() {
       }
     : null;
 
+  const steps: { num: SetupStep; label: string }[] = [
+    { num: 1, label: "Generate keys" },
+    { num: 2, label: "Attach to ENS" },
+    { num: 3, label: "Attach to SuiNS" },
+    { num: 4, label: "All done" },
+  ];
+
+  const canProceedFromStep1 = step1Status === "complete" && keys != null;
+  const ensCompleted = ensUploadResult != null;
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
 
       <main className="flex-1 pt-48 pb-12 flex flex-col items-center">
         <div className="w-full max-w-lg mx-auto px-4 flex flex-col items-center">
-          {/* Title — centered, minimal */}
           <div className="text-center mb-8">
             <h1 className="font-display text-2xl md:text-3xl font-bold text-foreground">
-              Generate Keys
+              Setup
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               Quantum-safe SPECTER identity for private payments
             </p>
           </div>
 
-          {/* Main card — single centered block */}
+          {/* Step indicator */}
+          <div className="flex items-center justify-center gap-2 mb-8">
+            {steps.map((s, i) => (
+              <div key={s.num} className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (s.num === 1 || (s.num >= 2 && canProceedFromStep1)) {
+                      setCurrentStep(s.num);
+                    }
+                  }}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
+                    currentStep === s.num
+                      ? "bg-primary text-primary-foreground"
+                      : s.num < currentStep
+                        ? "bg-primary/20 text-primary"
+                        : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {s.num}
+                </button>
+                {i < steps.length - 1 && (
+                  <div className={`w-8 h-0.5 mx-0.5 ${s.num < currentStep ? "bg-primary/30" : "bg-muted"}`} />
+                )}
+              </div>
+            ))}
+          </div>
+
           <Card className="w-full border-border bg-card/50 shadow-lg rounded-xl overflow-hidden">
             <CardContent className="p-6 md:p-8">
               <AnimatePresence mode="wait">
-                {step === "idle" && (
+                {/* ─── Step 1: Generate keys ───────────────────────────────────── */}
+                {currentStep === 1 && (
                   <motion.div
-                    key="idle"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex flex-col items-center text-center"
-                  >
-                    <div className="w-14 h-14 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-5">
-                      <Key className="h-7 w-7 text-primary" />
-                    </div>
-                    <p className="text-sm text-muted-foreground mb-6 max-w-sm">
-                      Generate a new set of cryptographic keys for receiving private payments.
-                    </p>
-                    <Button variant="quantum" size="lg" onClick={handleGenerate}>
-                      Generate Keys
-                    </Button>
-                  </motion.div>
-                )}
-
-                {step === "generating" && (
-                  <motion.div
-                    key="generating"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="flex flex-col items-center py-8"
-                  >
-                    <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
-                    <p className="text-sm text-muted-foreground">Generating keys…</p>
-                  </motion.div>
-                )}
-
-                {step === "complete" && keys && (
-                  <motion.div
-                    key="complete"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
+                    key="step1"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
                     className="space-y-5"
                   >
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                      <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
-                      <span className="text-sm font-medium text-success">Keys generated</span>
-                    </div>
+                    <h2 className="font-display text-lg font-semibold text-foreground">
+                      Step 1 — Generate keys
+                    </h2>
 
-                    <div className="space-y-3">
-                      {[
-                        {
-                          icon: Key,
-                          label: "Spending Public Key",
-                          tooltip: "Used to derive stealth addresses. Safe to share with senders.",
-                          value: keys.spending_pk,
-                          preview: keys.spending_pk.slice(0, 32) + "...",
-                        },
-                        {
-                          icon: Eye,
-                          label: "Viewing Public Key",
-                          tooltip: "Used for scanning announcements. Safe to share with auditors.",
-                          value: keys.viewing_pk,
-                          preview: keys.viewing_pk.slice(0, 32) + "...",
-                        },
-                        {
-                          icon: null,
-                          label: "Meta-address (for ENS)",
-                          tooltip: "Publish this to ENS so others can send you private payments.",
-                          value: keys.meta_address,
-                          preview: keys.meta_address.slice(0, 40) + "...",
-                        },
-                      ].map((item) => (
-                        <div
-                          key={item.label}
-                          className="flex items-start justify-between gap-3 p-3 rounded-lg bg-muted/40 border border-border"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              {item.icon && (
-                                <item.icon className="h-3.5 w-3.5 text-primary shrink-0" />
-                              )}
-                              <TooltipLabel
-                                label={item.label}
-                                tooltip={item.tooltip}
-                                className="text-xs font-medium"
-                              />
-                            </div>
-                            <code className="text-xs text-muted-foreground break-all">
-                              {item.preview}
-                            </code>
-                          </div>
-                          <CopyButton
-                            text={item.value}
-                            variant="ghost"
-                            size="sm"
-                            showLabel={false}
-                            tooltip="Copy"
-                            tooltipCopied="Copied!"
-                            successMessage="Copied"
-                          />
+                    {step1Status === "idle" && (
+                      <div className="flex flex-col items-center text-center">
+                        <div className="w-14 h-14 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-5">
+                          <Key className="h-7 w-7 text-primary" />
                         </div>
-                      ))}
-
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
-                        <TooltipLabel
-                          label="View tag"
-                          tooltip="First byte of shared secret; used to filter announcements when scanning."
-                        />
-                        <span className="font-mono font-medium text-foreground">
-                          {keys.view_tag}
-                        </span>
+                        <p className="text-sm text-muted-foreground mb-6 max-w-sm">
+                          Generate a new set of cryptographic keys for receiving private payments.
+                        </p>
+                        <Button variant="quantum" size="lg" onClick={handleGenerate}>
+                          Generate Keys
+                        </Button>
                       </div>
-                    </div>
+                    )}
 
-                    {/* ENS (optional) — collapsible */}
-                    <Collapsible open={ensOpen} onOpenChange={setEnsOpen}>
-                      <CollapsibleTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between rounded-lg border border-border bg-muted/30 px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Sparkles className="h-4 w-4 text-primary" />
-                            Enable ENS payments (optional)
-                          </span>
-                          <ChevronRight
-                            className={`h-4 w-4 text-muted-foreground transition-transform ${ensOpen ? "rotate-90" : ""}`}
-                          />
-                        </button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="pt-4 space-y-4 border-t border-border mt-4">
-                          <p className="text-xs text-muted-foreground">
-                            Upload meta-address to IPFS, then set the hash in your ENS name.
-                          </p>
-                          {!uploadResult ? (
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                placeholder="e.g. alice.eth"
-                                value={ensName}
-                                onChange={(e) => setEnsName(e.target.value)}
-                                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-                              />
-                              <Button
-                                variant="quantum"
-                                size="default"
-                                onClick={handleUploadToIpfs}
-                                disabled={uploading}
-                              >
-                                {uploading ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Upload className="h-4 w-4 mr-1.5" />
-                                    Upload
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="p-3 rounded-lg bg-success/10 border border-success/20">
-                              <p className="text-xs font-medium text-success mb-1 flex items-center gap-1.5">
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                Uploaded to IPFS
-                              </p>
-                              <div className="flex items-center gap-2 mt-2">
-                                <code className="flex-1 text-xs font-mono truncate text-muted-foreground">
-                                  {uploadResult.text_record}
-                                </code>
-                                <CopyButton
-                                  text={uploadResult.text_record}
-                                  variant="outline"
-                                  size="sm"
-                                  showLabel={true}
-                                  label="Copy"
-                                  successMessage="Copied"
-                                />
-                              </div>
-                              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-                                <Info className="h-3 w-3" />
-                                Set this as Content Hash or text record <code>specter</code> in ENS.
-                              </p>
-                              <Button variant="outline" size="sm" className="mt-3" asChild>
-                                <a
-                                  href={ensName.trim() ? `https://app.ens.domains/${ensName.replace(/\.eth$/i, "")}.eth` : "https://app.ens.domains"}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5"
-                                >
-                                  <Globe className="h-3.5 w-3.5" />
-                                  Open ENS
-                                  <ExternalLink className="h-3 w-3" />
-                                </a>
-                              </Button>
-                            </div>
-                          )}
+                    {step1Status === "generating" && (
+                      <div className="flex flex-col items-center py-8">
+                        <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
+                        <p className="text-sm text-muted-foreground">Generating keys…</p>
+                      </div>
+                    )}
+
+                    {step1Status === "complete" && keys && (
+                      <div className="space-y-5">
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
+                          <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+                          <span className="text-sm font-medium text-success">Keys generated</span>
                         </div>
-                      </CollapsibleContent>
-                    </Collapsible>
 
-                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                      {keysJson && (
-                        <DownloadJsonButton
-                          data={keysJson}
-                          filename="specter-keys.json"
-                          label="Download keys"
-                          className="flex-1"
-                          tooltip="Save keys (backup securely)"
-                        />
-                      )}
-                      <Button variant="quantum" className="flex-1" asChild>
-                        <Link to="/send">
+                        <div className="flex gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+                          <p className="text-sm text-amber-800 dark:text-amber-200">
+                            Download and store your keys now. You need this file to scan and claim payments.
+                            <br />
+                            Without it, you cannot recover funds.
+                          </p>
+                        </div>
+
+                        {keysJson && (
+                          <DownloadJsonButton
+                            data={keysJson}
+                            filename="specter-keys.json"
+                            label="Download keys (backup securely)"
+                            className="w-full"
+                            tooltip="Save keys — keep this file safe and never share it"
+                          />
+                        )}
+
+                        <div className="p-3 rounded-lg bg-muted/40 border border-border">
+                          <div className="flex items-center gap-2 mb-1">
+                            <TooltipLabel
+                              label="Meta-address"
+                              tooltip="Share this with others so they can send you private payments. Safe to share."
+                              className="text-xs font-medium"
+                            />
+                          </div>
+                          <code className="text-xs text-muted-foreground break-all block">
+                            {keys.meta_address.slice(0, 48)}...
+                          </code>
+                          <div className="flex items-center gap-2 mt-2">
+                            <CopyButton
+                              text={keys.meta_address}
+                              variant="outline"
+                              size="sm"
+                              showLabel={true}
+                              label="Copy"
+                              successMessage="Copied"
+                            />
+                          </div>
+                          <div className="flex gap-2 p-2.5 mt-2 rounded-lg bg-primary/5 border border-primary/10">
+                            <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                            <p className="text-xs text-muted-foreground">
+                              Safe to share: give this to anyone who wants to send you private payments.
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button variant="quantum" className="w-full" onClick={() => setCurrentStep(2)}>
                           Continue
                           <ArrowRight className="ml-2 h-4 w-4" />
-                        </Link>
+                        </Button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* ─── Step 2: Attach to ENS (optional) ───────────────────────── */}
+                {currentStep === 2 && (
+                  <motion.div
+                    key="step2"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="space-y-5"
+                  >
+                    <h2 className="font-display text-lg font-semibold text-foreground">
+                      Step 2 — Attach to ENS
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Connect your wallet to link your ENS name to your meta-address.
+                    </p>
+
+                    {!evmConnected ? (
+                      <div className="flex flex-col gap-3">
+                        <Button
+                          variant="outline"
+                          size="lg"
+                          className="w-full"
+                          onClick={() => setShowAuthFlow(true)}
+                        >
+                          <Wallet className="h-4 w-4 mr-2" />
+                          Connect EVM wallet
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-muted-foreground"
+                          onClick={() => setCurrentStep(3)}
+                        >
+                          Skip
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/40 border border-border">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Wallet className="h-4 w-4 text-primary shrink-0" />
+                            <span className="text-sm font-mono text-foreground truncate">
+                              {evmAddress && formatAddress(evmAddress)}
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => handleLogOut()}
+                          >
+                            Disconnect
+                          </Button>
+                        </div>
+
+                        {fetchingEns ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Fetching ENS name…
+                          </div>
+                        ) : primaryEnsName ? (
+                          <div className="space-y-3">
+                            <p className="text-sm">
+                              ENS name: <span className="font-mono font-medium text-primary">{primaryEnsName}</span>
+                            </p>
+                            {!ensUploadResult ? (
+                              <div className="space-y-2">
+                                {ensTxHash ? (
+                                  <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
+                                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                                    <p className="text-sm">Waiting for transaction confirmation…</p>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Button
+                                      variant="quantum"
+                                      size="default"
+                                      onClick={handleAttachToEns}
+                                      disabled={ensUploading}
+                                      className="w-full"
+                                    >
+                                      {ensUploading ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <>
+                                          <Upload className="h-4 w-4 mr-2" />
+                                          Attach to ENS
+                                        </>
+                                      )}
+                                    </Button>
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                      <Info className="h-3 w-3 shrink-0" />
+                                      Uploads meta-address to IPFS, then prompts you to sign a tx to set the ENS text record.
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                                <p className="text-xs font-medium text-success mb-2 flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Meta address attached to ENS.
+                                </p>
+                                <Button variant="outline" size="sm" className="w-full" asChild>
+                                  <a
+                                    href={useTestnet ? `https://sepolia.app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}` : `https://app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center gap-1.5"
+                                  >
+                                    <Globe className="h-3.5 w-3.5" />
+                                    Open ENS App
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No ENS name found for this wallet. You can skip this step and use your meta-address directly.
+                          </p>
+                        )}
+
+                        <div className="flex gap-3">
+                          <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(1)}>
+                            Back
+                          </Button>
+                          <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(3)}>
+                            {ensCompleted ? "Continue" : "Skip"}
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* ─── Step 3: Attach to SuiNS (dummy) ────────────────────────── */}
+                {currentStep === 3 && (
+                  <motion.div
+                    key="step3"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="space-y-5"
+                  >
+                    <h2 className="font-display text-lg font-semibold text-foreground">
+                      Step 3 — Attach to SuiNS
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Connect a Sui wallet with SuiNS to receive private payments at your SuiNS name. Coming soon.
+                    </p>
+                    <div className="p-6 rounded-lg border border-dashed border-muted-foreground/30 text-center text-sm text-muted-foreground">
+                      <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      SuiNS support coming soon
+                    </div>
+                    <div className="flex gap-3">
+                      <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(2)}>
+                        Back
+                      </Button>
+                      <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(4)}>
+                        Continue
+                        <ArrowRight className="ml-2 h-4 w-4" />
                       </Button>
                     </div>
+                  </motion.div>
+                )}
+
+                {/* ─── Step 4: All done ──────────────────────────────────────── */}
+                {currentStep === 4 && (
+                  <motion.div
+                    key="step4"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="space-y-5"
+                  >
+                    <h2 className="font-display text-lg font-semibold text-foreground">
+                      Step 4 — All done
+                    </h2>
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
+                      <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+                      <span className="text-sm font-medium text-success">You’re all set</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Senders can now send you private payments using:
+                    </p>
+                    <ul className="space-y-2 text-sm">
+                      {ensUploadResult && (
+                        <li className="flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-primary" />
+                          <span className="font-mono">{ensUploadResult.ensName}</span>
+                        </li>
+                      )}
+                      <li className="flex items-center gap-2">
+                        <Key className="h-4 w-4 text-primary" />
+                        <span>Meta-address (hex)</span>
+                      </li>
+                      <li className="text-muted-foreground text-xs">
+                        SuiNS — coming soon
+                      </li>
+                    </ul>
+                    <Button variant="quantum" className="w-full" asChild>
+                      <Link to="/send">
+                        Go to Send
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Link>
+                    </Button>
                   </motion.div>
                 )}
               </AnimatePresence>
             </CardContent>
           </Card>
 
-          {/* Security tips — minimal row */}
           <div className="mt-8 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
             {securityTips.map((tip, i) => (
               <span key={i} className="flex items-center gap-1.5">

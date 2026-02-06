@@ -78,6 +78,8 @@ export interface HealthResponse {
   version: string;
   uptime_seconds: number;
   announcements_count: number;
+  /** When true, backend uses Sepolia ENS */
+  use_testnet?: boolean;
 }
 
 export interface GenerateKeysResponse {
@@ -224,10 +226,16 @@ export const api = {
   },
 
   async uploadIpfs(body: UploadIpfsRequest): Promise<UploadIpfsResponse> {
-    return request<UploadIpfsResponse>("/api/v1/ens/upload", {
+    return request<UploadIpfsResponse>("/api/v1/ipfs/upload", {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+
+  /** URL for viewing IPFS content via backend (no direct gateway) */
+  ipfsUrl(cid: string): string {
+    const parsed = cid.replace(/^ipfs:\/\//, "").replace(/^\/ipfs\//, "").trim();
+    return `${getBaseUrl()}/api/v1/ipfs/${encodeURIComponent(parsed)}`;
   },
 
   async listAnnouncements(query?: ListAnnouncementsQuery): Promise<ListAnnouncementsResponse> {

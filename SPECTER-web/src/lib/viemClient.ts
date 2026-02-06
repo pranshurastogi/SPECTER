@@ -1,15 +1,16 @@
 /**
  * Shared viem public client for ENS resolution and on-chain reads.
- * Uses Ethereum mainnet since ENS lives on L1.
+ * Uses Sepolia when VITE_USE_TESTNET=true, otherwise mainnet.
  */
 
 import { createPublicClient, http } from 'viem';
-import { mainnet } from 'viem/chains';
+import { chain } from './chainConfig';
 
-const mainnetRpc =
-  import.meta.env.VITE_RPC_ETH_MAINNET || 'https://cloudflare-eth.com';
+const rpcUrl =
+  import.meta.env.VITE_ETH_RPC_URL ||
+  (chain.id === 1 ? 'https://cloudflare-eth.com' : 'https://ethereum-sepolia-rpc.publicnode.com');
 
 export const publicClient = createPublicClient({
-  chain: mainnet,
-  transport: http(mainnetRpc),
+  chain,
+  transport: http(rpcUrl),
 });

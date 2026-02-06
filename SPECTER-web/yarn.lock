@@ -707,16 +707,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@ensdomains/content-hash@npm:^3.0.0":
-  version: 3.0.0
-  resolution: "@ensdomains/content-hash@npm:3.0.0"
-  dependencies:
-    "@multiformats/sha3": "npm:^2.0.17"
-    multiformats: "npm:^12.0.1"
-  checksum: 10c0/c81d5a34f4f137971618cd8379949f3b358e4f9c78d751cc8b544a5a0dc652160f083f8cc83af22db99e41109345b65f1155e6996c1f87eb602ed20db52fa691
-  languageName: node
-  linkType: hard
-
 "@esbuild/aix-ppc64@npm:0.21.5":
   version: 0.21.5
   resolution: "@esbuild/aix-ppc64@npm:0.21.5"
@@ -1823,16 +1813,6 @@ __metadata:
   version: 3.1.2
   resolution: "@msgpack/msgpack@npm:3.1.2"
   checksum: 10c0/4fee6dbea70a485d3a787ac76dd43687f489d662f22919237db1f2abbc3c88070c1d3ad78417ce6e764bcd041051680284654021f52068e0aff82d570cb942d5
-  languageName: node
-  linkType: hard
-
-"@multiformats/sha3@npm:^2.0.17":
-  version: 2.0.17
-  resolution: "@multiformats/sha3@npm:2.0.17"
-  dependencies:
-    js-sha3: "npm:^0.8.0"
-    multiformats: "npm:^9.5.4"
-  checksum: 10c0/24658796438446cbbfdda1044f16db96667f490d55c54314f1d3e3831192e11614251452ddaaf72277d1ab535dba9c9c130211733b425059161957b3b0eee6b9
   languageName: node
   linkType: hard
 
@@ -8082,13 +8062,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"js-sha3@npm:^0.8.0":
-  version: 0.8.0
-  resolution: "js-sha3@npm:0.8.0"
-  checksum: 10c0/43a21dc7967c871bd2c46cb1c2ae97441a97169f324e509f382d43330d8f75cf2c96dba7c806ab08a425765a9c847efdd4bffbac2d99c3a4f3de6c0218f40533
-  languageName: node
-  linkType: hard
-
 "js-tokens@npm:^3.0.0 || ^4.0.0":
   version: 4.0.0
   resolution: "js-tokens@npm:4.0.0"
@@ -8533,14 +8506,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"multiformats@npm:^12.0.1":
-  version: 12.1.3
-  resolution: "multiformats@npm:12.1.3"
-  checksum: 10c0/abf4f601d4a262965a231b070a10071dc61f8a85c4ab48f021089333be33f0be72c4fdb498a7c0172278d5c3cb540cb1402cb8a7d5f4f1042651a508b5f05e4e
-  languageName: node
-  linkType: hard
-
-"multiformats@npm:^9.4.2, multiformats@npm:^9.5.4":
+"multiformats@npm:^9.4.2":
   version: 9.9.0
   resolution: "multiformats@npm:9.9.0"
   checksum: 10c0/1fdb34fd2fb085142665e8bd402570659b50a5fae5994027e1df3add9e1ce1283ed1e0c2584a5c63ac0a58e871b8ee9665c4a99ca36ce71032617449d48aa975
@@ -10184,7 +10150,6 @@ __metadata:
   dependencies:
     "@dynamic-labs/ethereum": "npm:^4.60.0"
     "@dynamic-labs/sdk-react-core": "npm:^4.60.0"
-    "@ensdomains/content-hash": "npm:^3.0.0"
     "@eslint/js": "npm:^9.32.0"
     "@gsap/react": "npm:^2.1.2"
     "@hookform/resolvers": "npm:^3.10.0"
