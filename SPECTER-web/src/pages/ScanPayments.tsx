@@ -214,7 +214,7 @@ export default function ScanPayments() {
                     Load keys
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    From <Link to="/generate" className="text-primary hover:underline">Generate Keys</Link> (JSON file or paste)
+                    From <Link to="/setup" className="text-primary hover:underline">Setup</Link> (JSON file or paste)
                   </p>
                 </div>
               </div>
@@ -421,6 +421,8 @@ export default function ScanPayments() {
           </Card>
         </div>
       </main>
+
+      <Footer />
 
       {/* Payment detail modal */}
       <AnimatePresence>

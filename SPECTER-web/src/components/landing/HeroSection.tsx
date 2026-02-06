@@ -51,7 +51,7 @@ export function HeroSection() {
             transition={{ delay: 0.3, duration: 0.5 }}
           >
             <Button variant="quantum" size="xl" asChild>
-              <Link to="/generate">
+              <Link to="/setup">
                 Get Started
                 <ArrowRight className="ml-2 h-5 w-5" />
               </Link>

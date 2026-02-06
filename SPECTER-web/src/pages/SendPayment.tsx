@@ -285,7 +285,7 @@ export default function SendPayment() {
                           <User className="h-4 w-4 shrink-0" />
                           <TooltipLabel
                             label="Recipient"
-                            tooltip="ENS (e.g. bob.eth) or paste meta-address hex from Generate Keys."
+                            tooltip="ENS (e.g. bob.eth) or paste meta-address hex from Setup."
                           />
                         </div>
                         <SearchBar
@@ -328,7 +328,7 @@ export default function SendPayment() {
                                       To receive private payments at this name, the owner must:
                                     </p>
                                     <ol className="mt-2 list-decimal list-inside space-y-1 text-muted-foreground">
-                                      <li>Generate SPECTER keys on the <Link to="/generate" className="text-primary hover:underline">Generate Keys</Link> page</li>
+                                      <li>Generate SPECTER keys on the <Link to="/setup" className="text-primary hover:underline">Setup</Link> page</li>
                                       <li>Upload the meta-address to IPFS (same page)</li>
                                       <li>Set the IPFS hash in ENS: either add a text record <code className="bg-muted px-1 rounded">specter</code> with value <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code>, or set <strong>Content Hash</strong> to <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code> in the ENS app</li>
                                     </ol>

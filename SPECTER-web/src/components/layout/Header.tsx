@@ -15,8 +15,7 @@ import {
 } from "@/components/ui/tooltip";
 
 const navLinks = [
-  { path: "/", label: "Home" },
-  { path: "/generate", label: "Generate Keys" },
+  { path: "/setup", label: "Setup" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
   { path: "/ens", label: "ENS" },
@@ -155,7 +154,7 @@ export function Header() {
                   )}
                 </Button>
                 <Button variant="outline" size="sm" asChild>
-                  <Link to="/generate">Get Started</Link>
+                  <Link to="/setup">Get Started</Link>
                 </Button>
               </>
             )}

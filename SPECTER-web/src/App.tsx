@@ -27,7 +27,7 @@ const App = () => (
           <div className="relative z-10">
             <Routes>
               <Route path="/" element={<Index />} />
-              <Route path="/generate" element={<GenerateKeys />} />
+              <Route path="/setup" element={<GenerateKeys />} />
               <Route path="/send" element={<SendPayment />} />
               <Route path="/scan" element={<ScanPayments />} />
               <Route path="/ens" element={<EnsManager />} />
