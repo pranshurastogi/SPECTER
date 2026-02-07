@@ -1,5 +1,6 @@
 # Build stage
-FROM rust:1.83-bookworm AS builder
+# Rust 1.85+ required for dependencies using edition2024 (e.g. ruint)
+FROM rust:1.85-bookworm AS builder
 WORKDIR /app
 
 # Copy workspace manifests and lockfile
@@ -27,7 +28,6 @@ WORKDIR /app
 COPY --from=builder /app/target/release/specter /app/specter
 
 EXPOSE 3001
-ENV PORT=3001
 
-# Railway sets PORT at runtime
-CMD ["sh", "-c", "/app/specter serve --port ${PORT:-3001}"]
+# PORT is read from env by the binary via clap (defaults to 3001)
+CMD ["/app/specter", "serve"]

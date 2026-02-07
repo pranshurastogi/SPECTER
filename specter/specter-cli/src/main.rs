@@ -71,11 +71,11 @@ enum Commands {
 
     /// Run the API server
     Serve {
-        /// Port to listen on
-        #[arg(short, long, default_value = "3001")]
+        /// Port to listen on (reads from PORT env var if set)
+        #[arg(short, long, env = "PORT", default_value = "3001")]
         port: u16,
         /// Bind address
-        #[arg(short, long, default_value = "0.0.0.0")]
+        #[arg(short, long, env = "BIND", default_value = "0.0.0.0")]
         bind: String,
     },
 
