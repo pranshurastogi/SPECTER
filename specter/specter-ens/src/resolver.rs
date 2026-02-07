@@ -1,4 +1,7 @@
 //! Combined ENS + IPFS resolver for fetching meta-addresses.
+//!
+//! ENS lookups are never cached (records can change at any time).
+//! IPFS downloads are cached at the `IpfsClient` layer (content-addressed = immutable).
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument};
@@ -8,7 +11,6 @@ use specter_core::types::MetaAddress;
 
 use specter_ipfs::{IpfsClient, IpfsConfig};
 
-use specter_cache::MetaAddressCache;
 use crate::ens::{EnsClient, EnsConfig};
 
 /// Resolver configuration.
@@ -18,10 +20,6 @@ pub struct ResolverConfig {
     pub ens: EnsConfig,
     /// IPFS configuration (requires dedicated gateway + token)
     pub ipfs: IpfsConfig,
-    /// Whether to use caching
-    pub enable_cache: bool,
-    /// Cache TTL in seconds
-    pub cache_ttl_seconds: u64,
 }
 
 impl ResolverConfig {
@@ -34,20 +32,12 @@ impl ResolverConfig {
         Self {
             ens: EnsConfig::new(rpc_url),
             ipfs: IpfsConfig::new(gateway_url, gateway_token),
-            enable_cache: true,
-            cache_ttl_seconds: 3600,
         }
     }
 
     /// Adds Pinata JWT for uploads (v3 API).
     pub fn with_pinata_jwt(mut self, jwt: impl Into<String>) -> Self {
         self.ipfs = self.ipfs.with_pinata_jwt(jwt);
-        self
-    }
-
-    /// Disables caching.
-    pub fn no_cache(mut self) -> Self {
-        self.enable_cache = false;
         self
     }
 }
@@ -58,12 +48,15 @@ impl ResolverConfig {
 /// 1. Looking up the ENS text record "specter", or
 ///    if missing, the ENS Content Hash (EIP-1577) from the resolver's contenthash()
 /// 2. Parsing the IPFS CID from the record or content hash
-/// 3. Fetching the meta-address from IPFS
+/// 3. Fetching the meta-address from IPFS (cached by CID in IpfsClient)
 /// 4. Deserializing and validating the meta-address
+///
+/// ENS lookups are always fresh (no caching) since records can change.
+/// IPFS downloads are cached at the IpfsClient layer since content is immutable.
 pub struct SpecterResolver {
     ens: EnsClient,
     ipfs: IpfsClient,
-    cache: Option<MetaAddressCache>,
+    #[allow(dead_code)]
     config: ResolverConfig,
 }
 
@@ -72,17 +65,10 @@ impl SpecterResolver {
     pub fn with_config(config: ResolverConfig) -> Self {
         let ens = EnsClient::with_config(config.ens.clone());
         let ipfs = IpfsClient::with_config(config.ipfs.clone());
-        
-        let cache = if config.enable_cache {
-            Some(MetaAddressCache::new())
-        } else {
-            None
-        };
 
         Self {
             ens,
             ipfs,
-            cache,
             config,
         }
     }
@@ -102,23 +88,12 @@ impl SpecterResolver {
         Ok(result.meta_address)
     }
 
-    /// Resolves an ENS name to a meta-address with metadata (CID, cache status).
+    /// Resolves an ENS name to a meta-address with metadata.
+    ///
+    /// Always performs a fresh ENS lookup. IPFS downloads are cached by CID.
     #[instrument(skip(self))]
     pub async fn resolve_full(&self, ens_name: &str) -> Result<ResolveResult> {
-        // Check cache first
-        if let Some(cache) = &self.cache {
-            if let Some(meta) = cache.get(ens_name) {
-                debug!(ens_name, "Cache hit");
-                return Ok(ResolveResult {
-                    meta_address: meta,
-                    ens_name: ens_name.to_string(),
-                    ipfs_cid: String::new(), // Not stored in cache
-                    from_cache: true,
-                });
-            }
-        }
-
-        debug!(ens_name, "Cache miss, resolving");
+        debug!(ens_name, "Resolving ENS name (no cache)");
 
         // Get IPFS CID: try "specter" text record first, then Content Hash (EIP-1577)
         let cid = if let Some(record_value) = self.ens.get_specter_record(ens_name).await? {
@@ -131,7 +106,7 @@ impl SpecterResolver {
 
         debug!(ens_name, cid, "Found IPFS CID");
 
-        // Fetch from IPFS
+        // Fetch from IPFS (cached by CID inside IpfsClient)
         let data = self.ipfs.download(&cid).await?;
 
         // Deserialize meta-address
@@ -140,18 +115,12 @@ impl SpecterResolver {
         // Validate
         meta.validate()?;
 
-        info!(ens_name, "Resolved meta-address");
-
-        // Cache if enabled
-        if let Some(cache) = &self.cache {
-            cache.set(ens_name, meta.clone());
-        }
+        info!(ens_name, cid, "Resolved meta-address");
 
         Ok(ResolveResult {
             meta_address: meta,
             ens_name: ens_name.to_string(),
             ipfs_cid: cid,
-            from_cache: false,
         })
     }
 
@@ -203,11 +172,9 @@ impl SpecterResolver {
         }
     }
 
-    /// Clears the resolution cache.
+    /// Clears the IPFS download cache.
     pub fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.clear();
-        }
+        self.ipfs.clear_cache();
     }
 
     /// Parses a CID from various formats.
@@ -240,8 +207,6 @@ pub struct ResolveResult {
     pub ens_name: String,
     /// The IPFS CID where the meta-address is stored
     pub ipfs_cid: String,
-    /// Whether the result came from cache
-    pub from_cache: bool,
 }
 
 #[cfg(test)]
@@ -303,13 +268,11 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = ResolverConfig::new("https://test.com", "gateway.test", "token")
-            .with_pinata_jwt("my_jwt")
-            .no_cache();
+            .with_pinata_jwt("my_jwt");
 
         assert_eq!(config.ens.rpc_url, "https://test.com");
         assert_eq!(config.ipfs.gateway_url, "gateway.test");
         assert_eq!(config.ipfs.pinata_jwt, Some("my_jwt".into()));
-        assert!(!config.enable_cache);
     }
 
     #[test]

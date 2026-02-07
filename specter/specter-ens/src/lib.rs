@@ -10,6 +10,5 @@ mod ens;
 mod resolver;
 
 pub use ens::{EnsClient, EnsConfig};
-pub use specter_cache::MetaAddressCache;
 pub use specter_ipfs::{IpfsClient, IpfsConfig, PinataClient};
-pub use resolver::{SpecterResolver, ResolverConfig};
+pub use resolver::{SpecterResolver, ResolverConfig, ResolveResult};

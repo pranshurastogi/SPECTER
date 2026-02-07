@@ -2,7 +2,13 @@
 //!
 //! Uses a dedicated Pinata gateway with token for all IPFS retrieves.
 //! Uploads via Pinata v3 API.
+//!
+//! Downloads are cached in-memory by CID. IPFS content is content-addressed
+//! (immutable), so caching by CID is always safe and never stale.
 
+use std::collections::HashMap;
+
+use parking_lot::RwLock;
 use serde::Deserialize;
 use tracing::{debug, instrument, warn};
 
@@ -19,6 +25,10 @@ pub struct IpfsConfig {
     pub pinata_jwt: Option<String>,
     /// Request timeout in seconds
     pub timeout_seconds: u64,
+    /// Whether to cache IPFS downloads in memory (default: true)
+    pub enable_download_cache: bool,
+    /// Maximum number of cached downloads (default: 500)
+    pub max_cache_entries: usize,
 }
 
 impl IpfsConfig {
@@ -29,6 +39,8 @@ impl IpfsConfig {
             gateway_token: gateway_token.into(),
             pinata_jwt: None,
             timeout_seconds: 30,
+            enable_download_cache: true,
+            max_cache_entries: 500,
         }
     }
 
@@ -37,12 +49,24 @@ impl IpfsConfig {
         self.pinata_jwt = Some(jwt.into());
         self
     }
+
+    /// Disables the download cache.
+    pub fn no_cache(mut self) -> Self {
+        self.enable_download_cache = false;
+        self
+    }
 }
 
 /// IPFS client for upload/download operations.
+///
+/// Downloads are cached in-memory keyed by CID. Since IPFS content is
+/// content-addressed, the same CID always returns the same bytes,
+/// making this cache always correct.
 pub struct IpfsClient {
     config: IpfsConfig,
     http_client: reqwest::Client,
+    /// CID → downloaded bytes
+    download_cache: Option<RwLock<HashMap<String, Vec<u8>>>>,
 }
 
 impl IpfsClient {
@@ -53,9 +77,31 @@ impl IpfsClient {
             .build()
             .expect("Failed to create HTTP client");
 
+        let download_cache = if config.enable_download_cache {
+            Some(RwLock::new(HashMap::new()))
+        } else {
+            None
+        };
+
         Self {
             config,
             http_client,
+            download_cache,
+        }
+    }
+
+    /// Returns the number of cached downloads.
+    pub fn cache_len(&self) -> usize {
+        self.download_cache
+            .as_ref()
+            .map(|c| c.read().len())
+            .unwrap_or(0)
+    }
+
+    /// Clears the download cache.
+    pub fn clear_cache(&self) {
+        if let Some(cache) = &self.download_cache {
+            cache.write().clear();
         }
     }
 
@@ -113,9 +159,20 @@ impl IpfsClient {
     }
 
     /// Downloads data from IPFS via the configured dedicated gateway.
+    ///
+    /// Results are cached in memory by CID (content-addressed = immutable).
     #[instrument(skip(self))]
     pub async fn download(&self, cid: &str) -> Result<Vec<u8>> {
         self.validate_cid(cid)?;
+
+        // Check cache first
+        if let Some(cache) = &self.download_cache {
+            let entries = cache.read();
+            if let Some(data) = entries.get(cid) {
+                debug!(cid, "IPFS cache hit");
+                return Ok(data.clone());
+            }
+        }
 
         let base = self.config.gateway_url.trim_end_matches('/');
         let base = if base.starts_with("http://") || base.starts_with("https://") {
@@ -142,12 +199,27 @@ impl IpfsClient {
             });
         }
 
-        debug!(cid, "Downloaded from Pinata gateway");
-        response
+        let data = response
             .bytes()
             .await
             .map(|b| b.to_vec())
-            .map_err(|e| SpecterError::HttpError(e.to_string()))
+            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+
+        debug!(cid, bytes = data.len(), "Downloaded from Pinata gateway");
+
+        // Store in cache
+        if let Some(cache) = &self.download_cache {
+            let mut entries = cache.write();
+            // Evict oldest if at capacity
+            if entries.len() >= self.config.max_cache_entries {
+                if let Some(key) = entries.keys().next().cloned() {
+                    entries.remove(&key);
+                }
+            }
+            entries.insert(cid.to_string(), data.clone());
+        }
+
+        Ok(data)
     }
 
     pub(crate) fn validate_cid(&self, cid: &str) -> Result<()> {

@@ -3945,7 +3945,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
- "specter-cache",
  "specter-core",
  "specter-ipfs",
  "thiserror 1.0.69",
@@ -3960,6 +3959,7 @@ dependencies = [
 name = "specter-ipfs"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
@@ -4034,7 +4034,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "specter-cache",
  "specter-core",
  "specter-ipfs",
  "tokio",

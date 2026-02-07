@@ -105,8 +105,9 @@ impl AppState {
         if let Some(jwt) = &config.pinata_jwt {
             resolver_config = resolver_config.with_pinata_jwt(jwt);
         }
+        // IPFS download cache (content-addressed = safe to cache)
         if !config.enable_cache {
-            resolver_config = resolver_config.no_cache();
+            resolver_config.ipfs = resolver_config.ipfs.no_cache();
         }
 
         // SuiNS resolver (reuses same IPFS gateway config)
@@ -120,7 +121,7 @@ impl AppState {
             suins_config = suins_config.with_pinata_jwt(jwt);
         }
         if !config.enable_cache {
-            suins_config = suins_config.no_cache();
+            suins_config.ipfs = suins_config.ipfs.no_cache();
         }
 
         Self {

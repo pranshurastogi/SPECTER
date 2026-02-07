@@ -7,7 +7,6 @@ license.workspace = true
 description = "SuiNS resolution for SPECTER meta-addresses"
 
 [dependencies]
-specter-cache = { path = "../specter-cache" }
 specter-core = { path = "../specter-core" }
 specter-ipfs = { path = "../specter-ipfs" }
 
