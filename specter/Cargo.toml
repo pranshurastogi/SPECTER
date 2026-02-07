@@ -9,6 +9,7 @@ members = [
     "specter-scanner",
     "specter-ipfs",
     "specter-ens",
+    "specter-suins",
     "specter-api",
     "specter-cli",
 ]

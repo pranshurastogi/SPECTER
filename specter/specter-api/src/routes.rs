@@ -17,6 +17,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/stealth/create", post(handlers::create_stealth))
         .route("/api/v1/stealth/scan", post(handlers::scan_payments))
         .route("/api/v1/ens/resolve/:name", get(handlers::resolve_ens))
+        .route("/api/v1/suins/resolve/:name", get(handlers::resolve_suins))
         .route("/api/v1/ipfs/upload", post(handlers::upload_ipfs))
         .route("/api/v1/ipfs/:cid", get(handlers::ipfs_get))
         .route("/api/v1/registry/announcements", get(handlers::list_announcements))

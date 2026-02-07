@@ -85,6 +85,8 @@ impl From<SpecterError> for ApiError {
             }
             SpecterError::EnsNameNotFound(_)
             | SpecterError::NoSpecterRecord(_)
+            | SpecterError::SuinsNameNotFound(_)
+            | SpecterError::NoSuinsSpecterRecord(_)
             | SpecterError::AnnouncementNotFound(_) => {
                 ApiError::not_found(err.to_string())
             }

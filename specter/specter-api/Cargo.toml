@@ -13,6 +13,7 @@ specter-stealth = { path = "../specter-stealth" }
 specter-registry = { path = "../specter-registry" }
 specter-scanner = { path = "../specter-scanner" }
 specter-ens = { path = "../specter-ens" }
+specter-suins = { path = "../specter-suins" }
 
 # Web framework
 axum = { workspace = true }

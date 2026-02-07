@@ -1,0 +1,30 @@
+[package]
+name = "specter-suins"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "SuiNS resolution for SPECTER meta-addresses"
+
+[dependencies]
+specter-cache = { path = "../specter-cache" }
+specter-core = { path = "../specter-core" }
+specter-ipfs = { path = "../specter-ipfs" }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Error handling
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

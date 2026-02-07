@@ -1,7 +1,8 @@
-//! App state: registry, ENS resolver, config.
+//! App state: registry, ENS resolver, SuiNS resolver, config.
 
 use specter_registry::MemoryRegistry;
 use specter_ens::{SpecterResolver, ResolverConfig};
+use specter_suins::{SuinsResolver, SuinsResolverConfig};
 
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
@@ -13,11 +14,14 @@ pub struct ApiConfig {
     pub pinata_gateway_url: String,
     /// Gateway token (required for IPFS retrieves)
     pub pinata_gateway_token: String,
+    pub sui_rpc_url: String,
     pub enable_cache: bool,
 }
 
 const DEFAULT_ETH_MAINNET_RPC: &str = "https://ethereum.publicnode.com";
 const DEFAULT_ETH_SEPOLIA_RPC: &str = "https://ethereum-sepolia-rpc.publicnode.com";
+const DEFAULT_SUI_MAINNET_RPC: &str = "https://fullnode.mainnet.sui.io:443";
+const DEFAULT_SUI_TESTNET_RPC: &str = "https://fullnode.testnet.sui.io:443";
 
 impl Default for ApiConfig {
     fn default() -> Self {
@@ -27,6 +31,7 @@ impl Default for ApiConfig {
             pinata_jwt: None,
             pinata_gateway_url: String::new(),
             pinata_gateway_token: String::new(),
+            sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
             enable_cache: true,
         }
     }
@@ -49,6 +54,14 @@ impl ApiConfig {
                 .unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into())
         };
 
+        let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
+            if use_testnet {
+                DEFAULT_SUI_TESTNET_RPC.into()
+            } else {
+                DEFAULT_SUI_MAINNET_RPC.into()
+            }
+        });
+
         Self {
             rpc_url,
             use_testnet,
@@ -57,6 +70,7 @@ impl ApiConfig {
                 .expect("PINATA_GATEWAY_URL required (e.g. beige-hollow-ermine-440.mypinata.cloud)"),
             pinata_gateway_token: std::env::var("PINATA_GATEWAY_TOKEN")
                 .expect("PINATA_GATEWAY_TOKEN required for IPFS retrieves"),
+            sui_rpc_url,
             enable_cache: std::env::var("ENABLE_CACHE")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
@@ -68,6 +82,7 @@ pub struct AppState {
     pub config: ApiConfig,
     pub registry: MemoryRegistry,
     pub resolver: SpecterResolver,
+    pub suins_resolver: SuinsResolver,
 }
 
 impl AppState {
@@ -84,10 +99,25 @@ impl AppState {
             resolver_config = resolver_config.no_cache();
         }
 
+        // SuiNS resolver (reuses same IPFS gateway config)
+        let mut suins_config = SuinsResolverConfig::new(
+            &config.sui_rpc_url,
+            config.use_testnet,
+            &config.pinata_gateway_url,
+            &config.pinata_gateway_token,
+        );
+        if let Some(jwt) = &config.pinata_jwt {
+            suins_config = suins_config.with_pinata_jwt(jwt);
+        }
+        if !config.enable_cache {
+            suins_config = suins_config.no_cache();
+        }
+
         Self {
             config,
             registry: MemoryRegistry::new(),
             resolver: SpecterResolver::with_config(resolver_config),
+            suins_resolver: SuinsResolver::with_config(suins_config),
         }
     }
 }

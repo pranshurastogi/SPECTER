@@ -185,6 +185,34 @@ pub async fn resolve_ens(
     Ok(Json(response))
 }
 
+/// GET /api/v1/suins/resolve/:name
+pub async fn resolve_suins(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<ResolveSuinsResponse>> {
+    if params.get("no_cache").is_some() {
+        state.suins_resolver.clear_cache();
+    }
+
+    let result = state.suins_resolver.resolve_full(&name).await
+        .map_err(ApiError::from)?;
+
+    let response = ResolveSuinsResponse {
+        suins_name: result.suins_name,
+        meta_address: result.meta_address.to_hex(),
+        spending_pk: result.meta_address.spending_pk.to_hex(),
+        viewing_pk: result.meta_address.viewing_pk.to_hex(),
+        ipfs_cid: if result.ipfs_cid.is_empty() {
+            None
+        } else {
+            Some(result.ipfs_cid)
+        },
+    };
+
+    Ok(Json(response))
+}
+
 /// POST /api/v1/ipfs/upload
 pub async fn upload_ipfs(
     State(state): State<Arc<AppState>>,

@@ -3856,6 +3856,7 @@ dependencies = [
  "specter-registry",
  "specter-scanner",
  "specter-stealth",
+ "specter-suins",
  "tokio",
  "tokio-test",
  "tower",
@@ -4022,6 +4023,23 @@ dependencies = [
  "tokio",
  "tokio-test",
  "zeroize",
+]
+
+[[package]]
+name = "specter-suins"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "specter-cache",
+ "specter-core",
+ "specter-ipfs",
+ "tokio",
+ "tokio-test",
+ "tracing",
 ]
 
 [[package]]

@@ -119,6 +119,21 @@ pub struct ResolveEnsResponse {
     pub ipfs_cid: Option<String>,
 }
 
+/// Response for SuiNS resolution.
+#[derive(Debug, Serialize)]
+pub struct ResolveSuinsResponse {
+    /// SuiNS name that was resolved
+    pub suins_name: String,
+    /// Meta-address (hex)
+    pub meta_address: String,
+    /// Spending public key (hex)
+    pub spending_pk: String,
+    /// Viewing public key (hex)
+    pub viewing_pk: String,
+    /// IPFS CID where meta-address is stored
+    pub ipfs_cid: Option<String>,
+}
+
 /// Request to upload meta-address to IPFS.
 #[derive(Debug, Deserialize)]
 pub struct UploadIpfsRequest {
