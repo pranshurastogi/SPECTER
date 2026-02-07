@@ -78,17 +78,33 @@ impl From<SpecterError> for ApiError {
             SpecterError::ValidationError(_) => {
                 ApiError::validation(err.to_string())
             }
-            SpecterError::InvalidMetaAddress(_) 
+            SpecterError::InvalidMetaAddress(_)
             | SpecterError::InvalidStealthAddress(_)
             | SpecterError::InvalidAnnouncement(_) => {
                 ApiError::bad_request(err.to_string())
             }
-            SpecterError::EnsNameNotFound(_)
-            | SpecterError::NoSpecterRecord(_)
-            | SpecterError::SuinsNameNotFound(_)
-            | SpecterError::NoSuinsSpecterRecord(_)
-            | SpecterError::AnnouncementNotFound(_) => {
+            SpecterError::EnsNameNotFound(_) => {
+                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "ENS_NAME_NOT_FOUND")
+            }
+            SpecterError::NoSpecterRecord(_) => {
+                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "NO_SPECTER_RECORD")
+            }
+            SpecterError::SuinsNameNotFound(_) => {
+                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "SUINS_NAME_NOT_FOUND")
+            }
+            SpecterError::NoSuinsSpecterRecord(_) => {
+                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "NO_SUINS_SPECTER_RECORD")
+            }
+            SpecterError::AnnouncementNotFound(_) => {
                 ApiError::not_found(err.to_string())
+            }
+            SpecterError::EnsResolutionFailed { .. }
+            | SpecterError::SuinsResolutionFailed { .. } => {
+                ApiError::bad_request(err.to_string())
+            }
+            SpecterError::IpfsDownloadFailed { .. }
+            | SpecterError::IpfsTimeout { .. } => {
+                ApiError::new(StatusCode::BAD_GATEWAY, err.to_string(), "IPFS_ERROR")
             }
             SpecterError::HexError(_) => {
                 ApiError::bad_request(format!("Invalid hex encoding: {}", err))
