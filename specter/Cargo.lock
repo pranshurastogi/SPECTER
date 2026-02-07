@@ -1096,6 +1096,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3847,12 +3856,22 @@ dependencies = [
  "specter-registry",
  "specter-scanner",
  "specter-stealth",
+ "specter-suins",
  "tokio",
  "tokio-test",
  "tower",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "specter-cache"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde",
+ "specter-core",
 ]
 
 [[package]]
@@ -3898,6 +3917,7 @@ dependencies = [
 name = "specter-crypto"
 version = "0.1.0"
 dependencies = [
+ "blake2",
  "criterion",
  "hex",
  "k256",
@@ -3918,23 +3938,33 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "async-trait",
- "chrono",
  "cid",
- "dashmap 5.5.3",
  "hex",
  "multihash",
- "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
  "sha3",
+ "specter-cache",
  "specter-core",
+ "specter-ipfs",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tracing",
  "url",
  "wiremock",
+]
+
+[[package]]
+name = "specter-ipfs"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "specter-core",
+ "tracing",
 ]
 
 [[package]]
@@ -3993,6 +4023,23 @@ dependencies = [
  "tokio",
  "tokio-test",
  "zeroize",
+]
+
+[[package]]
+name = "specter-suins"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "specter-cache",
+ "specter-core",
+ "specter-ipfs",
+ "tokio",
+ "tokio-test",
+ "tracing",
 ]
 
 [[package]]

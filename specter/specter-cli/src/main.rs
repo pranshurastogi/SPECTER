@@ -154,12 +154,16 @@ async fn cmd_generate(output: Option<PathBuf>) -> Result<()> {
 async fn cmd_resolve(name: &str, rpc_url: Option<String>) -> Result<()> {
     println!("{} {}", "🔍 Resolving:".cyan().bold(), name);
 
-    let config = if let Some(url) = rpc_url {
-        ResolverConfig::with_rpc(url)
-    } else {
-        ResolverConfig::default()
-    };
-
+    let api_config = ApiConfig::from_env();
+    let rpc = rpc_url.as_deref().unwrap_or(&api_config.rpc_url);
+    let mut config = ResolverConfig::new(
+        rpc,
+        &api_config.pinata_gateway_url,
+        &api_config.pinata_gateway_token,
+    );
+    if let Some(jwt) = &api_config.pinata_jwt {
+        config = config.with_pinata_jwt(jwt);
+    }
     let resolver = SpecterResolver::with_config(config);
 
     let meta = resolver.resolve(name).await
@@ -181,11 +185,16 @@ async fn cmd_create(recipient: &str, rpc_url: Option<String>) -> Result<()> {
     let meta = if recipient.ends_with(".eth") {
         // Resolve ENS
         println!("   Resolving ENS name...");
-        let config = if let Some(url) = rpc_url {
-            ResolverConfig::with_rpc(url)
-        } else {
-            ResolverConfig::default()
-        };
+        let api_config = ApiConfig::from_env();
+        let rpc = rpc_url.as_deref().unwrap_or(&api_config.rpc_url);
+        let mut config = ResolverConfig::new(
+            rpc,
+            &api_config.pinata_gateway_url,
+            &api_config.pinata_gateway_token,
+        );
+        if let Some(jwt) = &api_config.pinata_jwt {
+            config = config.with_pinata_jwt(jwt);
+        }
         let resolver = SpecterResolver::with_config(config);
         resolver.resolve(recipient).await
             .context("Failed to resolve ENS name")?
@@ -199,7 +208,8 @@ async fn cmd_create(recipient: &str, rpc_url: Option<String>) -> Result<()> {
         .context("Failed to create stealth payment")?;
 
     println!("\n{}", "✅ Stealth payment created:".green().bold());
-    println!("   {} {}", "Address:".yellow(), payment.stealth_address.to_checksum_string());
+    println!("   {} {}", "ETH Address:".yellow(), payment.stealth_address.to_checksum_string());
+    println!("   {} {}", "Sui Address:".yellow(), payment.stealth_sui_address.to_hex_string());
     println!("   {} {}", "View tag:".dimmed(), payment.announcement.view_tag);
     println!("   {} {}...", "Ephemeral key:".dimmed(), hex::encode(&payment.announcement.ephemeral_key[..16]));
 

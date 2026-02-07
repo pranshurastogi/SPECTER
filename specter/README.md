@@ -1,84 +1,21 @@
-# SPECTER 👻
+# SPECTER
 
-**Post-Quantum Stealth Address Protocol for Ethereum**
+**Post-Quantum Stealth Address Protocol for EVM and Sui**
 
-SPECTER enables private payments on Ethereum using quantum-resistant cryptography (ML-KEM-768/Kyber). Recipients publish a meta-address to ENS, and senders can create one-time stealth addresses that only the recipient can discover and spend from.
+SPECTER enables private payments on EVM chains and Sui using quantum-resistant cryptography (ML-KEM-768/Kyber). Recipients publish a meta-address to ENS (EVM) or SuiNS (Sui), and senders can create one-time stealth addresses (Ethereum + Sui from the same key) that only the recipient can discover and spend from.
 
 ---
 
 ## Table of Contents
 
-- [Features](#features)
-- [Architecture](#architecture)
 - [Quick Start](#quick-start)
 - [Step-by-Step Tutorial](#step-by-step-tutorial)
 - [CLI Reference](#cli-reference)
 - [API Reference](#api-reference)
 - [Protocol Overview](#protocol-overview)
-- [Configuration](#configuration)
 - [Cryptographic Details](#cryptographic-details)
-- [Testing](#testing)
 - [Benchmarks](#benchmarks)
 - [Security Considerations](#security-considerations)
-- [License](#license)
-
----
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| 🔐 **Post-Quantum Security** | Uses ML-KEM-768 (NIST FIPS 203) - resistant to quantum attacks |
-| 🏷️ **View Tags** | 99.6% scanning efficiency with 1-byte tags |
-| 📛 **ENS Integration** | Human-readable addresses via ENS text records |
-| 📦 **IPFS Storage** | Decentralized meta-address storage via Pinata |
-| ⚡ **High Performance** | ~50,000 announcements/sec scanning rate |
-| 🌐 **REST API** | Ready for frontend integration with Axum |
-| 🛠️ **CLI Tool** | Full command-line interface for all operations |
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              SPECTER WORKSPACE                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │specter-core │  │specter-     │  │specter-     │  │specter-     │        │
-│  │             │  │crypto       │  │stealth      │  │registry     │        │
-│  │ • Types     │  │             │  │             │  │             │        │
-│  │ • Errors    │  │ • ML-KEM    │  │ • Wallet    │  │ • Memory    │        │
-│  │ • Constants │  │ • SHAKE256  │  │ • Payments  │  │ • File      │        │
-│  │ • Traits    │  │ • View Tags │  │ • Discovery │  │ • Stats     │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
-│         │                │                │                │                │
-│         └────────────────┴────────────────┴────────────────┘                │
-│                                    │                                        │
-│  ┌─────────────┐  ┌─────────────┐  │  ┌─────────────┐  ┌─────────────┐      │
-│  │specter-     │  │specter-ens  │  │  │specter-api  │  │specter-cli  │      │
-│  │scanner      │  │             │  │  │             │  │             │      │
-│  │             │  │ • ENS       │  │  │ • Axum      │  │ • Clap      │      │
-│  │ • Batch     │  │ • IPFS      │  │  │ • REST API  │  │ • Commands  │      │
-│  │ • Progress  │  │ • Pinata    │  │  │ • Handlers  │  │ • Output    │      │
-│  └─────────────┘  └─────────────┘  │  └─────────────┘  └─────────────┘      │
-│                                    │                                        │
-└────────────────────────────────────┴────────────────────────────────────────┘
-```
-
-### Crate Overview
-
-| Crate | Description |
-|-------|-------------|
-| `specter-core` | Core types, error handling, constants, and traits |
-| `specter-crypto` | ML-KEM-768 operations, SHAKE256 hashing, view tag computation |
-| `specter-stealth` | Wallet management, payment creation, payment discovery |
-| `specter-registry` | Announcement storage (in-memory and file-based) |
-| `specter-scanner` | Efficient batch scanning with progress tracking |
-| `specter-ens` | ENS name resolution and IPFS/Pinata integration |
-| `specter-api` | Axum-based REST API server |
-| `specter-cli` | Command-line interface |
 
 ---
 
@@ -87,31 +24,51 @@ SPECTER enables private payments on Ethereum using quantum-resistant cryptograph
 ### Prerequisites
 
 - **Rust 1.75+** - Install from [rustup.rs](https://rustup.rs)
-- **Node.js 18+** (optional, for frontend)
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/pranshurastogi/SPECTER
 cd SPECTER/specter
 
-# Build all crates (release mode for performance)
 cargo build --release
-
-# Verify installation
-cargo run --bin specter -- --help
+cargo run --bin specter -- --help   # verify
 ```
 
-### First Run
+### .env Setup
+
+Create `.env` in the `specter` directory. For the API server (ENS resolve, IPFS), Pinata is required:
 
 ```bash
-# Generate your first key pair
-cargo run --bin specter -- generate
+# Required for ENS resolution and IPFS
+PINATA_GATEWAY_URL=your-dedicated-gateway.mypinata.cloud
+PINATA_GATEWAY_TOKEN=your_gateway_token
 
-# Run the benchmark to see it all work
-cargo run --bin specter -- bench --count 100
+# Optional: for IPFS uploads (POST /api/v1/ipfs/upload)
+PINATA_JWT=your_pinata_jwt
+
+# Optional: Sepolia testnet + Sui testnet (default: mainnet)
+USE_TESTNET=true
+
+# Optional: custom Ethereum RPC (defaults: publicnode mainnet/sepolia)
+# ETH_RPC_URL=https://ethereum.publicnode.com
+# ETH_RPC_URL_SEPOLIA=https://ethereum-sepolia-rpc.publicnode.com
+
+# Optional: custom Sui RPC (defaults based on USE_TESTNET)
+# SUI_RPC_URL=https://fullnode.mainnet.sui.io:443
 ```
+
+### Running
+
+```bash
+# Start API server (port 3001)
+cargo run --bin specter -- serve --port 3001
+
+# Or with explicit bind
+cargo run --bin specter -- serve --port 3001 --bind 0.0.0.0
+```
+
+Health check: `curl http://localhost:3001/health`
 
 ---
 
@@ -127,10 +84,10 @@ cargo run --bin specter -- generate --output my-keys.json
 
 **Output:**
 ```
-🔑 Generating SPECTER keys...
-✅ Keys saved to: my-keys.json
+Generating SPECTER keys...
+Keys saved to: my-keys.json
 
-⚠️  IMPORTANT: Keep your secret keys safe!
+IMPORTANT: Keep your secret keys safe!
    spending_sk and viewing_sk must never be shared.
 ```
 
@@ -160,21 +117,21 @@ cargo run --bin specter -- create alice.eth --rpc-url https://ethereum.publicnod
 
 **Output:**
 ```
-💸 Creating stealth payment to: 01abc...
+Creating stealth payment to: 01abc...
 
-✅ Stealth payment created:
+Stealth payment created:
    Address: 0x1234...5678  ← Send funds here!
    View tag: 42
    Ephemeral key: abcd...
 
-📋 Announcement (JSON):
+Announcement (JSON):
 {
   "ephemeral_key": "...",
   "view_tag": 42,
   "timestamp": 1706817600
 }
 
-ℹ️  Next steps:
+Next steps:
    1. Send funds to the stealth address above
    2. Publish the announcement to the registry
 ```
@@ -199,23 +156,23 @@ cargo run --bin specter -- bench --count 1000
 
 **Output:**
 ```
-📊 Benchmarking with 1000 announcements
+Benchmarking with 1000 announcements
 
 1. Generating keys...
-   ✓ Key generation: 125µs
+   Key generation: 125µs
 
 2. Creating announcements...
    [########################################] 1000/1000
-   ✓ Created 1000 announcements: 2.1s
+   Created 1000 announcements: 2.1s
 
 3. Scanning...
-   ✓ Scanned 1000 announcements: 45ms
-   ✓ Found 10 payments
+   Scanned 1000 announcements: 45ms
+   Found 10 payments
 
-📈 Results:
+Results:
    Scan rate: 22,222 announcements/sec
    Time per announcement: 45µs
-   ✅ All expected payments found!
+   All expected payments found!
 ```
 
 ### Step 5: Start the API Server
@@ -228,7 +185,7 @@ cargo run --bin specter -- serve --port 3001 --bind 0.0.0.0
 
 **Output:**
 ```
-🚀 Starting SPECTER API server...
+Starting SPECTER API server...
    Listening on: http://0.0.0.0:3001
    Health check: http://0.0.0.0:3001/health
 
@@ -378,7 +335,10 @@ GET /health
 ```json
 {
   "status": "ok",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "uptime_seconds": 42,
+  "announcements_count": 0,
+  "use_testnet": false
 }
 ```
 
@@ -392,7 +352,9 @@ POST /api/v1/keys/generate
 ```json
 {
   "spending_pk": "hex...",
+  "spending_sk": "hex...",
   "viewing_pk": "hex...",
+  "viewing_sk": "hex...",
   "meta_address": "01hex...",
   "view_tag": 42
 }
@@ -413,10 +375,15 @@ Content-Type: application/json
 ```json
 {
   "stealth_address": "0x1234...5678",
+  "stealth_sui_address": "0x...",
+  "ephemeral_ciphertext": "hex...",
+  "view_tag": 42,
   "announcement": {
+    "id": 1,
     "ephemeral_key": "hex...",
     "view_tag": 42,
-    "timestamp": 1706817600
+    "timestamp": 1706817600,
+    "channel_id": null
   }
 }
 ```
@@ -430,6 +397,28 @@ GET /api/v1/ens/resolve/:name
 **Example:**
 ```bash
 curl http://localhost:3001/api/v1/ens/resolve/alice.eth
+```
+
+#### Resolve SuiNS Name
+
+```http
+GET /api/v1/suins/resolve/:name
+```
+
+**Example:**
+```bash
+curl http://localhost:3001/api/v1/suins/resolve/alice.sui
+```
+
+**Response:**
+```json
+{
+  "suins_name": "alice.sui",
+  "meta_address": "01hex...",
+  "spending_pk": "hex...",
+  "viewing_pk": "hex...",
+  "ipfs_cid": "bafkrei..."
+}
 ```
 
 #### Publish Announcement
@@ -459,10 +448,11 @@ GET /api/v1/registry/stats
 **Response:**
 ```json
 {
-  "total_count": 1234,
-  "view_tag_distribution": [5, 3, 8, ...],
-  "earliest_timestamp": 1706800000,
-  "latest_timestamp": 1706817600
+  "total_announcements": 1234,
+  "view_tag_distribution": [
+    { "tag": 42, "count": 5 },
+    { "tag": 100, "count": 3 }
+  ]
 }
 ```
 
@@ -475,7 +465,9 @@ GET /api/v1/registry/stats
 | `POST` | `/api/v1/stealth/create` | Create stealth payment |
 | `POST` | `/api/v1/stealth/scan` | Scan for payments |
 | `GET` | `/api/v1/ens/resolve/:name` | Resolve ENS to meta-address |
-| `POST` | `/api/v1/ens/upload` | Upload meta-address to IPFS |
+| `GET` | `/api/v1/suins/resolve/:name` | Resolve SuiNS to meta-address |
+| `POST` | `/api/v1/ipfs/upload` | Upload meta-address to IPFS |
+| `GET` | `/api/v1/ipfs/:cid` | Get IPFS content (raw bytes) by CID |
 | `GET` | `/api/v1/registry/announcements` | List all announcements |
 | `POST` | `/api/v1/registry/announcements` | Publish announcement |
 | `GET` | `/api/v1/registry/stats` | Get registry statistics |
@@ -558,13 +550,14 @@ GET /api/v1/registry/stats
 2. **Meta-Address Creation**: Combine public keys into meta-address
    - Format: `version (1) || spending_pk (1184) || viewing_pk (1184)`
 
-3. **ENS Publication**: Store on IPFS and link via ENS
+3. **Name Service Publication**: Store on IPFS and link via ENS or SuiNS
    - Upload meta-address to IPFS/Pinata
-   - Set ENS text record: `specter` → `ipfs://<CID>`
+   - ENS: Set text record `specter` → `ipfs://<CID>`
+   - SuiNS: Set `contentHash` → `ipfs://<CID>`
 
 ### Sending Phase
 
-1. **Resolution**: Sender resolves `alice.eth` → meta-address
+1. **Resolution**: Sender resolves `alice.eth` or `alice.sui` → meta-address
 2. **Encapsulation**: Create shared secret with viewing key
 3. **View Tag**: Compute 1-byte tag for efficient scanning
 4. **Stealth Address**: Derive one-time address from spending key
@@ -578,40 +571,6 @@ GET /api/v1/registry/stats
 3. **Decapsulation**: Recover shared secret for matches
 4. **Key Derivation**: Compute stealth private key
 5. **Spending**: Use stealth key to sign transactions
-
----
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Ethereum RPC (for ENS resolution)
-export ETH_RPC_URL="https://ethereum.publicnode.com"
-
-# IPFS/Pinata (for meta-address storage)
-export PINATA_API_KEY="your_api_key"
-export PINATA_SECRET_KEY="your_secret_key"
-
-# Logging
-export RUST_LOG="specter=debug"  # debug, info, warn, error
-```
-
-### Programmatic Configuration
-
-```rust
-use specter_api::{ApiServer, ApiConfig};
-
-let config = ApiConfig {
-    rpc_url: "https://ethereum.publicnode.com".into(),
-    pinata_api_key: Some("key".into()),
-    pinata_secret_key: Some("secret".into()),
-    enable_cache: true,
-};
-
-let server = ApiServer::new(config);
-server.run(([0, 0, 0, 0], 3001)).await?;
-```
 
 ---
 
@@ -656,45 +615,6 @@ view_tag = SHAKE256("SPECTER_VIEW_TAG" || shared_secret, 1)[0]
 
 ---
 
-## Testing
-
-### Run All Tests
-
-```bash
-# Full test suite
-cargo test --workspace
-
-# With verbose output
-cargo test --workspace -- --nocapture
-
-# With logging
-RUST_LOG=debug cargo test --workspace
-```
-
-### Run Specific Crate Tests
-
-```bash
-cargo test -p specter-core
-cargo test -p specter-crypto
-cargo test -p specter-stealth
-cargo test -p specter-registry
-cargo test -p specter-scanner
-cargo test -p specter-ens
-cargo test -p specter-api
-```
-
-### Test Coverage
-
-```bash
-# Install cargo-tarpaulin
-cargo install cargo-tarpaulin
-
-# Generate coverage report
-cargo tarpaulin --workspace --out Html
-```
-
----
-
 ## Benchmarks
 
 ### Run Benchmarks
@@ -723,7 +643,7 @@ cargo bench -p specter-crypto
 
 ### Key Management
 
-- ⚠️ **Never expose `spending_sk` or `viewing_sk`**
+- **Never expose `spending_sk` or `viewing_sk`**
 - All secret keys are automatically zeroized on drop (`zeroize` crate)
 - Use encrypted storage for production key management
 
@@ -747,25 +667,6 @@ cargo bench -p specter-crypto
 
 ---
 
-## License
-
-MIT OR Apache-2.0
-
----
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Run tests: `cargo test --workspace`
-5. Run lints: `cargo fmt && cargo clippy`
-6. Submit a pull request
-
----
-
 ## Acknowledgments
 
 - [NIST FIPS 203](https://csrc.nist.gov/pubs/fips/203/final) - ML-KEM Standard
@@ -774,16 +675,4 @@ Contributions are welcome! Please follow these steps:
 - [Umbra Protocol](https://umbra.cash) - Inspiration and prior art
 - [EIP-5564](https://eips.ethereum.org/EIPS/eip-5564) - Stealth Address standard
 
----
 
-## Support
-
-- 📧 Email: pranshurastogi@gmail.com
-- 🐛 Issues: [GitHub Issues](https://github.com/pranshurastogi/SPECTER/issues)
-- 💬 Discord: Coming soon
-
----
-
-<p align="center">
-  <strong>Built with 🦀 Rust for a quantum-safe future</strong>
-</p>

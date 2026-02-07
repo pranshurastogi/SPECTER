@@ -34,6 +34,8 @@ pub struct CreateStealthRequest {
 pub struct CreateStealthResponse {
     /// The stealth Ethereum address to send funds to
     pub stealth_address: String,
+    /// The stealth Sui address (same key)
+    pub stealth_sui_address: String,
     /// The ephemeral ciphertext (hex)
     pub ephemeral_ciphertext: String,
     /// View tag for the announcement
@@ -71,8 +73,10 @@ pub struct ScanResponse {
 /// A discovered payment.
 #[derive(Debug, Serialize)]
 pub struct DiscoveryDto {
-    /// Stealth address (checksummed)
+    /// Stealth Ethereum address (checksummed)
     pub stealth_address: String,
+    /// Stealth Sui address
+    pub stealth_sui_address: String,
     /// Stealth private key (hex) - HANDLE WITH CARE
     pub stealth_sk: String,
     /// Ethereum-compatible private key (32 bytes, hex)
@@ -105,6 +109,21 @@ pub struct ScanStatsDto {
 pub struct ResolveEnsResponse {
     /// ENS name that was resolved
     pub ens_name: String,
+    /// Meta-address (hex)
+    pub meta_address: String,
+    /// Spending public key (hex)
+    pub spending_pk: String,
+    /// Viewing public key (hex)
+    pub viewing_pk: String,
+    /// IPFS CID where meta-address is stored
+    pub ipfs_cid: Option<String>,
+}
+
+/// Response for SuiNS resolution.
+#[derive(Debug, Serialize)]
+pub struct ResolveSuinsResponse {
+    /// SuiNS name that was resolved
+    pub suins_name: String,
     /// Meta-address (hex)
     pub meta_address: String,
     /// Spending public key (hex)
@@ -265,4 +284,6 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
     /// Total announcements in registry
     pub announcements_count: u64,
+    /// When true, backend uses Sepolia ENS
+    pub use_testnet: bool,
 }

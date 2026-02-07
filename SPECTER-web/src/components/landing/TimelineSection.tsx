@@ -4,11 +4,11 @@ import {
   Shield,
   Zap,
   Tag,
+  Key,
   UserPlus,
   Send,
   Eye,
   Download,
-  CheckCircle2,
 } from "lucide-react";
 import { Timeline } from "@/components/ui/timeline";
 import type { TimelineEntry } from "@/components/ui/timeline";
@@ -82,9 +82,9 @@ export function TimelineSection() {
             </div>
             <div className="py-4 pr-4">
               <Tag className="h-9 w-9 text-primary mb-3" />
-              <h4 className={featureTitle}>ENS Native</h4>
+              <h4 className={featureTitle}>ENS + SuiNS</h4>
               <p className={featureDesc}>
-                Human-readable private payments
+                Human-readable private payments on Ethereum and Sui
               </p>
             </div>
           </div>
@@ -92,18 +92,19 @@ export function TimelineSection() {
       ),
     },
     {
-      title: "How it works",
+      title: "From setup to claim",
       content: (
         <div className="max-w-4xl">
           <p className={sectionIntro}>
-            Four simple steps to complete privacy.
+            Five simple steps to complete privacy.
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-6 md:gap-6">
             {[
-              { icon: UserPlus, step: "01", title: "Register", desc: "Register ENS with SPECTER meta-address" },
-              { icon: Send, step: "02", title: "Send", desc: "Send to ENS privately" },
-              { icon: Eye, step: "03", title: "On-chain", desc: "Payment to random stealth address" },
-              { icon: Download, step: "04", title: "Claim", desc: "Scan and claim funds" },
+              { icon: Key, step: "01", title: "Generate keys", desc: "Create your SPECTER keys on Setup" },
+              { icon: UserPlus, step: "02", title: "Register", desc: "Link meta-address to ENS or SuiNS" },
+              { icon: Send, step: "03", title: "Send", desc: "Send to any name privately" },
+              { icon: Eye, step: "04", title: "On-chain", desc: "Payment to random stealth address" },
+              { icon: Download, step: "05", title: "Claim", desc: "Scan and claim funds" },
             ].map((s) => (
               <div
                 key={s.step}
@@ -146,20 +147,6 @@ export function TimelineSection() {
               </motion.div>
             ))}
           </div>
-          <div className="space-y-2.5 pt-6 border-t border-border/50">
-            <div className="flex gap-3 items-center text-muted-foreground text-base md:text-lg lg:text-xl text-left">
-              <CheckCircle2 className="h-6 w-6 text-primary shrink-0" />
-              Quantum-safe ML-KEM-768
-            </div>
-            <div className="flex gap-3 items-center text-muted-foreground text-base md:text-lg lg:text-xl text-left">
-              <CheckCircle2 className="h-6 w-6 text-primary shrink-0" />
-              ENS-native private payments
-            </div>
-            <div className="flex gap-3 items-center text-muted-foreground text-base md:text-lg lg:text-xl text-left">
-              <CheckCircle2 className="h-6 w-6 text-primary shrink-0" />
-              Stealth addresses on-chain
-            </div>
-          </div>
         </div>
       ),
     },
@@ -170,7 +157,7 @@ export function TimelineSection() {
       <Timeline
         data={data}
         title="How SPECTER works"
-        subtitle="Post-quantum privacy for ENS payments. Built for the future."
+        subtitle="Post-quantum privacy for ENS and SuiNS. Built for Ethereum and Sui."
       />
     </section>
   );

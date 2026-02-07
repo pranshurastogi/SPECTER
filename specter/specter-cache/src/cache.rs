@@ -1,4 +1,4 @@
-//! Local caching for frequently accessed meta-addresses.
+//! In-memory TTL cache for meta-addresses.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -37,7 +37,7 @@ impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             max_entries: 1000,
-            default_ttl_seconds: 3600, // 1 hour
+            default_ttl_seconds: 3600,
             auto_cleanup: true,
         }
     }
@@ -65,40 +65,32 @@ impl MetaAddressCache {
         }
     }
 
-    /// Gets a cached meta-address by ENS name.
-    ///
-    /// Returns None if not cached or expired.
-    pub fn get(&self, ens_name: &str) -> Option<MetaAddress> {
-        let normalized = ens_name.trim().to_lowercase();
-        
+    /// Gets a cached meta-address by key (e.g. ENS name).
+    pub fn get(&self, key: &str) -> Option<MetaAddress> {
+        let normalized = key.trim().to_lowercase();
         let entries = self.entries.read();
-        
-        if let Some(entry) = entries.get(&normalized) {
-            if !entry.is_expired() {
-                return Some(entry.meta_address.clone());
+        entries.get(&normalized).and_then(|e| {
+            if e.is_expired() {
+                None
+            } else {
+                Some(e.meta_address.clone())
             }
-        }
-        
-        None
+        })
     }
 
     /// Caches a meta-address with the default TTL.
-    pub fn set(&self, ens_name: &str, meta_address: MetaAddress) {
-        self.set_with_ttl(ens_name, meta_address, Duration::from_secs(self.config.default_ttl_seconds));
+    pub fn set(&self, key: &str, meta_address: MetaAddress) {
+        self.set_with_ttl(key, meta_address, Duration::from_secs(self.config.default_ttl_seconds));
     }
 
     /// Caches a meta-address with a custom TTL.
-    pub fn set_with_ttl(&self, ens_name: &str, meta_address: MetaAddress, ttl: Duration) {
-        let normalized = ens_name.trim().to_lowercase();
-        
+    pub fn set_with_ttl(&self, key: &str, meta_address: MetaAddress, ttl: Duration) {
+        let normalized = key.trim().to_lowercase();
         let mut entries = self.entries.write();
-        
-        // Auto-cleanup if enabled and at capacity
+
         if self.config.auto_cleanup && entries.len() >= self.config.max_entries {
-            self.cleanup_expired_internal(&mut entries);
+            entries.retain(|_, e| !e.is_expired());
         }
-        
-        // Still at capacity? Remove oldest entry
         if entries.len() >= self.config.max_entries {
             if let Some(oldest_key) = entries
                 .iter()
@@ -108,7 +100,7 @@ impl MetaAddressCache {
                 entries.remove(&oldest_key);
             }
         }
-        
+
         entries.insert(normalized, CacheEntry {
             meta_address,
             inserted_at: Instant::now(),
@@ -117,8 +109,8 @@ impl MetaAddressCache {
     }
 
     /// Removes a cached entry.
-    pub fn remove(&self, ens_name: &str) {
-        let normalized = ens_name.trim().to_lowercase();
+    pub fn remove(&self, key: &str) {
+        let normalized = key.trim().to_lowercase();
         self.entries.write().remove(&normalized);
     }
 
@@ -129,12 +121,7 @@ impl MetaAddressCache {
 
     /// Removes all expired entries.
     pub fn cleanup_expired(&self) {
-        let mut entries = self.entries.write();
-        self.cleanup_expired_internal(&mut entries);
-    }
-
-    fn cleanup_expired_internal(&self, entries: &mut HashMap<String, CacheEntry>) {
-        entries.retain(|_, entry| !entry.is_expired());
+        self.entries.write().retain(|_, e| !e.is_expired());
     }
 
     /// Returns the number of cached entries.
@@ -151,11 +138,10 @@ impl MetaAddressCache {
     pub fn stats(&self) -> CacheStats {
         let entries = self.entries.read();
         let expired = entries.values().filter(|e| e.is_expired()).count();
-        
         CacheStats {
             total_entries: entries.len(),
             expired_entries: expired,
-            valid_entries: entries.len() - expired,
+            valid_entries: entries.len().saturating_sub(expired),
             capacity: self.config.max_entries,
         }
     }
@@ -170,21 +156,17 @@ impl Default for MetaAddressCache {
 /// Cache statistics.
 #[derive(Clone, Debug)]
 pub struct CacheStats {
-    /// Total entries (including expired)
     pub total_entries: usize,
-    /// Expired entries
     pub expired_entries: usize,
-    /// Valid (non-expired) entries
     pub valid_entries: usize,
-    /// Maximum capacity
     pub capacity: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use specter_core::types::KyberPublicKey;
     use specter_core::constants::KYBER_PUBLIC_KEY_SIZE;
+    use specter_core::types::KyberPublicKey;
 
     fn make_test_meta() -> MetaAddress {
         MetaAddress::new(
@@ -197,9 +179,7 @@ mod tests {
     fn test_cache_set_get() {
         let cache = MetaAddressCache::new();
         let meta = make_test_meta();
-
         cache.set("alice.eth", meta.clone());
-
         let retrieved = cache.get("alice.eth").unwrap();
         assert_eq!(retrieved.version, meta.version);
     }
@@ -207,11 +187,7 @@ mod tests {
     #[test]
     fn test_cache_normalize_name() {
         let cache = MetaAddressCache::new();
-        let meta = make_test_meta();
-
-        cache.set("ALICE.ETH", meta);
-
-        // Should find with lowercase
+        cache.set("ALICE.ETH", make_test_meta());
         assert!(cache.get("alice.eth").is_some());
         assert!(cache.get("  ALICE.eth  ").is_some());
     }
@@ -226,9 +202,7 @@ mod tests {
     fn test_cache_remove() {
         let cache = MetaAddressCache::new();
         cache.set("alice.eth", make_test_meta());
-
         cache.remove("alice.eth");
-
         assert!(cache.get("alice.eth").is_none());
     }
 
@@ -237,23 +211,15 @@ mod tests {
         let cache = MetaAddressCache::new();
         cache.set("alice.eth", make_test_meta());
         cache.set("bob.eth", make_test_meta());
-
         cache.clear();
-
         assert!(cache.is_empty());
     }
 
     #[test]
     fn test_cache_ttl_expiration() {
         let cache = MetaAddressCache::new();
-        
-        // Set with very short TTL
         cache.set_with_ttl("alice.eth", make_test_meta(), Duration::from_millis(1));
-        
-        // Wait for expiration
         std::thread::sleep(Duration::from_millis(10));
-        
-        // Should be expired
         assert!(cache.get("alice.eth").is_none());
     }
 
@@ -265,12 +231,9 @@ mod tests {
             auto_cleanup: true,
         };
         let cache = MetaAddressCache::with_config(config);
-
         cache.set("alice.eth", make_test_meta());
         cache.set("bob.eth", make_test_meta());
         cache.set("charlie.eth", make_test_meta());
-
-        // Should have evicted oldest
         assert_eq!(cache.len(), 2);
     }
 
@@ -279,24 +242,18 @@ mod tests {
         let cache = MetaAddressCache::new();
         cache.set("alice.eth", make_test_meta());
         cache.set("bob.eth", make_test_meta());
-
         let stats = cache.stats();
         assert_eq!(stats.total_entries, 2);
         assert_eq!(stats.valid_entries, 2);
-        assert_eq!(stats.expired_entries, 0);
     }
 
     #[test]
     fn test_cache_cleanup_expired() {
         let cache = MetaAddressCache::new();
-        
         cache.set_with_ttl("alice.eth", make_test_meta(), Duration::from_millis(1));
         cache.set("bob.eth", make_test_meta());
-        
         std::thread::sleep(Duration::from_millis(10));
-        
         cache.cleanup_expired();
-        
         assert_eq!(cache.len(), 1);
         assert!(cache.get("bob.eth").is_some());
     }

@@ -1,250 +1,184 @@
 import { Link, useLocation } from "react-router-dom";
-import { motion } from "framer-motion";
-import { Menu, X, Wallet } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useState } from "react";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
-import { formatAddress } from "@/lib/utils";
+import { Menu, X } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { useApiHealth } from "@/hooks/useApiHealth";
 import { api } from "@/lib/api";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
 const navLinks = [
-  { path: "/", label: "Home" },
-  { path: "/generate", label: "Generate Keys" },
+  { path: "/setup", label: "Setup" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
-  { path: "/ens", label: "ENS" },
 ];
+
+const NavLink = ({
+  to,
+  children,
+  isActive,
+}: {
+  to: string;
+  children: React.ReactNode;
+  isActive: boolean;
+}) => (
+  <Link
+    to={to}
+    className={`text-sm whitespace-nowrap transition-colors duration-200 ${
+      isActive ? "text-foreground font-medium" : "text-muted-foreground hover:text-foreground"
+    }`}
+  >
+    {children}
+  </Link>
+);
 
 export function Header() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending } = useConnect();
-  const { disconnect } = useDisconnect();
+  const [headerShapeClass, setHeaderShapeClass] = useState("rounded-full");
+  const shapeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { ok: apiOk, loading: apiLoading } = useApiHealth();
 
-  return (
-    <header className="fixed top-0 left-0 right-0 z-50 glass-panel rounded-none border-b border-border/50 border-t-0 border-x-0">
-      <div className="container mx-auto px-4">
-        <div className="flex h-16 items-center justify-between">
-          {/* Logo + API status */}
-          <div className="flex items-center gap-3">
-            <Link to="/" className="flex items-center gap-2 group">
-              <motion.div
-                className="relative"
-                whileHover={{ scale: 1.05 }}
-                transition={{ type: "spring", stiffness: 400 }}
-              >
-                <img src="/SPECTER-logo.png" alt="SPECTER" className="h-10 w-10" />
-                <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
-              </motion.div>
-              <span className="font-display font-bold text-2xl tracking-tight">
-                SPECTER
-              </span>
-            </Link>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={`inline-flex h-2 w-2 rounded-full shrink-0 ${apiLoading
-                        ? "bg-muted-foreground"
-                        : apiOk
-                          ? "bg-green-500"
-                          : "bg-destructive"
-                      }`}
-                    title="API status"
-                    aria-label={
-                      apiLoading
-                        ? "Checking API..."
-                        : apiOk
-                          ? "API connected"
-                          : "API unreachable"
-                    }
-                  />
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-medium">
-                    {apiLoading
-                      ? "Checking API..."
-                      : apiOk
-                        ? "API connected"
-                        : "API unreachable"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {api.getBaseUrl()}
-                  </p>
-                  {!apiOk && !apiLoading && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Start backend: cargo run --bin specter -- serve --port 3001
-                    </p>
-                  )}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+  const toggleMenu = () => {
+    setMobileMenuOpen(!mobileMenuOpen);
+  };
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => (
-              <Link
-                key={link.path}
-                to={link.path}
-                className="relative px-4 py-2"
-              >
-                <span
-                  className={`font-medium text-sm transition-colors ${location.pathname === link.path
-                    ? "text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                    }`}
-                >
-                  {link.label}
-                </span>
-                {location.pathname === link.path && (
-                  <motion.div
-                    layoutId="activeTab"
-                    className="absolute inset-0 bg-primary/10 rounded-lg border border-primary/20"
-                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                  />
-                )}
-              </Link>
-            ))}
-          </nav>
+  useEffect(() => {
+    if (shapeTimeoutRef.current) {
+      clearTimeout(shapeTimeoutRef.current);
+    }
 
-          {/* CTA & Wallet */}
-          <div className="hidden md:flex items-center gap-3">
-            {isConnected ? (
-              <div className="flex items-center gap-3">
-                <div className="px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/20">
-                  <div className="flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-primary" />
-                    <span className="text-sm font-mono text-primary">
-                      {formatAddress(address)}
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => disconnect()}
-                >
-                  Disconnect
-                </Button>
-              </div>
-            ) : (
-              <>
-                <Button
-                  variant="quantum"
-                  size="sm"
-                  onClick={() => connect({ connector: connectors[0] })}
-                  disabled={isPending}
-                >
-                  {isPending ? (
-                    "Connecting..."
-                  ) : (
-                    <>
-                      <Wallet className="h-4 w-4" />
-                      Connect Wallet
-                    </>
-                  )}
-                </Button>
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/generate">Get Started</Link>
-                </Button>
-              </>
+    if (mobileMenuOpen) {
+      setHeaderShapeClass("rounded-xl");
+    } else {
+      shapeTimeoutRef.current = setTimeout(() => {
+        setHeaderShapeClass("rounded-full");
+      }, 300);
+    }
+
+    return () => {
+      if (shapeTimeoutRef.current) {
+        clearTimeout(shapeTimeoutRef.current);
+      }
+    };
+  }, [mobileMenuOpen]);
+
+  const logoElement = (
+    <Link to="/" className="flex items-center gap-2 group">
+      <div className="h-6 w-6 flex items-center justify-center">
+        <img
+          src="/SPECTER-logo.png"
+          alt="SPECTER"
+          className="size-full scale-125 object-contain"
+        />
+      </div>
+      <span className="font-cursive text-lg sm:text-xl font-medium tracking-wide">
+        SPECTER
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+            <span
+              className={`inline-flex h-2 w-2 rounded-full shrink-0 ${
+                apiLoading
+                  ? "bg-muted-foreground"
+                  : apiOk
+                    ? "bg-green-500"
+                    : "bg-destructive"
+              }`}
+              title="API status"
+              aria-label={
+                apiLoading
+                  ? "Checking API..."
+                  : apiOk
+                    ? "API connected"
+                    : "API unreachable"
+              }
+            />
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs">
+            <p className="font-medium">
+              {apiLoading
+                ? "Checking API..."
+                : apiOk
+                  ? "API connected"
+                  : "API unreachable"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {api.getBaseUrl()}
+            </p>
+            {!apiOk && !apiLoading && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Start backend: cargo run --bin specter -- serve --port 3001
+              </p>
             )}
-          </div>
+          </TooltipContent>
+        </Tooltip>
+    </Link>
+  );
 
-          {/* Mobile Menu Button */}
+  return (
+    <header
+      className={`fixed top-6 left-1/2 -translate-x-1/2 z-50
+        flex flex-col items-center
+        pl-6 pr-6 py-3 backdrop-blur-xl
+        ${headerShapeClass}
+        border border-border bg-background/60
+        w-[calc(100%-2rem)] sm:min-w-[680px] sm:w-auto
+        transition-[border-radius] duration-300 ease-in-out`}
+    >
+      <div className="flex items-center w-full gap-x-6 sm:gap-x-8">
+        <div className="flex items-center shrink-0">{logoElement}</div>
+
+        <nav className="flex-1 hidden sm:flex items-center justify-evenly text-sm">
+          {navLinks.map((link) => (
+            <NavLink
+              key={link.path}
+              to={link.path}
+              isActive={location.pathname === link.path}
+            >
+              {link.label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="w-8 flex justify-end shrink-0">
           <button
-            className="md:hidden p-2"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="sm:hidden flex items-center justify-center w-8 h-8 text-muted-foreground focus:outline-none hover:text-foreground transition-colors"
+            onClick={toggleMenu}
+            aria-label={mobileMenuOpen ? "Close Menu" : "Open Menu"}
           >
             {mobileMenuOpen ? (
-              <X className="h-6 w-6" />
+              <X className="w-6 h-6" />
             ) : (
-              <Menu className="h-6 w-6" />
+              <Menu className="w-6 h-6" />
             )}
           </button>
         </div>
       </div>
 
-      {/* Mobile Menu */}
-      {mobileMenuOpen && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          className="md:hidden absolute top-16 left-0 right-0 bg-background border-b border-border"
-        >
-          <nav className="container mx-auto px-4 py-4 flex flex-col gap-2">
-            {navLinks.map((link) => (
-              <Link
-                key={link.path}
-                to={link.path}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`px-4 py-3 rounded-lg font-medium transition-colors ${location.pathname === link.path
-                  ? "bg-primary/10 text-foreground"
-                  : "text-muted-foreground hover:bg-muted"
-                  }`}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <div className="pt-2 border-t border-border/50">
-              {isConnected ? (
-                <div className="px-4 py-3 space-y-2">
-                  <div className="px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
-                    <div className="flex items-center gap-2">
-                      <Wallet className="h-4 w-4 text-primary" />
-                      <span className="text-sm font-mono text-primary">
-                        {formatAddress(address)}
-                      </span>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => {
-                      disconnect();
-                      setMobileMenuOpen(false);
-                    }}
-                  >
-                    Disconnect
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  variant="quantum"
-                  size="sm"
-                  className="w-full mx-4"
-                  onClick={() => {
-                    connect({ connector: connectors[0] });
-                    setMobileMenuOpen(false);
-                  }}
-                  disabled={isPending}
-                >
-                  {isPending ? (
-                    "Connecting..."
-                  ) : (
-                    <>
-                      <Wallet className="h-4 w-4" />
-                      Connect Wallet
-                    </>
-                  )}
-                </Button>
-              )}
-            </div>
-          </nav>
-        </motion.div>
-      )}
+      <div
+        className={`sm:hidden flex flex-col items-center w-full transition-all ease-in-out duration-300 overflow-hidden
+          ${mobileMenuOpen ? "max-h-[500px] opacity-100 pt-4" : "max-h-0 opacity-0 pt-0 pointer-events-none"}`}
+      >
+        <nav className="flex flex-col items-center space-y-4 text-base w-full">
+          {navLinks.map((link) => (
+            <Link
+              key={link.path}
+              to={link.path}
+              onClick={() => setMobileMenuOpen(false)}
+              className={`w-full text-center py-2 transition-colors ${
+                location.pathname === link.path
+                  ? "text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
     </header>
   );
 }

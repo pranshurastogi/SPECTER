@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 interface CopyButtonProps {
   text: string;
-  label?: string;
+  label?: React.ReactNode;
   successMessage?: string;
   variant?: "ghost" | "outline" | "link" | "default" | "destructive" | "secondary" | "quantum";
   size?: "default" | "sm" | "lg" | "icon" | "xl";
@@ -61,7 +61,7 @@ export function CopyButton({
               ) : (
                 <Copy className="h-4 w-4" />
               )}
-              {showLabel && (copied ? "Copied" : label)}
+              {showLabel && (copied ? "Copied" : (label ?? "Copy"))}
             </motion.span>
           </Button>
         </TooltipTrigger>

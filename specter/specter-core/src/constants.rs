@@ -92,6 +92,9 @@ pub const MIN_PROTOCOL_VERSION: u8 = 1;
 /// Size of Ethereum address in bytes (20 bytes = 160 bits).
 pub const ETH_ADDRESS_SIZE: usize = 20;
 
+/// Size of Sui address in bytes (32 bytes = 256 bits).
+pub const SUI_ADDRESS_SIZE: usize = 32;
+
 /// Size of Ethereum private key in bytes (32 bytes = 256 bits).
 pub const ETH_PRIVATE_KEY_SIZE: usize = 32;
 
@@ -105,8 +108,32 @@ pub const KECCAK256_SIZE: usize = 32;
 /// ENS text record key for SPECTER meta-addresses.
 pub const ENS_TEXT_KEY: &str = "specter";
 
-/// Alternative ENS text record key (for compatibility).
-pub const ENS_TEXT_KEY_ALT: &str = "pq-stealth";
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUINS CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// SuiNS registry table ID (mainnet).
+/// This is the Table object that holds all name records as dynamic fields.
+pub const SUINS_REGISTRY_TABLE_ID_MAINNET: &str =
+    "0xe64cd9db9f829c6cc405d9790bd71567ae07259855f4fba6f02c84f52298c106";
+
+/// SuiNS registry table ID (testnet).
+pub const SUINS_REGISTRY_TABLE_ID_TESTNET: &str =
+    "0xb120c0d55432630fce61f7854795a3463deb6e3b443cc4ae72e1282073ff56e4";
+
+/// SuiNS v1 package ID (mainnet). Used to build the Domain type for dynamic field queries.
+pub const SUINS_PACKAGE_ID_MAINNET: &str =
+    "0xd22b24490e0bae52676651b4f56660a5ff8022a2576e0089f79b3c88d44e08f0";
+
+/// SuiNS v1 package ID (testnet).
+pub const SUINS_PACKAGE_ID_TESTNET: &str =
+    "0x22fa05f21b1ad71442491220bb9338f7b7095fe35000ef88d5400d28523bdd93";
+
+/// Default Sui mainnet RPC URL.
+pub const SUI_MAINNET_RPC_URL: &str = "https://fullnode.mainnet.sui.io:443";
+
+/// Default Sui testnet RPC URL.
+pub const SUI_TESTNET_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SERIALIZATION CONSTANTS

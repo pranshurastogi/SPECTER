@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use axum::{
     extract::{Path, Query, State},
+    http::header,
+    response::IntoResponse,
     Json,
 };
 use tracing::{debug, info};
@@ -61,6 +63,7 @@ pub async fn create_stealth(
 
     let response = CreateStealthResponse {
         stealth_address: payment.stealth_address.to_checksum_string(),
+        stealth_sui_address: payment.stealth_sui_address.to_hex_string(),
         ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
         view_tag: payment.announcement.view_tag,
         announcement: AnnouncementDto::from(payment.announcement),
@@ -125,6 +128,7 @@ pub async fn scan_payments(
         .into_iter()
         .map(|d| DiscoveryDto {
             stealth_address: d.keys.address.to_checksum_string(),
+            stealth_sui_address: d.keys.sui_address.to_hex_string(),
             stealth_sk: hex::encode(d.keys.private_key.as_bytes()),
             eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
             announcement_id: d.announcement.id,
@@ -163,21 +167,53 @@ pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ResolveEnsResponse>> {
-    let meta = state.resolver.resolve(&name).await
+    let result = state.resolver.resolve_full(&name).await
         .map_err(ApiError::from)?;
 
     let response = ResolveEnsResponse {
-        ens_name: name,
-        meta_address: meta.to_hex(),
-        spending_pk: meta.spending_pk.to_hex(),
-        viewing_pk: meta.viewing_pk.to_hex(),
-        ipfs_cid: None, // Would need to track this separately
+        ens_name: result.ens_name,
+        meta_address: result.meta_address.to_hex(),
+        spending_pk: result.meta_address.spending_pk.to_hex(),
+        viewing_pk: result.meta_address.viewing_pk.to_hex(),
+        ipfs_cid: if result.ipfs_cid.is_empty() {
+            None
+        } else {
+            Some(result.ipfs_cid)
+        },
     };
 
     Ok(Json(response))
 }
 
-/// POST /api/v1/ens/upload
+/// GET /api/v1/suins/resolve/:name
+pub async fn resolve_suins(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<ResolveSuinsResponse>> {
+    if params.get("no_cache").is_some() {
+        state.suins_resolver.clear_cache();
+    }
+
+    let result = state.suins_resolver.resolve_full(&name).await
+        .map_err(ApiError::from)?;
+
+    let response = ResolveSuinsResponse {
+        suins_name: result.suins_name,
+        meta_address: result.meta_address.to_hex(),
+        spending_pk: result.meta_address.spending_pk.to_hex(),
+        viewing_pk: result.meta_address.viewing_pk.to_hex(),
+        ipfs_cid: if result.ipfs_cid.is_empty() {
+            None
+        } else {
+            Some(result.ipfs_cid)
+        },
+    };
+
+    Ok(Json(response))
+}
+
+/// POST /api/v1/ipfs/upload
 pub async fn upload_ipfs(
     State(state): State<Arc<AppState>>,
     Json(req): Json<UploadIpfsRequest>,
@@ -191,6 +227,20 @@ pub async fn upload_ipfs(
     let text_record = state.resolver.format_text_record(&cid);
 
     Ok(Json(UploadIpfsResponse { cid, text_record }))
+}
+
+/// GET /api/v1/ipfs/:cid - returns raw bytes (for "View on IPFS" via backend)
+pub async fn ipfs_get(
+    State(state): State<Arc<AppState>>,
+    Path(cid): Path<String>,
+) -> Result<impl IntoResponse> {
+    let data = state.resolver.download_raw(&cid).await
+        .map_err(|e| ApiError::internal(format!("IPFS retrieve failed: {}", e)))?;
+
+    Ok((
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        data,
+    ))
 }
 
 /// POST /api/v1/registry/announcements
@@ -299,5 +349,6 @@ pub async fn health_check(
         version: env!("CARGO_PKG_VERSION").into(),
         uptime_seconds: uptime,
         announcements_count: count,
+        use_testnet: state.config.use_testnet,
     })
 }

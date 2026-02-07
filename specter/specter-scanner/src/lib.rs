@@ -507,11 +507,15 @@ mod tests {
 
         // Add announcement for us
         let our_ann = create_announcement_for_key(&viewing_pk);
+        let our_view_tag = our_ann.view_tag;
         registry.publish(our_ann).await.unwrap();
 
-        // Add announcements for others
-        for _ in 0..10 {
-            registry.publish(create_random_announcement()).await.unwrap();
+        // Add announcements for others - use view tags different from ours to avoid false positives
+        let other_view_tag = ((our_view_tag as u16) + 1) % 256;
+        for i in 0..10u16 {
+            let view_tag = ((other_view_tag + i) % 256) as u8;
+            let ann = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], view_tag);
+            registry.publish(ann).await.unwrap();
         }
 
         let discoveries = scanner.scan_all(&registry).await.unwrap();

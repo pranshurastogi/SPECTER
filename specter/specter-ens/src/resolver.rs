@@ -1,21 +1,22 @@
 //! Combined ENS + IPFS resolver for fetching meta-addresses.
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::MetaAddress;
 
-use crate::cache::MetaAddressCache;
+use specter_ipfs::{IpfsClient, IpfsConfig};
+
+use specter_cache::MetaAddressCache;
 use crate::ens::{EnsClient, EnsConfig};
-use crate::ipfs::{IpfsClient, IpfsConfig};
 
 /// Resolver configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResolverConfig {
     /// ENS configuration
     pub ens: EnsConfig,
-    /// IPFS configuration
+    /// IPFS configuration (requires dedicated gateway + token)
     pub ipfs: IpfsConfig,
     /// Whether to use caching
     pub enable_cache: bool,
@@ -23,34 +24,24 @@ pub struct ResolverConfig {
     pub cache_ttl_seconds: u64,
 }
 
-impl Default for ResolverConfig {
-    fn default() -> Self {
+impl ResolverConfig {
+    /// Creates a config with RPC URL and dedicated Pinata gateway (required for IPFS retrieves).
+    pub fn new(
+        rpc_url: impl Into<String>,
+        gateway_url: impl Into<String>,
+        gateway_token: impl Into<String>,
+    ) -> Self {
         Self {
-            ens: EnsConfig::default(),
-            ipfs: IpfsConfig::default(),
+            ens: EnsConfig::new(rpc_url),
+            ipfs: IpfsConfig::new(gateway_url, gateway_token),
             enable_cache: true,
             cache_ttl_seconds: 3600,
         }
     }
-}
 
-impl ResolverConfig {
-    /// Creates a config with the given RPC URL.
-    pub fn with_rpc(rpc_url: impl Into<String>) -> Self {
-        Self {
-            ens: EnsConfig::new(rpc_url),
-            ..Default::default()
-        }
-    }
-
-    /// Adds Pinata credentials.
-    pub fn with_pinata(
-        mut self,
-        api_key: impl Into<String>,
-        secret_key: impl Into<String>,
-    ) -> Self {
-        self.ipfs.pinata_api_key = Some(api_key.into());
-        self.ipfs.pinata_secret_key = Some(secret_key.into());
+    /// Adds Pinata JWT for uploads (v3 API).
+    pub fn with_pinata_jwt(mut self, jwt: impl Into<String>) -> Self {
+        self.ipfs = self.ipfs.with_pinata_jwt(jwt);
         self
     }
 
@@ -64,7 +55,7 @@ impl ResolverConfig {
 /// SPECTER resolver that combines ENS and IPFS.
 ///
 /// Resolves ENS names to meta-addresses by:
-/// 1. Looking up the ENS text record "specter" (or "pq-stealth"), or
+/// 1. Looking up the ENS text record "specter", or
 ///    if missing, the ENS Content Hash (EIP-1577) from the resolver's contenthash()
 /// 2. Parsing the IPFS CID from the record or content hash
 /// 3. Fetching the meta-address from IPFS
@@ -77,16 +68,6 @@ pub struct SpecterResolver {
 }
 
 impl SpecterResolver {
-    /// Creates a new resolver with default configuration.
-    pub fn new() -> Self {
-        Self::with_config(ResolverConfig::default())
-    }
-
-    /// Creates a resolver with the given RPC URL.
-    pub fn with_rpc(rpc_url: impl Into<String>) -> Self {
-        Self::with_config(ResolverConfig::with_rpc(rpc_url))
-    }
-
     /// Creates a resolver with custom configuration.
     pub fn with_config(config: ResolverConfig) -> Self {
         let ens = EnsClient::with_config(config.ens.clone());
@@ -111,16 +92,29 @@ impl SpecterResolver {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let resolver = SpecterResolver::with_rpc("https://eth-mainnet.g.alchemy.com/v2/KEY");
+    /// let config = ResolverConfig::new(rpc_url, gateway_url, gateway_token);
+    /// let resolver = SpecterResolver::with_config(config);
     /// let meta = resolver.resolve("alice.eth").await?;
     /// ```
     #[instrument(skip(self))]
     pub async fn resolve(&self, ens_name: &str) -> Result<MetaAddress> {
+        let result = self.resolve_full(ens_name).await?;
+        Ok(result.meta_address)
+    }
+
+    /// Resolves an ENS name to a meta-address with metadata (CID, cache status).
+    #[instrument(skip(self))]
+    pub async fn resolve_full(&self, ens_name: &str) -> Result<ResolveResult> {
         // Check cache first
         if let Some(cache) = &self.cache {
             if let Some(meta) = cache.get(ens_name) {
                 debug!(ens_name, "Cache hit");
-                return Ok(meta);
+                return Ok(ResolveResult {
+                    meta_address: meta,
+                    ens_name: ens_name.to_string(),
+                    ipfs_cid: String::new(), // Not stored in cache
+                    from_cache: true,
+                });
             }
         }
 
@@ -153,7 +147,12 @@ impl SpecterResolver {
             cache.set(ens_name, meta.clone());
         }
 
-        Ok(meta)
+        Ok(ResolveResult {
+            meta_address: meta,
+            ens_name: ens_name.to_string(),
+            ipfs_cid: cid,
+            from_cache: false,
+        })
     }
 
     /// Checks if an ENS name has a SPECTER record.
@@ -172,6 +171,25 @@ impl SpecterResolver {
         let cid = self.ipfs.upload(&data, name).await?;
         info!(cid, "Uploaded meta-address to IPFS");
         Ok(cid)
+    }
+
+    /// Retrieves a meta-address from IPFS by CID.
+    ///
+    /// Uses the configured gateway (including dedicated Pinata gateway with token if set).
+    #[instrument(skip(self))]
+    pub async fn retrieve(&self, cid: &str) -> Result<MetaAddress> {
+        let data = self.download_raw(cid).await?;
+        let meta = MetaAddress::from_bytes(&data)?;
+        meta.validate()?;
+        info!(cid, "Retrieved meta-address from IPFS");
+        Ok(meta)
+    }
+
+    /// Downloads raw bytes from IPFS by CID (for proxying to frontend).
+    #[instrument(skip(self))]
+    pub async fn download_raw(&self, cid: &str) -> Result<Vec<u8>> {
+        let cid = self.parse_cid(cid)?;
+        self.ipfs.download(&cid).await
     }
 
     /// Returns the formatted ENS text record value for a CID.
@@ -212,11 +230,6 @@ impl SpecterResolver {
     }
 }
 
-impl Default for SpecterResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Result of a resolution with metadata.
 #[derive(Clone, Debug)]
@@ -235,9 +248,17 @@ pub struct ResolveResult {
 mod tests {
     use super::*;
 
+    fn test_resolver() -> SpecterResolver {
+        SpecterResolver::with_config(ResolverConfig::new(
+            "https://x",
+            "https://gateway.test",
+            "token",
+        ))
+    }
+
     #[test]
     fn test_parse_cid_ipfs_prefix() {
-        let resolver = SpecterResolver::new();
+        let resolver = test_resolver();
         
         let cid = resolver.parse_cid("ipfs://QmTest123").unwrap();
         assert_eq!(cid, "QmTest123");
@@ -245,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_parse_cid_path_prefix() {
-        let resolver = SpecterResolver::new();
+        let resolver = test_resolver();
         
         let cid = resolver.parse_cid("/ipfs/QmTest123").unwrap();
         assert_eq!(cid, "QmTest123");
@@ -253,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_parse_cid_raw() {
-        let resolver = SpecterResolver::new();
+        let resolver = test_resolver();
         
         let cid = resolver.parse_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").unwrap();
         assert!(cid.starts_with("Qm"));
@@ -261,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_parse_cid_v1() {
-        let resolver = SpecterResolver::new();
+        let resolver = test_resolver();
         
         let cid = resolver.parse_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap();
         assert!(cid.starts_with("bafy"));
@@ -269,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_format_text_record() {
-        let resolver = SpecterResolver::new();
+        let resolver = test_resolver();
         
         let record = resolver.format_text_record("QmTest123");
         assert_eq!(record, "ipfs://QmTest123");
@@ -281,12 +302,21 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let config = ResolverConfig::with_rpc("https://test.com")
-            .with_pinata("key", "secret")
+        let config = ResolverConfig::new("https://test.com", "gateway.test", "token")
+            .with_pinata_jwt("my_jwt")
             .no_cache();
 
         assert_eq!(config.ens.rpc_url, "https://test.com");
-        assert_eq!(config.ipfs.pinata_api_key, Some("key".into()));
+        assert_eq!(config.ipfs.gateway_url, "gateway.test");
+        assert_eq!(config.ipfs.pinata_jwt, Some("my_jwt".into()));
         assert!(!config.enable_cache);
+    }
+
+    #[test]
+    fn test_parse_cid_invalid() {
+        let resolver = test_resolver();
+        assert!(resolver.parse_cid("invalid").is_err());
+        assert!(resolver.parse_cid("http://example.com").is_err());
+        assert!(resolver.parse_cid("").is_err());
     }
 }

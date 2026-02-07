@@ -1,0 +1,12 @@
+[package]
+name = "specter-cache"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "TTL cache for SPECTER meta-addresses"
+
+[dependencies]
+specter-core = { path = "../specter-core" }
+parking_lot = { workspace = true }
+serde = { workspace = true }

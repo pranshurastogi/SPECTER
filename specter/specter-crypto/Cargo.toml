@@ -27,6 +27,9 @@ hex = { workspace = true }
 # Ethereum address from secp256k1 (so eth_private_key matches stealth_address)
 k256 = { version = "0.13", features = ["ecdsa"] }
 
+# Sui address from secp256k1 (blake2b-256 of scheme || compressed pubkey)
+blake2 = "0.10"
+
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
@@ -35,4 +38,3 @@ rand_chacha = { workspace = true }
 [[bench]]
 name = "crypto_bench"
 harness = false
-

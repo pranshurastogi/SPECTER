@@ -1,0 +1,20 @@
+[package]
+name = "specter-ipfs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "IPFS client for SPECTER meta-address storage (Pinata v3)"
+
+[dependencies]
+specter-core = { path = "../specter-core" }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }

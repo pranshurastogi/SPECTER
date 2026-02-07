@@ -1,0 +1,12 @@
+{
+  "name": "specter-suins-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2",
+    "@mysten/suins": "^1"
+  }
+}

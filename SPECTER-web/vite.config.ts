@@ -18,7 +18,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle so Vite doesn't reference removed packages or stale cache
-    include: ["@ensdomains/content-hash"],
+    // Pre-bundle heavy deps for faster dev startup
   },
 });

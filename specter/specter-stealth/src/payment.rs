@@ -3,15 +3,20 @@
 use serde::{Deserialize, Serialize};
 
 use specter_core::error::{Result, SpecterError};
-use specter_core::types::{Announcement, EthAddress, MetaAddress, StealthAddressResult};
+use specter_core::types::{Announcement, EthAddress, MetaAddress, SuiAddress};
 use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
-use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys};
+use specter_crypto::derive::{
+    derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys,
+    derive_stealth_sui_address,
+};
 
 /// Stealth payment: address to send to and announcement to publish.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StealthPayment {
     /// The one-time Ethereum address to send funds to
     pub stealth_address: EthAddress,
+    /// The one-time Sui address (same key)
+    pub stealth_sui_address: SuiAddress,
     /// The announcement to publish (contains ephemeral key + view tag)
     pub announcement: Announcement,
     /// Metadata about the payment
@@ -41,10 +46,15 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
         meta_address.spending_pk.as_bytes(),
         &shared_secret,
     )?;
+    let stealth_sui_address = derive_stealth_sui_address(
+        meta_address.spending_pk.as_bytes(),
+        &shared_secret,
+    )?;
     let announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
 
     Ok(StealthPayment {
         stealth_address,
+        stealth_sui_address,
         announcement,
         metadata: PaymentMetadata::default(),
     })
@@ -117,6 +127,10 @@ impl StealthPaymentBuilder {
             meta_address.spending_pk.as_bytes(),
             &shared_secret,
         )?;
+        let stealth_sui_address = derive_stealth_sui_address(
+            meta_address.spending_pk.as_bytes(),
+            &shared_secret,
+        )?;
         let announcement = if let Some(channel_id) = self.channel_id {
             Announcement::with_channel(ciphertext.into_bytes(), view_tag, channel_id)
         } else {
@@ -132,6 +146,7 @@ impl StealthPaymentBuilder {
 
         Ok(StealthPayment {
             stealth_address,
+            stealth_sui_address,
             announcement,
             metadata,
         })
@@ -164,8 +179,9 @@ mod tests {
         let meta = create_test_meta_address();
         let payment = create_stealth_payment(&meta).unwrap();
 
-        // Stealth address should not be zero
+        // Stealth addresses should not be zero
         assert!(!payment.stealth_address.is_zero());
+        assert!(!payment.stealth_sui_address.is_zero());
 
         // Announcement should be valid
         assert!(payment.announcement.validate().is_ok());
@@ -304,5 +320,6 @@ mod tests {
         // Should deserialize back
         let restored: StealthPayment = serde_json::from_str(&json).unwrap();
         assert_eq!(payment.stealth_address, restored.stealth_address);
+        assert_eq!(payment.stealth_sui_address, restored.stealth_sui_address);
     }
 }

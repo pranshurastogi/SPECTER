@@ -9,6 +9,15 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+
+  /** Error code from API response (e.g. ENS_NAME_NOT_FOUND, NO_SPECTER_RECORD). */
+  get code(): string | undefined {
+    if (this.body && typeof this.body === "object" && "error" in this.body) {
+      const err = (this.body as { error?: { code?: string } }).error;
+      return err && typeof err === "object" ? err.code : undefined;
+    }
+    return undefined;
+  }
 }
 
 function getBaseUrl(): string {
@@ -29,12 +38,18 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok) {
-    const message =
-      (body && typeof body === "object" && "message" in body && String((body as { message: unknown }).message)) ||
-      (body && typeof body === "object" && "error" in body && String((body as { error: unknown }).error)) ||
-      text ||
-      `Request failed: ${res.status} ${res.statusText}`;
-    throw new ApiError(message, res.status, body);
+    let message = text;
+    if (body && typeof body === "object") {
+      const obj = body as Record<string, unknown>;
+      if (typeof obj.message === "string") {
+        message = obj.message;
+      } else if (obj.error && typeof obj.error === "object" && typeof (obj.error as Record<string, unknown>).message === "string") {
+        message = (obj.error as Record<string, unknown>).message as string;
+      } else if (obj.error && typeof obj.error === "string") {
+        message = obj.error;
+      }
+    }
+    throw new ApiError(message || `Request failed: ${res.status} ${res.statusText}`, res.status, body);
   }
 
   return body as T;
@@ -78,6 +93,8 @@ export interface HealthResponse {
   version: string;
   uptime_seconds: number;
   announcements_count: number;
+  /** When true, backend uses Sepolia ENS */
+  use_testnet?: boolean;
 }
 
 export interface GenerateKeysResponse {
@@ -104,6 +121,7 @@ export interface AnnouncementDto {
 
 export interface CreateStealthResponse {
   stealth_address: string;
+  stealth_sui_address: string;
   ephemeral_ciphertext: string;
   view_tag: number;
   announcement: AnnouncementDto;
@@ -120,6 +138,7 @@ export interface ScanRequest {
 
 export interface DiscoveryDto {
   stealth_address: string;
+  stealth_sui_address: string;
   stealth_sk: string;
   eth_private_key: string;
   announcement_id: number;
@@ -147,6 +166,14 @@ export interface ResolveEnsResponse {
   viewing_pk: string;
   ipfs_cid?: string;
   ipfs_url?: string;
+}
+
+export interface ResolveSuinsResponse {
+  suins_name: string;
+  meta_address: string;
+  spending_pk: string;
+  viewing_pk: string;
+  ipfs_cid?: string;
 }
 
 export interface UploadIpfsRequest {
@@ -223,11 +250,22 @@ export const api = {
     return request<ResolveEnsResponse>(`/api/v1/ens/resolve/${encoded}`);
   },
 
+  async resolveSuins(name: string): Promise<ResolveSuinsResponse> {
+    const encoded = encodeURIComponent(name);
+    return request<ResolveSuinsResponse>(`/api/v1/suins/resolve/${encoded}`);
+  },
+
   async uploadIpfs(body: UploadIpfsRequest): Promise<UploadIpfsResponse> {
-    return request<UploadIpfsResponse>("/api/v1/ens/upload", {
+    return request<UploadIpfsResponse>("/api/v1/ipfs/upload", {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+
+  /** URL for viewing IPFS content via backend (no direct gateway) */
+  ipfsUrl(cid: string): string {
+    const parsed = cid.replace(/^ipfs:\/\//, "").replace(/^\/ipfs\//, "").trim();
+    return `${getBaseUrl()}/api/v1/ipfs/${encodeURIComponent(parsed)}`;
   },
 
   async listAnnouncements(query?: ListAnnouncementsQuery): Promise<ListAnnouncementsResponse> {

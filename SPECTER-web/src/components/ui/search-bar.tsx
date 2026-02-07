@@ -13,6 +13,10 @@ interface SearchBarProps {
   suggestions?: string[];
   /** Larger, full-width variant for Send page */
   variant?: "default" | "minimal";
+  /** Controlled value – when provided, input shows this; use with onChange */
+  value?: string;
+  /** Called when input value changes (for controlled mode) */
+  onChange?: (value: string) => void;
 }
 
 const SearchBar = ({
@@ -20,9 +24,19 @@ const SearchBar = ({
   onSearch,
   suggestions: suggestionsProp = [],
   variant = "minimal",
+  value: controlledValue,
+  onChange: controlledOnChange,
 }: SearchBarProps) => {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [internalQuery, setInternalQuery] = useState("");
+  const searchQuery = controlledValue !== undefined ? controlledValue : internalQuery;
+  const setSearchQuery = (v: string) => {
+    if (controlledValue !== undefined) {
+      controlledOnChange?.(v);
+    } else {
+      setInternalQuery(v);
+    }
+  };
   const [isFocused, setIsFocused] = useState(false);
   const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
   const showSuggestions = suggestionsProp.length > 0;

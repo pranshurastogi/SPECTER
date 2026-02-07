@@ -100,6 +100,22 @@ pub enum SpecterError {
     InvalidEnsRecord(String),
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // SUINS ERRORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// SuiNS name not found.
+    #[error("SuiNS name not found: {0}")]
+    SuinsNameNotFound(String),
+
+    /// SuiNS resolution failed.
+    #[error("SuiNS resolution failed for '{name}': {reason}")]
+    SuinsResolutionFailed { name: String, reason: String },
+
+    /// No SPECTER record found in SuiNS.
+    #[error("No SPECTER record found for SuiNS name: {0}")]
+    NoSuinsSpecterRecord(String),
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // IPFS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
 
