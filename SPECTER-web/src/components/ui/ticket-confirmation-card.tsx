@@ -2,21 +2,6 @@ import * as React from "react";
 import { CheckCircle2 } from "lucide-react";
 import { cn, formatCryptoAmount } from "@/lib/utils";
 
-// --- SVG Icons (logos - keep custom) ---
-
-const MastercardIcon = (props: React.SVGProps<SVGSVGElement>) => (
-  <svg
-    {...props}
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 24 24"
-    width="36"
-    height="24"
-  >
-    <circle cx="8" cy="12" r="7" fill="#EA001B" />
-    <circle cx="16" cy="12" r="7" fill="#F79E1B" fillOpacity="0.8" />
-  </svg>
-);
-
 // --- Helper Components ---
 
 const DashedLine = () => (
@@ -240,14 +225,8 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
               <p className="font-medium">{formattedDate}</p>
             </div>
 
-            <div className="bg-muted/50 p-4 rounded-lg flex items-center space-x-4">
-              <MastercardIcon />
-              <div>
-                <p className="font-semibold">{cardHolder}</p>
-                <p className="text-muted-foreground font-mono text-sm tracking-wider">
-                  •••• {last4Digits}
-                </p>
-              </div>
+            <div className="bg-muted/50 p-4 rounded-lg">
+              <p className="font-semibold">{cardHolder}</p>
             </div>
 
             <DashedLine />
