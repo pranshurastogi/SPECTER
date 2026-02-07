@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "SPECTER API",
-    "description": "Post-quantum stealth address protocol for Ethereum. All API routes for keys, stealth payments, ENS resolution, IPFS upload, and announcement registry.\n\n**Base URL:** Start server with `cargo run --bin specter -- serve --port 3001`\n\n**Config:** USE_TESTNET=true for Sepolia ENS; otherwise mainnet. PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN required for IPFS.",
+    "description": "Post-quantum stealth address protocol for Ethereum and Sui. All API routes for keys, stealth payments, ENS/SuiNS resolution, IPFS upload, and announcement registry.\n\n**Base URL:** Start server with `cargo run --bin specter -- serve --port 3001`\n\n**Config:** USE_TESTNET=true for Sepolia ENS + Sui testnet; otherwise mainnet. PINATA_GATEWAY_URL and PINATA_GATEWAY_TOKEN required for IPFS. SUI_RPC_URL optional (defaults based on USE_TESTNET).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -16,6 +16,10 @@
     {
       "key": "ens_name",
       "value": "alice.eth"
+    },
+    {
+      "key": "suins_name",
+      "value": "alice.sui"
     },
     {
       "key": "meta_address",
@@ -142,6 +146,24 @@
               "path": ["api", "v1", "ens", "resolve", "{{ens_name}}"]
             },
             "description": "Resolve ENS name to meta-address. Uses mainnet when USE_TESTNET=false, Sepolia when USE_TESTNET=true. Requires ETH_RPC_URL, PINATA_GATEWAY_URL, PINATA_GATEWAY_TOKEN. Response includes meta_address for Create Stealth Payment."
+          }
+        }
+      ]
+    },
+    {
+      "name": "SuiNS",
+      "item": [
+        {
+          "name": "Resolve SuiNS Name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/suins/resolve/{{suins_name}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "suins", "resolve", "{{suins_name}}"]
+            },
+            "description": "Resolve SuiNS name to meta-address. Uses Sui mainnet when USE_TESTNET=false, testnet when USE_TESTNET=true. Requires SUI_RPC_URL (or defaults), PINATA_GATEWAY_URL, PINATA_GATEWAY_TOKEN. Response includes meta_address for Create Stealth Payment."
           }
         }
       ]
