@@ -25,6 +25,7 @@ use specter_core::types::{Announcement, AnnouncementStats};
 /// - ID: For direct lookup
 /// - View tag: For efficient scanning (O(1) bucket lookup)
 /// - Timestamp: For time-range queries
+/// - Tx hash: For duplicate detection (when provided)
 ///
 /// # Thread Safety
 ///
@@ -35,6 +36,8 @@ pub struct MemoryRegistry {
     announcements: DashMap<u64, Announcement>,
     /// View tag index: tag → [announcement IDs]
     view_tag_index: DashMap<u8, Vec<u64>>,
+    /// Tx hash index: normalized tx_hash → announcement ID (for duplicate rejection)
+    tx_hash_index: DashMap<String, u64>,
     /// Next announcement ID
     next_id: AtomicU64,
     /// Registry statistics
@@ -47,6 +50,7 @@ impl MemoryRegistry {
         Self {
             announcements: DashMap::new(),
             view_tag_index: DashMap::new(),
+            tx_hash_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -59,9 +63,15 @@ impl MemoryRegistry {
         Self {
             announcements: DashMap::with_capacity(capacity),
             view_tag_index: DashMap::with_capacity(256), // One bucket per view tag
+            tx_hash_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
+    }
+
+    /// Normalizes a tx hash for indexing (lowercase, trimmed).
+    fn normalize_tx_hash(hash: &str) -> String {
+        hash.trim().to_lowercase()
     }
 
     /// Returns the current statistics.
@@ -73,6 +83,7 @@ impl MemoryRegistry {
     pub fn clear(&self) {
         self.announcements.clear();
         self.view_tag_index.clear();
+        self.tx_hash_index.clear();
         self.next_id.store(1, Ordering::SeqCst);
         *self.stats.write() = AnnouncementStats::new();
     }
@@ -122,6 +133,12 @@ impl MemoryRegistry {
                 .or_insert_with(Vec::new)
                 .push(ann.id);
 
+            // Update tx hash index
+            if let Some(ref hash) = ann.tx_hash {
+                let normalized = Self::normalize_tx_hash(hash);
+                self.tx_hash_index.insert(normalized, ann.id);
+            }
+
             // Update stats
             self.stats.write().add(&ann);
 
@@ -151,6 +168,21 @@ impl AnnouncementRegistry for MemoryRegistry {
         // Validate
         announcement.validate()?;
 
+        // Reject duplicate tx_hash if provided
+        if let Some(ref hash) = announcement.tx_hash {
+            let normalized = Self::normalize_tx_hash(hash);
+            if normalized.is_empty() {
+                return Err(SpecterError::InvalidAnnouncement(
+                    "tx_hash cannot be empty".into(),
+                ));
+            }
+            if self.tx_hash_index.contains_key(&normalized) {
+                return Err(SpecterError::InvalidAnnouncement(
+                    "announcement with this transaction hash already exists".into(),
+                ));
+            }
+        }
+
         // Assign ID
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         announcement.id = id;
@@ -162,6 +194,12 @@ impl AnnouncementRegistry for MemoryRegistry {
             .entry(announcement.view_tag)
             .or_insert_with(Vec::new)
             .push(id);
+
+        // Update tx hash index
+        if let Some(ref hash) = announcement.tx_hash {
+            let normalized = Self::normalize_tx_hash(hash);
+            self.tx_hash_index.insert(normalized, id);
+        }
 
         // Update stats
         self.stats.write().add(&announcement);

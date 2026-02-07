@@ -1,4 +1,7 @@
 //! Combined SuiNS + IPFS resolver for fetching meta-addresses.
+//!
+//! SuiNS lookups are never cached (records can change at any time).
+//! IPFS downloads are cached at the `IpfsClient` layer (content-addressed = immutable).
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument};
@@ -8,7 +11,6 @@ use specter_core::types::MetaAddress;
 
 use specter_ipfs::{IpfsClient, IpfsConfig};
 
-use specter_cache::MetaAddressCache;
 use crate::suins::{SuinsClient, SuinsConfig};
 
 /// Resolver configuration.
@@ -18,10 +20,6 @@ pub struct SuinsResolverConfig {
     pub suins: SuinsConfig,
     /// IPFS configuration (requires dedicated gateway + token)
     pub ipfs: IpfsConfig,
-    /// Whether to use caching
-    pub enable_cache: bool,
-    /// Cache TTL in seconds
-    pub cache_ttl_seconds: u64,
 }
 
 impl SuinsResolverConfig {
@@ -35,20 +33,12 @@ impl SuinsResolverConfig {
         Self {
             suins: SuinsConfig::new(rpc_url, use_testnet),
             ipfs: IpfsConfig::new(gateway_url, gateway_token),
-            enable_cache: true,
-            cache_ttl_seconds: 3600,
         }
     }
 
     /// Adds Pinata JWT for uploads (v3 API).
     pub fn with_pinata_jwt(mut self, jwt: impl Into<String>) -> Self {
         self.ipfs = self.ipfs.with_pinata_jwt(jwt);
-        self
-    }
-
-    /// Disables caching.
-    pub fn no_cache(mut self) -> Self {
-        self.enable_cache = false;
         self
     }
 }
@@ -58,12 +48,14 @@ impl SuinsResolverConfig {
 /// Resolves SuiNS names to meta-addresses by:
 /// 1. Looking up the SuiNS content hash field
 /// 2. Parsing the IPFS CID from the content hash
-/// 3. Fetching the meta-address from IPFS
+/// 3. Fetching the meta-address from IPFS (cached by CID in IpfsClient)
 /// 4. Deserializing and validating the meta-address
+///
+/// SuiNS lookups are always fresh (no caching) since records can change.
+/// IPFS downloads are cached at the IpfsClient layer since content is immutable.
 pub struct SuinsResolver {
     suins: SuinsClient,
     ipfs: IpfsClient,
-    cache: Option<MetaAddressCache>,
     #[allow(dead_code)]
     config: SuinsResolverConfig,
 }
@@ -74,16 +66,9 @@ impl SuinsResolver {
         let suins = SuinsClient::with_config(config.suins.clone());
         let ipfs = IpfsClient::with_config(config.ipfs.clone());
 
-        let cache = if config.enable_cache {
-            Some(MetaAddressCache::new())
-        } else {
-            None
-        };
-
         Self {
             suins,
             ipfs,
-            cache,
             config,
         }
     }
@@ -103,23 +88,12 @@ impl SuinsResolver {
         Ok(result.meta_address)
     }
 
-    /// Resolves a SuiNS name to a meta-address with metadata (CID, cache status).
+    /// Resolves a SuiNS name to a meta-address with metadata.
+    ///
+    /// Always performs a fresh SuiNS lookup. IPFS downloads are cached by CID.
     #[instrument(skip(self))]
     pub async fn resolve_full(&self, suins_name: &str) -> Result<SuinsResolveResult> {
-        // Check cache first
-        if let Some(cache) = &self.cache {
-            if let Some(meta) = cache.get(suins_name) {
-                debug!(suins_name, "Cache hit");
-                return Ok(SuinsResolveResult {
-                    meta_address: meta,
-                    suins_name: suins_name.to_string(),
-                    ipfs_cid: String::new(),
-                    from_cache: true,
-                });
-            }
-        }
-
-        debug!(suins_name, "Cache miss, resolving");
+        debug!(suins_name, "Resolving SuiNS name (no cache)");
 
         // Get IPFS CID from SuiNS content hash
         let content_hash = self
@@ -132,7 +106,7 @@ impl SuinsResolver {
 
         debug!(suins_name, cid, "Found IPFS CID");
 
-        // Fetch from IPFS
+        // Fetch from IPFS (cached by CID inside IpfsClient)
         let data = self.ipfs.download(&cid).await?;
 
         // Deserialize meta-address
@@ -141,18 +115,12 @@ impl SuinsResolver {
         // Validate
         meta.validate()?;
 
-        info!(suins_name, "Resolved meta-address");
-
-        // Cache if enabled
-        if let Some(cache) = &self.cache {
-            cache.set(suins_name, meta.clone());
-        }
+        info!(suins_name, cid, "Resolved meta-address");
 
         Ok(SuinsResolveResult {
             meta_address: meta,
             suins_name: suins_name.to_string(),
             ipfs_cid: cid,
-            from_cache: false,
         })
     }
 
@@ -202,11 +170,9 @@ impl SuinsResolver {
         }
     }
 
-    /// Clears the resolution cache.
+    /// Clears the IPFS download cache.
     pub fn clear_cache(&self) {
-        if let Some(cache) = &self.cache {
-            cache.clear();
-        }
+        self.ipfs.clear_cache();
     }
 
     /// Parses a CID from various formats.
@@ -237,8 +203,6 @@ pub struct SuinsResolveResult {
     pub suins_name: String,
     /// The IPFS CID where the meta-address is stored
     pub ipfs_cid: String,
-    /// Whether the result came from cache
-    pub from_cache: bool,
 }
 
 #[cfg(test)]
@@ -305,13 +269,11 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = SuinsResolverConfig::new("https://test.com", false, "gateway.test", "token")
-            .with_pinata_jwt("my_jwt")
-            .no_cache();
+            .with_pinata_jwt("my_jwt");
 
         assert_eq!(config.suins.rpc_url, "https://test.com");
         assert_eq!(config.ipfs.gateway_url, "gateway.test");
         assert_eq!(config.ipfs.pinata_jwt, Some("my_jwt".into()));
-        assert!(!config.enable_cache);
     }
 
     #[test]

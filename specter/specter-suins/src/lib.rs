@@ -10,6 +10,5 @@ mod suins;
 mod resolver;
 
 pub use suins::{SuinsClient, SuinsConfig};
-pub use specter_cache::MetaAddressCache;
 pub use specter_ipfs::{IpfsClient, IpfsConfig, PinataClient};
 pub use resolver::{SuinsResolver, SuinsResolverConfig, SuinsResolveResult};

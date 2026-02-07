@@ -37,6 +37,12 @@ pub struct Announcement {
     /// Optional: Transaction hash if stored on-chain
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
+    /// Optional: Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<String>,
+    /// Optional: Chain identifier (e.g. "ethereum", "sui")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
 }
 
 impl Announcement {
@@ -50,6 +56,8 @@ impl Announcement {
             channel_id: None,
             block_number: None,
             tx_hash: None,
+            amount: None,
+            chain: None,
         }
     }
 
@@ -63,6 +71,8 @@ impl Announcement {
             channel_id: Some(channel_id),
             block_number: None,
             tx_hash: None,
+            amount: None,
+            chain: None,
         }
     }
 
@@ -156,6 +166,8 @@ impl Announcement {
             channel_id,
             block_number: None,
             tx_hash: None,
+            amount: None,
+            chain: None,
         };
 
         announcement.validate()?;
@@ -180,6 +192,8 @@ pub struct AnnouncementBuilder {
     channel_id: Option<[u8; 32]>,
     block_number: Option<u64>,
     tx_hash: Option<String>,
+    amount: Option<String>,
+    chain: Option<String>,
 }
 
 impl AnnouncementBuilder {
@@ -224,6 +238,18 @@ impl AnnouncementBuilder {
         self
     }
 
+    /// Sets the amount (optional, human-readable e.g. "0.1").
+    pub fn amount(mut self, amount: impl Into<String>) -> Self {
+        self.amount = Some(amount.into());
+        self
+    }
+
+    /// Sets the chain (optional, e.g. "ethereum", "sui").
+    pub fn chain(mut self, chain: impl Into<String>) -> Self {
+        self.chain = Some(chain.into());
+        self
+    }
+
     /// Builds the announcement.
     pub fn build(self) -> Result<Announcement> {
         let ephemeral_key = self
@@ -242,6 +268,8 @@ impl AnnouncementBuilder {
         announcement.channel_id = self.channel_id;
         announcement.block_number = self.block_number;
         announcement.tx_hash = self.tx_hash;
+        announcement.amount = self.amount;
+        announcement.chain = self.chain;
 
         announcement.validate()?;
         Ok(announcement)
