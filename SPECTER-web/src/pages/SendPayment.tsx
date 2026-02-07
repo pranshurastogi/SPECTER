@@ -10,9 +10,9 @@ import {
   ArrowRight,
   Loader2,
   Lock,
-  Target,
   AlertCircle,
   User,
+  Wallet,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 import { validateEnsName, EnsResolverError } from "@/lib/ensResolver";
@@ -39,25 +40,53 @@ import { validateSuinsName, SuinsResolverError } from "@/lib/suinsResolver";
 import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
 import { Link } from "react-router-dom";
 
-type SendStep = "input" | "resolved" | "generated" | "published";
+// Wallet imports
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { isEthereumWallet } from "@dynamic-labs/ethereum";
+import {
+  useCurrentAccount,
+  useDisconnectWallet,
+  useSignAndExecuteTransaction,
+  ConnectModal,
+} from "@mysten/dapp-kit";
+import { Transaction } from "@mysten/sui/transactions";
+import { publicClient } from "@/lib/viemClient";
+import { chain } from "@/lib/chainConfig";
+import { parseEther } from "viem";
+
+type SendStep = "input" | "generated" | "published";
 
 export default function SendPayment() {
   const [step, setStep] = useState<SendStep>("input");
   const [ensName, setEnsName] = useState("");
   const [amount, setAmount] = useState("");
   const [isResolving, setIsResolving] = useState(false);
+  const [resolveStatus, setResolveStatus] = useState<string>("");
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolvedENS, setResolvedENS] = useState<ResolveEnsResponse | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [stealthResult, setStealthResult] = useState<CreateStealthResponse | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [announcementId, setAnnouncementId] = useState<number | null>(null);
-  const [ipfsHash, setIpfsHash] = useState<string | null>(null);
-  const [ipfsUrl, setIpfsUrl] = useState<string | null>(null);
   const [txHash, setTxHash] = useState("");
   const [publishChain, setPublishChain] = useState<TxChain>("ethereum");
   const [verifiedTx, setVerifiedTx] = useState<VerifiedTx | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // Wallet send state
+  const [, setSendMode] = useState<"manual" | "wallet">("wallet");
+  const [walletAmount, setWalletAmount] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [suiConnectOpen, setSuiConnectOpen] = useState(false);
+
+  // Wallet hooks
+  const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
+  const suiAccount = useCurrentAccount();
+  const { mutate: disconnectSui } = useDisconnectWallet();
+  const { mutateAsync: signAndExecuteSui } = useSignAndExecuteTransaction();
+
+  const evmConnected = !!primaryWallet;
+  const suiConnected = !!suiAccount;
 
   const handleResolve = async (overrideName?: string) => {
     const name = (overrideName || ensName).trim();
@@ -71,29 +100,43 @@ export default function SendPayment() {
       /^[0-9a-fA-F]+$/.test(name.replace(/^0x/, "")) && name.length > 100;
     if (looksLikeHex) {
       const metaHex = name.replace(/^0x/, "").trim();
-      setResolvedENS({
+      const spk = metaHex.length >= 2370 ? metaHex.slice(2, 2370) : "";
+      const vpk = metaHex.length >= 4738 ? metaHex.slice(2370, 4738) : "";
+      const resolved: ResolveEnsResponse = {
         ens_name: "meta-address",
         meta_address: metaHex,
-        spending_pk: "",
-        viewing_pk: "",
-      });
+        spending_pk: spk,
+        viewing_pk: vpk,
+      };
+      setResolvedENS(resolved);
       setResolveError(null);
-      setIpfsHash(null);
-      setIpfsUrl(null);
-      setStep("resolved");
-      toast.success("Using meta-address");
+
+      // Auto-generate stealth address
+      setIsResolving(true);
+      setResolveStatus("Generating stealth address…");
+      try {
+        const stealth = await api.createStealth({ meta_address: metaHex });
+        setStealthResult(stealth);
+        setStep("generated");
+        toast.success("Stealth address generated");
+      } catch (err) {
+        const message = err instanceof ApiError ? err.message : "Failed to create stealth payment";
+        toast.error(message);
+      } finally {
+        setIsResolving(false);
+        setResolveStatus("");
+      }
       return;
     }
 
     const isSuiName = name.endsWith(".sui");
-    // Ensure extension: default to .eth if no dot
     const normalized = name.includes(".") ? name : `${name}.eth`;
 
     setIsResolving(true);
+    setResolveStatus("Resolving…");
     setResolveError(null);
     setResolvedENS(null);
-    setIpfsHash(null);
-    setIpfsUrl(null);
+    setStealthResult(null);
 
     // Validate name format
     try {
@@ -109,41 +152,39 @@ export default function SendPayment() {
       setResolveError(msg);
       toast.error(msg);
       setIsResolving(false);
+      setResolveStatus("");
       return;
     }
 
     // Resolve via backend
     try {
+      let resolved: ResolveEnsResponse;
       if (isSuiName) {
         const res = await api.resolveSuins(normalized);
-        setResolvedENS({
+        resolved = {
           ens_name: res.suins_name,
           meta_address: res.meta_address,
           spending_pk: res.spending_pk,
           viewing_pk: res.viewing_pk,
           ipfs_cid: res.ipfs_cid,
-        });
-        const cid = res.ipfs_cid ?? null;
-        setIpfsHash(cid);
-        setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
-        setResolveError(null);
-        setStep("resolved");
-        toast.success(`Resolved ${res.suins_name}`);
+        };
       } else {
-        const res = await api.resolveEns(normalized);
-        setResolvedENS(res);
-        const cid = res.ipfs_cid ?? null;
-        setIpfsHash(cid);
-        setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
-        setResolveError(null);
-        setStep("resolved");
-        toast.success(`Resolved ${res.ens_name}`);
+        resolved = await api.resolveEns(normalized);
       }
+      setResolvedENS(resolved);
+      setResolveError(null);
+      toast.success(`Resolved ${resolved.ens_name}`);
+
+      // Auto-generate stealth address
+      setResolveStatus("Generating stealth address…");
+      const stealth = await api.createStealth({ meta_address: resolved.meta_address });
+      setStealthResult(stealth);
+      setStep("generated");
+      toast.success("Stealth address generated");
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
       const message = apiErr?.message ?? `Failed to resolve ${isSuiName ? "SuiNS" : "ENS"}`;
       const code = apiErr?.code;
-      // Use code for specific UI; otherwise show message
       if (code === "NO_SPECTER_RECORD" || code === "NO_SUINS_SPECTER_RECORD") {
         setResolveError("no-specter-setup");
       } else if (code === "IPFS_ERROR") {
@@ -154,24 +195,7 @@ export default function SendPayment() {
       toast.error(message);
     } finally {
       setIsResolving(false);
-    }
-  };
-
-  const handleGenerateStealth = async () => {
-    if (!resolvedENS?.meta_address) return;
-    setIsGenerating(true);
-    setStealthResult(null);
-    setAnnouncementId(null);
-    try {
-      const res = await api.createStealth({ meta_address: resolvedENS.meta_address });
-      setStealthResult(res);
-      setStep("generated");
-      toast.success("Stealth address generated");
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to create stealth payment";
-      toast.error(message);
-    } finally {
-      setIsGenerating(false);
+      setResolveStatus("");
     }
   };
 
@@ -214,6 +238,77 @@ export default function SendPayment() {
     }
   };
 
+  const handleWalletSend = async () => {
+    if (!stealthResult) return;
+    const amt = walletAmount.trim();
+    if (!amt || isNaN(Number(amt)) || Number(amt) <= 0) {
+      toast.error("Enter a valid amount");
+      return;
+    }
+
+    setIsSending(true);
+    setSendError(null);
+
+    try {
+      let txHashResult: string;
+
+      if (publishChain === "ethereum") {
+        if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
+          toast.error("Connect an Ethereum wallet first");
+          setIsSending(false);
+          return;
+        }
+        const walletClient = await primaryWallet.getWalletClient(chain.id.toString());
+        if (!walletClient?.account) {
+          toast.error("Could not get wallet");
+          setIsSending(false);
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        txHashResult = await walletClient.sendTransaction({
+          to: stealthResult.stealth_address as `0x${string}`,
+          value: parseEther(amt),
+          account: walletClient.account,
+          chain,
+        } as any);
+        await publicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
+      } else {
+        if (!suiAccount) {
+          toast.error("Connect a Sui wallet first");
+          setIsSending(false);
+          return;
+        }
+        const tx = new Transaction();
+        const amountMist = BigInt(Math.floor(Number(amt) * 1e9));
+        const [coin] = tx.splitCoins(tx.gas, [amountMist]);
+        tx.transferObjects([coin], stealthResult.stealth_sui_address);
+        const result = await signAndExecuteSui({ transaction: tx });
+        txHashResult = result.digest;
+      }
+
+      // Verify + publish
+      const expectedAddr = publishChain === "sui"
+        ? stealthResult.stealth_sui_address
+        : stealthResult.stealth_address;
+      const verified = await verifyTx(txHashResult, publishChain, expectedAddr);
+      setVerifiedTx(verified);
+
+      const res = await api.publishAnnouncement({
+        ephemeral_key: stealthResult.announcement.ephemeral_key,
+        view_tag: stealthResult.view_tag,
+        tx_hash: verified.txHash,
+      });
+      setAnnouncementId(res.id);
+      toast.success(`Sent ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Transaction failed";
+      setSendError(message);
+      toast.error(message);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const resetForm = () => {
     setStep("input");
     setEnsName("");
@@ -222,12 +317,15 @@ export default function SendPayment() {
     setStealthResult(null);
     setAnnouncementId(null);
     setResolveError(null);
-    setIpfsHash(null);
-    setIpfsUrl(null);
+    setResolveStatus("");
     setTxHash("");
     setPublishChain("ethereum");
     setVerifiedTx(null);
     setVerifyError(null);
+    setSendMode("manual");
+    setWalletAmount("");
+    setIsSending(false);
+    setSendError(null);
   };
 
   return (
@@ -275,7 +373,7 @@ export default function SendPayment() {
                   </div>
                   <SearchBar
                     placeholder="bob.eth, alice.sui, or meta-address"
-                    value={step !== "input" ? (resolvedENS?.ens_name ?? ensName) : ensName}
+                    value={ensName}
                     onChange={(val) => {
                       setEnsName(val);
                       if (step !== "input") {
@@ -300,39 +398,28 @@ export default function SendPayment() {
                     variant="minimal"
                   />
                   {resolveError && step === "input" && (
-                          <div className="mt-2 space-y-2">
-                            {resolveError === "no-specter-setup" ? (
-                              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-                                <div className="flex items-start gap-2 text-amber-700 dark:text-amber-400">
-                                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                                  <div>
-                                    <p className="font-medium">
-                                      Name found, but no SPECTER meta-address configured for this recipient.
-                                    </p>
-                                    <p className="mt-2 text-muted-foreground">
-                                      To receive private payments at this name, the owner must:
-                                    </p>
-                                    <ol className="mt-2 list-decimal list-inside space-y-1 text-muted-foreground">
-                                      <li>Generate SPECTER keys on the <Link to="/setup" className="text-primary hover:underline">Setup</Link> page</li>
-                                      <li>
-                                        For ENS: set text record <code className="bg-muted px-1 rounded">specter</code> to <code className="bg-muted px-1 rounded">ipfs://YOUR_CID</code> in the ENS app.
-                                        For SuiNS: set the content hash in the SuiNS app.
-                                      </li>
-                                    </ol>
-                                    <p className="mt-2 text-muted-foreground">
-                                      See the <Link to="/setup" className="text-primary hover:underline">Setup</Link> page for step-by-step instructions.
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2 text-sm text-destructive">
-                                <AlertCircle className="h-4 w-4 shrink-0" />
-                                {resolveError}
-                              </div>
-                            )}
+                    <div className="mt-2 space-y-2">
+                      {resolveError === "no-specter-setup" ? (
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                          <div className="flex items-start gap-2 text-amber-700 dark:text-amber-400">
+                            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-medium">SPECTER not enabled by owner</p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                The recipient can enable it from the{" "}
+                                <Link to="/setup" className="text-primary hover:underline">Setup</Link> page.
+                              </p>
+                            </div>
                           </div>
-                        )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-sm text-destructive">
+                          <AlertCircle className="h-4 w-4 shrink-0" />
+                          {resolveError}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <AnimatePresence mode="wait">
@@ -347,58 +434,9 @@ export default function SendPayment() {
                       {isResolving && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          Resolving…
+                          {resolveStatus || "Resolving…"}
                         </div>
                       )}
-                    </motion.div>
-                  )}
-                  {step === "resolved" && resolvedENS && (
-                    <motion.div
-                      key="resolved"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="space-y-6"
-                    >
-                      <div className="p-4 rounded-lg bg-success/10 border border-success/20">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Check className="h-4 w-4 text-success" />
-                          <span className="font-medium text-success">
-                            Resolved {resolvedENS.ens_name}
-                          </span>
-                        </div>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Spending PK</span>
-                            <span className="font-mono text-xs truncate max-w-[180px]">
-                              {resolvedENS.spending_pk.slice(0, 16)}...
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Quantum-safe</span>
-                            <div className="flex items-center gap-1 text-success">
-                              <img src="/SPECTER-logo.png" alt="SPECTER" className="h-4 w-4" />
-                              <Check className="h-3 w-3" />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <Button
-                        variant="quantum"
-                        className="w-full"
-                        onClick={handleGenerateStealth}
-                        disabled={isGenerating}
-                      >
-                        {isGenerating ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Generating Stealth Address...
-                          </>
-                        ) : (
-                          "Generate Stealth Address"
-                        )}
-                      </Button>
                     </motion.div>
                   )}
 
@@ -410,104 +448,45 @@ export default function SendPayment() {
                       exit={{ opacity: 0 }}
                       className="space-y-6"
                     >
-                      <div className="p-6 rounded-lg bg-muted/50 border border-border">
-                        <h3 className="font-display font-semibold mb-4">
-                          Stealth Address Generated
-                        </h3>
-                        <div className="space-y-4">
-                          <div className="flex items-start gap-3">
-                            <Target className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                            <div className="flex-1 min-w-0 space-y-3">
-                              <div>
-                                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
-                                  <EthereumIcon size={14} className="text-foreground/80" />
-                                  <TooltipLabel
-                                    label="Ethereum address (send ETH here)"
-                                    tooltip="Paste this address in your wallet (e.g. MetaMask) to send the payment. Only the recipient can discover it."
-                                  />
-                                </div>
-                                <code className="text-sm font-mono break-all block">
-                                  {stealthResult.stealth_address}
-                                </code>
-                                <CopyButton
-                                  text={stealthResult.stealth_address}
-                                  label="Copy"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="mt-1"
-                                  tooltip="Copy EVM address"
-                                  tooltipCopied="Copied!"
-                                  successMessage="EVM address copied"
-                                />
-                              </div>
-                              {stealthResult.stealth_sui_address && (
-                                <div>
-                                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
-                                    <SuiIcon size={14} className="text-[#4DA2FF]" />
-                                    <TooltipLabel
-                                      label="Sui address (send SUI here)"
-                                      tooltip="Paste this address in your Sui wallet to send the payment. Only the recipient can discover it."
-                                    />
-                                  </div>
-                                  <code className="text-sm font-mono break-all block">
-                                    {stealthResult.stealth_sui_address}
-                                  </code>
-                                  <CopyButton
-                                    text={stealthResult.stealth_sui_address}
-                                    label="Copy"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="mt-1"
-                                    tooltip="Copy Sui address"
-                                    tooltipCopied="Copied!"
-                                    successMessage="Sui address copied"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
-                                <span className="font-mono text-xs text-accent">
-                                  {stealthResult.view_tag}
-                                </span>
-                              </div>
-                              <div>
-                                <div className="text-xs text-muted-foreground">View Tag</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <Zap className="h-5 w-5 text-accent" />
-                              <div>
-                                <div className="text-xs text-muted-foreground">Scan Efficiency</div>
-                                <div className="text-sm font-medium text-accent">99.6%</div>
-                              </div>
-                            </div>
-                          </div>
+                      {/* SPECTER Enabled info card */}
+                      <div className="p-4 rounded-lg bg-success/10 border border-success/20">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Check className="h-4 w-4 text-success" />
+                          <span className="font-medium text-success">
+                            {resolvedENS.ens_name}
+                          </span>
                         </div>
-                      </div>
-
-                      <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
-                        <div className="flex items-start gap-3">
-                          <Lock className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                          <div>
-                            <h4 className="font-medium text-sm mb-1">Privacy</h4>
-                            <p className="text-xs text-muted-foreground">
-                              Only {resolvedENS.ens_name} can find this payment. On-chain observers
-                              cannot link it to the recipient.
-                            </p>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between items-center">
+                            <span className="text-muted-foreground">SPECTER</span>
+                            <span className="text-xs font-medium text-success">Enabled</span>
                           </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-muted-foreground">Security</span>
+                            <span className="text-xs font-medium text-success">Post-Quantum Safe</span>
+                          </div>
+                          {resolvedENS.spending_pk && (
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Spending PK</span>
+                              <span className="font-mono text-xs truncate max-w-[180px]">
+                                {resolvedENS.spending_pk.slice(0, 16)}...
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       {announcementId === null ? (
-                        <div className="space-y-4">
-                          <div className="p-4 rounded-lg bg-muted/50 border border-border">
-                            <p className="text-sm text-muted-foreground mb-4">
-                              Send to the stealth address above in your wallet (Ethereum or Sui), then paste your transaction hash to verify and publish.
-                            </p>
-                            <div className="space-y-3">
+                        <Tabs defaultValue="wallet" onValueChange={(v) => setSendMode(v as "manual" | "wallet")}>
+                          <TabsList className="w-full">
+                            <TabsTrigger value="wallet" className="flex-1">Send from Wallet</TabsTrigger>
+                            <TabsTrigger value="manual" className="flex-1">Manual</TabsTrigger>
+                          </TabsList>
+
+                          {/* ─── Manual Tab ─── */}
+                          <TabsContent value="manual">
+                            <div className="space-y-4">
+                              {/* Chain selector */}
                               <div>
                                 <Label className="text-xs text-muted-foreground">Chain</Label>
                                 <Select
@@ -538,6 +517,39 @@ export default function SendPayment() {
                                   </SelectContent>
                                 </Select>
                               </div>
+
+                              {/* Stealth address (read-only + copy) */}
+                              <div>
+                                <Label className="text-xs text-muted-foreground">
+                                  Stealth address (send {publishChain === "sui" ? "SUI" : "ETH"} here)
+                                </Label>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Input
+                                    readOnly
+                                    value={
+                                      publishChain === "sui"
+                                        ? stealthResult.stealth_sui_address
+                                        : stealthResult.stealth_address
+                                    }
+                                    className="font-mono text-xs bg-muted/50 cursor-default flex-1"
+                                  />
+                                  <CopyButton
+                                    text={
+                                      publishChain === "sui"
+                                        ? stealthResult.stealth_sui_address
+                                        : stealthResult.stealth_address
+                                    }
+                                    label="Copy"
+                                    variant="outline"
+                                    size="sm"
+                                    tooltip={`Copy ${publishChain === "sui" ? "Sui" : "EVM"} stealth address`}
+                                    tooltipCopied="Copied!"
+                                    successMessage={`${publishChain === "sui" ? "Sui" : "EVM"} address copied`}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Tx hash input */}
                               <div>
                                 <Label className="text-xs text-muted-foreground">
                                   {publishChain === "sui" ? "Transaction digest (base58)" : "Transaction hash"}
@@ -552,30 +564,225 @@ export default function SendPayment() {
                                   className="mt-1 font-mono text-sm"
                                 />
                               </div>
+
                               {verifyError && (
                                 <div className="flex items-center gap-2 text-sm text-destructive">
                                   <AlertCircle className="h-4 w-4 shrink-0" />
                                   {verifyError}
                                 </div>
                               )}
+
+                              <Button
+                                variant="quantum"
+                                className="w-full"
+                                onClick={handleVerifyAndPublish}
+                                disabled={isPublishing || !txHash.trim()}
+                              >
+                                {isPublishing ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    Verifying & publishing...
+                                  </>
+                                ) : (
+                                  "Publish Payment"
+                                )}
+                              </Button>
+
+                              <p className="text-xs text-muted-foreground text-center">
+                                Publishing is required for the recipient to discover this payment.
+                              </p>
                             </div>
-                          </div>
-                          <Button
-                            variant="quantum"
-                            className="w-full"
-                            onClick={handleVerifyAndPublish}
-                            disabled={isPublishing}
-                          >
-                            {isPublishing ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                Verifying & publishing...
-                              </>
-                            ) : (
-                              "Verify & Publish (required for recipient to discover)"
-                            )}
-                          </Button>
-                        </div>
+                          </TabsContent>
+
+                          {/* ─── Wallet Tab ─── */}
+                          <TabsContent value="wallet">
+                            <div className="space-y-4">
+                              {/* Chain selector */}
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Chain</Label>
+                                <Select
+                                  value={publishChain}
+                                  onValueChange={(v) => {
+                                    setPublishChain(v as TxChain);
+                                    setSendError(null);
+                                  }}
+                                >
+                                  <SelectTrigger className="mt-1">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="ethereum">
+                                      <span className="flex items-center gap-2">
+                                        <EthereumIcon size={14} />
+                                        Ethereum
+                                      </span>
+                                    </SelectItem>
+                                    {stealthResult.stealth_sui_address && (
+                                      <SelectItem value="sui">
+                                        <span className="flex items-center gap-2">
+                                          <SuiIcon size={14} className="text-[#4DA2FF]" />
+                                          Sui
+                                        </span>
+                                      </SelectItem>
+                                    )}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Amount input */}
+                              <div>
+                                <Label className="text-xs text-muted-foreground">
+                                  Amount ({publishChain === "sui" ? "SUI" : "ETH"})
+                                </Label>
+                                <Input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  placeholder={publishChain === "sui" ? "e.g. 1.5" : "e.g. 0.01"}
+                                  value={walletAmount}
+                                  onChange={(e) => {
+                                    setWalletAmount(e.target.value);
+                                    setSendError(null);
+                                  }}
+                                  className="mt-1 font-mono text-sm"
+                                />
+                              </div>
+
+                              {/* To (read-only stealth address) */}
+                              <div>
+                                <Label className="text-xs text-muted-foreground">To (stealth address)</Label>
+                                <Input
+                                  readOnly
+                                  value={
+                                    publishChain === "sui"
+                                      ? stealthResult.stealth_sui_address
+                                      : stealthResult.stealth_address
+                                  }
+                                  className="mt-1 font-mono text-xs bg-muted/50 cursor-default"
+                                />
+                              </div>
+
+                              {/* Wallet connection + send */}
+                              {publishChain === "ethereum" ? (
+                                <div className="space-y-3">
+                                  {evmConnected ? (
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                        <Wallet className="h-4 w-4 text-success" />
+                                        <span className="font-mono text-xs truncate max-w-[240px]">
+                                          {primaryWallet?.address}
+                                        </span>
+                                      </div>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-xs text-muted-foreground hover:text-destructive"
+                                        onClick={() => handleLogOut()}
+                                      >
+                                        Disconnect
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <Button
+                                      variant="outline"
+                                      className="w-full"
+                                      onClick={() => setShowAuthFlow(true)}
+                                    >
+                                      <Wallet className="h-4 w-4 mr-2" />
+                                      Connect EVM Wallet
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="quantum"
+                                    className="w-full"
+                                    onClick={handleWalletSend}
+                                    disabled={isSending || !evmConnected}
+                                  >
+                                    {isSending ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        Sending & publishing...
+                                      </>
+                                    ) : (
+                                      "Send & Publish"
+                                    )}
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  {suiConnected ? (
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                        <Wallet className="h-4 w-4 text-success" />
+                                        <span className="font-mono text-xs truncate max-w-[240px]">
+                                          {suiAccount?.address}
+                                        </span>
+                                      </div>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-xs text-muted-foreground hover:text-destructive"
+                                        onClick={() => disconnectSui()}
+                                      >
+                                        Disconnect
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <ConnectModal
+                                      trigger={
+                                        <Button
+                                          variant="outline"
+                                          className="w-full"
+                                          onClick={() => setSuiConnectOpen(true)}
+                                        >
+                                          <Wallet className="h-4 w-4 mr-2" />
+                                          Connect Sui Wallet
+                                        </Button>
+                                      }
+                                      open={suiConnectOpen}
+                                      onOpenChange={setSuiConnectOpen}
+                                    />
+                                  )}
+                                  <Button
+                                    variant="quantum"
+                                    className="w-full"
+                                    onClick={handleWalletSend}
+                                    disabled={isSending || !suiConnected}
+                                  >
+                                    {isSending ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        Sending & publishing...
+                                      </>
+                                    ) : (
+                                      "Send & Publish"
+                                    )}
+                                  </Button>
+                                </div>
+                              )}
+
+                              {sendError && (
+                                <div className="flex items-center gap-2 text-sm text-destructive">
+                                  <AlertCircle className="h-4 w-4 shrink-0" />
+                                  {sendError}
+                                </div>
+                              )}
+
+                              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                                <div className="flex items-start gap-3">
+                                  <Lock className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                                  <div>
+                                    <h4 className="font-medium text-sm mb-1">Privacy</h4>
+                                    <p className="text-xs text-muted-foreground">
+                                      Only {resolvedENS.ens_name} can find this payment. On-chain observers
+                                      cannot link it to the recipient.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </TabsContent>
+                        </Tabs>
                       ) : (
                         <div className="flex flex-col items-center w-full">
                           <AnimatedTicket
