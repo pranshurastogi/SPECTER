@@ -74,6 +74,9 @@
     "viem": "^2.21.0",
     "zod": "^3.25.76"
   },
+  "resolutions": {
+    "@walletconnect/utils/@noble/hashes": "1.8.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",

@@ -38,6 +38,16 @@ import { toast } from "@/components/ui/sonner";
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
 import { formatAddress } from "@/lib/utils";
 
@@ -53,6 +63,8 @@ export default function GenerateKeys() {
   const [currentStep, setCurrentStep] = useState<SetupStep>(1);
   const [step1Status, setStep1Status] = useState<"idle" | "generating" | "complete">("idle");
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
+  const [keysDownloaded, setKeysDownloaded] = useState(false);
+  const [showContinueWithoutDownloadWarning, setShowContinueWithoutDownloadWarning] = useState(false);
   const [ensUploading, setEnsUploading] = useState(false);
   const [ensTxHash, setEnsTxHash] = useState<string | null>(null);
   const [ensUploadResult, setEnsUploadResult] = useState<{ cid: string; text_record: string; ensName: string } | null>(null);
@@ -97,6 +109,7 @@ export default function GenerateKeys() {
   const handleGenerate = async () => {
     setStep1Status("generating");
     setKeys(null);
+    setKeysDownloaded(false);
     setEnsUploadResult(null);
     setSuinsUploadResult(null);
     try {
@@ -343,9 +356,12 @@ export default function GenerateKeys() {
                           <DownloadJsonButton
                             data={keysJson}
                             filename="specter-keys.json"
-                            label="Download keys (backup securely)"
-                            className="w-full"
+                            label="Download Keys"
+                            variant="quantum"
+                            size="lg"
+                            className="w-full ring-2 ring-primary ring-offset-2 font-semibold shadow-md animate-in fade-in"
                             tooltip="Keep this file safe and never share it"
+                            onDownload={() => setKeysDownloaded(true)}
                           />
                         )}
 
@@ -378,10 +394,43 @@ export default function GenerateKeys() {
                           </div>
                         </div>
 
-                        <Button variant="quantum" className="w-full" onClick={() => setCurrentStep(2)}>
+                        <Button
+                          variant="quantum"
+                          className="w-full"
+                          onClick={() => {
+                            if (keysDownloaded) {
+                              setCurrentStep(2);
+                            } else {
+                              setShowContinueWithoutDownloadWarning(true);
+                            }
+                          }}
+                        >
                           Continue
                           <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
+
+                        <AlertDialog open={showContinueWithoutDownloadWarning} onOpenChange={setShowContinueWithoutDownloadWarning}>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>You haven&apos;t downloaded your keys</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Your keys file is the only backup to scan and claim payments. If you continue without downloading, you may lose access if you clear data or use another device. Download your keys now and store them safely.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Go back</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => {
+                                  setCurrentStep(2);
+                                  setShowContinueWithoutDownloadWarning(false);
+                                }}
+                                className="bg-amber-600 hover:bg-amber-700"
+                              >
+                                Continue anyway
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     )}
                   </motion.div>

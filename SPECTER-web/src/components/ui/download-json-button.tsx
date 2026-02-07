@@ -11,6 +11,7 @@ interface DownloadJsonButtonProps {
   size?: "default" | "sm" | "lg" | "icon" | "xl";
   className?: string;
   tooltip?: string;
+  onDownload?: () => void;
 }
 
 export function DownloadJsonButton({
@@ -21,6 +22,7 @@ export function DownloadJsonButton({
   size = "default",
   className = "",
   tooltip = "Save as JSON file",
+  onDownload,
 }: DownloadJsonButtonProps) {
   const handleDownload = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -33,6 +35,7 @@ export function DownloadJsonButton({
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`Saved as ${a.download}`);
+    onDownload?.();
   };
 
   return (
