@@ -3,6 +3,7 @@
 use specter_registry::MemoryRegistry;
 use specter_ens::{SpecterResolver, ResolverConfig};
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
+use specter_yellow::types::YellowConfig;
 
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
@@ -98,6 +99,7 @@ pub struct AppState {
     pub registry: MemoryRegistry,
     pub resolver: SpecterResolver,
     pub suins_resolver: SuinsResolver,
+    pub yellow_config: YellowConfig,
 }
 
 impl AppState {
@@ -129,11 +131,29 @@ impl AppState {
             suins_config.ipfs = suins_config.ipfs.no_cache();
         }
 
+        // Yellow Network config
+        let yellow_config = YellowConfig {
+            ws_url: std::env::var("YELLOW_WS_URL")
+                .unwrap_or_else(|_| "wss://clearnet-sandbox.yellow.com/ws".into()),
+            rpc_url: std::env::var("ETH_RPC_URL_SEPOLIA")
+                .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
+            chain_id: std::env::var("YELLOW_CHAIN_ID")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(11155111),
+            custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
+                .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
+            adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
+                .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
+            challenge_duration: 3600,
+        };
+
         Self {
             config,
             registry: MemoryRegistry::new(),
             resolver: SpecterResolver::with_config(resolver_config),
             suins_resolver: SuinsResolver::with_config(suins_config),
+            yellow_config,
         }
     }
 }

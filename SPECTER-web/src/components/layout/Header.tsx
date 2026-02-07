@@ -13,6 +13,7 @@ const navLinks = [
   { path: "/setup", label: "Setup" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
+  { path: "/yellow", label: "Yellow" },
 ];
 
 const NavLink = ({

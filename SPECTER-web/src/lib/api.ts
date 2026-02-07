@@ -229,6 +229,107 @@ export interface RegistryStatsResponse {
   view_tag_distribution: ViewTagCount[];
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Yellow Network Types
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface YellowCreateChannelRequest {
+  recipient: string;
+  token: string;
+  amount: string;
+}
+
+export interface YellowAnnouncementData {
+  ephemeral_key: string;
+  view_tag: number;
+  channel_id: string;
+}
+
+export interface YellowCreateChannelResponse {
+  channel_id: string;
+  stealth_address: string;
+  announcement: YellowAnnouncementData;
+  tx_hash: string;
+}
+
+export interface YellowDiscoverRequest {
+  viewing_sk: string;
+  spending_pk: string;
+  spending_sk: string;
+}
+
+export interface YellowDiscoveredChannel {
+  channel_id: string;
+  stealth_address: string;
+  eth_private_key: string;
+  status: string;
+  discovered_at: number;
+}
+
+export interface YellowDiscoverResponse {
+  channels: YellowDiscoveredChannel[];
+}
+
+export interface YellowFundChannelRequest {
+  channel_id: string;
+  amount: string;
+}
+
+export interface YellowFundChannelResponse {
+  tx_hash: string;
+  new_balance: string;
+}
+
+export interface YellowCloseChannelRequest {
+  channel_id: string;
+}
+
+export interface YellowAllocationDto {
+  destination: string;
+  token: string;
+  amount: string;
+}
+
+export interface YellowCloseChannelResponse {
+  tx_hash: string;
+  final_balances: YellowAllocationDto[];
+}
+
+export interface YellowChannelStatusResponse {
+  channel_id: string;
+  status: string;
+  balances: YellowAllocationDto[];
+  participants: string[];
+  created_at: number;
+  version: number;
+}
+
+export interface YellowTransferRequest {
+  channel_id: string;
+  destination: string;
+  amount: string;
+  asset: string;
+}
+
+export interface YellowTransferResponse {
+  new_state_version: number;
+  balances: YellowAllocationDto[];
+}
+
+export interface YellowTokenInfo {
+  symbol: string;
+  address: string;
+  decimals: number;
+}
+
+export interface YellowConfigResponse {
+  ws_url: string;
+  custody_address: string;
+  adjudicator_address: string;
+  chain_id: number;
+  supported_tokens: YellowTokenInfo[];
+}
+
 export const api = {
   getBaseUrl,
 
@@ -292,5 +393,52 @@ export const api = {
 
   async getRegistryStats(): Promise<RegistryStatsResponse> {
     return request<RegistryStatsResponse>("/api/v1/registry/stats");
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Yellow Network
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async yellowCreateChannel(body: YellowCreateChannelRequest): Promise<YellowCreateChannelResponse> {
+    return request<YellowCreateChannelResponse>("/api/v1/yellow/channel/create", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async yellowDiscoverChannels(body: YellowDiscoverRequest): Promise<YellowDiscoverResponse> {
+    return request<YellowDiscoverResponse>("/api/v1/yellow/channel/discover", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async yellowFundChannel(body: YellowFundChannelRequest): Promise<YellowFundChannelResponse> {
+    return request<YellowFundChannelResponse>("/api/v1/yellow/channel/fund", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async yellowCloseChannel(body: YellowCloseChannelRequest): Promise<YellowCloseChannelResponse> {
+    return request<YellowCloseChannelResponse>("/api/v1/yellow/channel/close", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async yellowChannelStatus(channelId: string): Promise<YellowChannelStatusResponse> {
+    return request<YellowChannelStatusResponse>(`/api/v1/yellow/channel/${encodeURIComponent(channelId)}/status`);
+  },
+
+  async yellowTransfer(body: YellowTransferRequest): Promise<YellowTransferResponse> {
+    return request<YellowTransferResponse>("/api/v1/yellow/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  async yellowConfig(): Promise<YellowConfigResponse> {
+    return request<YellowConfigResponse>("/api/v1/yellow/config");
   },
 };

@@ -1,45 +1,49 @@
 [package]
-name = "specter-api"
+name = "specter-yellow"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "REST API server for SPECTER protocol"
+description = "Yellow Network integration for SPECTER - Private state channel trading"
 
 [dependencies]
 specter-core = { path = "../specter-core" }
 specter-crypto = { path = "../specter-crypto" }
 specter-stealth = { path = "../specter-stealth" }
 specter-registry = { path = "../specter-registry" }
-specter-scanner = { path = "../specter-scanner" }
 specter-ens = { path = "../specter-ens" }
-specter-suins = { path = "../specter-suins" }
-specter-yellow = { path = "../specter-yellow" }
 
-# Web framework
-axum = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-hyper = { workspace = true }
-
-# Async
-tokio = { workspace = true }
+# Ethereum
+ethers = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
 
+# Async
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# WebSocket (for Yellow Node communication)
+tokio-tungstenite = "0.21"
+
+# HTTP
+reqwest = { workspace = true }
+
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }
 
 # Random
 rand = { workspace = true }
 
-# Config
-dotenvy = "0.15"
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
-reqwest = { workspace = true }

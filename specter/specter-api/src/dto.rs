@@ -310,3 +310,185 @@ pub struct HealthResponse {
     /// When true, backend uses Sepolia ENS
     pub use_testnet: bool,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Yellow Network DTOs
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Request to create a private Yellow channel.
+#[derive(Debug, Deserialize)]
+pub struct YellowCreateChannelRequest {
+    /// Recipient ENS name (e.g. "bob.eth") or meta-address hex
+    pub recipient: String,
+    /// Token address
+    pub token: String,
+    /// Initial funding amount (human-readable)
+    pub amount: String,
+}
+
+/// Response for private Yellow channel creation.
+#[derive(Debug, Serialize)]
+pub struct YellowCreateChannelResponse {
+    /// Channel ID
+    pub channel_id: String,
+    /// Stealth address for recipient
+    pub stealth_address: String,
+    /// Announcement data (ephemeral_key, view_tag, channel_id)
+    pub announcement: YellowAnnouncementData,
+    /// Transaction hash
+    pub tx_hash: String,
+}
+
+/// Announcement data included in channel creation response.
+#[derive(Debug, Serialize)]
+pub struct YellowAnnouncementData {
+    /// Ephemeral ciphertext (hex)
+    pub ephemeral_key: String,
+    /// View tag
+    pub view_tag: u8,
+    /// Channel ID (hex)
+    pub channel_id: String,
+}
+
+/// Request to discover private Yellow channels.
+#[derive(Debug, Deserialize)]
+pub struct YellowDiscoverRequest {
+    /// Viewing secret key (hex)
+    pub viewing_sk: String,
+    /// Spending public key (hex)
+    pub spending_pk: String,
+    /// Spending secret key (hex)
+    pub spending_sk: String,
+}
+
+/// A discovered Yellow channel.
+#[derive(Debug, Serialize)]
+pub struct YellowDiscoveredChannelDto {
+    /// Channel ID
+    pub channel_id: String,
+    /// Stealth address
+    pub stealth_address: String,
+    /// Ethereum private key for stealth address (hex)
+    pub eth_private_key: String,
+    /// Channel status
+    pub status: String,
+    /// Discovery timestamp
+    pub discovered_at: u64,
+}
+
+/// Response for Yellow channel discovery.
+#[derive(Debug, Serialize)]
+pub struct YellowDiscoverResponse {
+    /// Discovered channels
+    pub channels: Vec<YellowDiscoveredChannelDto>,
+}
+
+/// Request to fund a Yellow channel.
+#[derive(Debug, Deserialize)]
+pub struct YellowFundChannelRequest {
+    /// Channel ID
+    pub channel_id: String,
+    /// Amount to add
+    pub amount: String,
+}
+
+/// Response for Yellow channel funding.
+#[derive(Debug, Serialize)]
+pub struct YellowFundChannelResponse {
+    /// Transaction hash
+    pub tx_hash: String,
+    /// New balance after funding
+    pub new_balance: String,
+}
+
+/// Request to close a Yellow channel.
+#[derive(Debug, Deserialize)]
+pub struct YellowCloseChannelRequest {
+    /// Channel ID
+    pub channel_id: String,
+}
+
+/// Response for Yellow channel closure.
+#[derive(Debug, Serialize)]
+pub struct YellowCloseChannelResponse {
+    /// Transaction hash
+    pub tx_hash: String,
+    /// Final balances
+    pub final_balances: Vec<YellowAllocationDto>,
+}
+
+/// Allocation DTO for Yellow channels.
+#[derive(Debug, Serialize)]
+pub struct YellowAllocationDto {
+    /// Destination address
+    pub destination: String,
+    /// Token address
+    pub token: String,
+    /// Amount
+    pub amount: String,
+}
+
+/// Response for Yellow channel status.
+#[derive(Debug, Serialize)]
+pub struct YellowChannelStatusResponse {
+    /// Channel ID
+    pub channel_id: String,
+    /// Status
+    pub status: String,
+    /// Balances
+    pub balances: Vec<YellowAllocationDto>,
+    /// Participants
+    pub participants: Vec<String>,
+    /// Created timestamp
+    pub created_at: u64,
+    /// State version
+    pub version: u64,
+}
+
+/// Request for off-chain transfer.
+#[derive(Debug, Deserialize)]
+pub struct YellowTransferRequest {
+    /// Channel ID
+    pub channel_id: String,
+    /// Destination address
+    pub destination: String,
+    /// Amount to transfer
+    pub amount: String,
+    /// Asset identifier
+    pub asset: String,
+}
+
+/// Response for off-chain transfer.
+#[derive(Debug, Serialize)]
+pub struct YellowTransferResponse {
+    /// New state version
+    pub new_state_version: u64,
+    /// Updated balances
+    pub balances: Vec<YellowAllocationDto>,
+}
+
+/// Response for Yellow config.
+#[derive(Debug, Serialize)]
+pub struct YellowConfigResponse {
+    /// WebSocket URL
+    pub ws_url: String,
+    /// Custody contract address
+    pub custody_address: String,
+    /// Adjudicator contract address
+    pub adjudicator_address: String,
+    /// Chain ID
+    pub chain_id: u64,
+    /// Supported tokens
+    pub supported_tokens: Vec<YellowTokenInfo>,
+}
+
+/// Token info for Yellow Network.
+#[derive(Debug, Serialize)]
+pub struct YellowTokenInfo {
+    /// Token symbol
+    pub symbol: String,
+    /// Token address
+    pub address: String,
+    /// Decimals
+    pub decimals: u8,
+}
