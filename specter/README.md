@@ -47,12 +47,15 @@ PINATA_GATEWAY_TOKEN=your_gateway_token
 # Optional: for IPFS uploads (POST /api/v1/ipfs/upload)
 PINATA_JWT=your_pinata_jwt
 
-# Optional: Sepolia testnet (default: mainnet)
+# Optional: Sepolia testnet + Sui testnet (default: mainnet)
 USE_TESTNET=true
 
-# Optional: custom RPC (defaults: publicnode mainnet/sepolia)
+# Optional: custom Ethereum RPC (defaults: publicnode mainnet/sepolia)
 # ETH_RPC_URL=https://ethereum.publicnode.com
 # ETH_RPC_URL_SEPOLIA=https://ethereum-sepolia-rpc.publicnode.com
+
+# Optional: custom Sui RPC (defaults based on USE_TESTNET)
+# SUI_RPC_URL=https://fullnode.mainnet.sui.io:443
 ```
 
 ### Running
@@ -396,6 +399,28 @@ GET /api/v1/ens/resolve/:name
 curl http://localhost:3001/api/v1/ens/resolve/alice.eth
 ```
 
+#### Resolve SuiNS Name
+
+```http
+GET /api/v1/suins/resolve/:name
+```
+
+**Example:**
+```bash
+curl http://localhost:3001/api/v1/suins/resolve/alice.sui
+```
+
+**Response:**
+```json
+{
+  "suins_name": "alice.sui",
+  "meta_address": "01hex...",
+  "spending_pk": "hex...",
+  "viewing_pk": "hex...",
+  "ipfs_cid": "bafkrei..."
+}
+```
+
 #### Publish Announcement
 
 ```http
@@ -440,6 +465,7 @@ GET /api/v1/registry/stats
 | `POST` | `/api/v1/stealth/create` | Create stealth payment |
 | `POST` | `/api/v1/stealth/scan` | Scan for payments |
 | `GET` | `/api/v1/ens/resolve/:name` | Resolve ENS to meta-address |
+| `GET` | `/api/v1/suins/resolve/:name` | Resolve SuiNS to meta-address |
 | `POST` | `/api/v1/ipfs/upload` | Upload meta-address to IPFS |
 | `GET` | `/api/v1/ipfs/:cid` | Get IPFS content (raw bytes) by CID |
 | `GET` | `/api/v1/registry/announcements` | List all announcements |
@@ -524,13 +550,14 @@ GET /api/v1/registry/stats
 2. **Meta-Address Creation**: Combine public keys into meta-address
    - Format: `version (1) || spending_pk (1184) || viewing_pk (1184)`
 
-3. **ENS Publication**: Store on IPFS and link via ENS
+3. **Name Service Publication**: Store on IPFS and link via ENS or SuiNS
    - Upload meta-address to IPFS/Pinata
-   - Set ENS text record: `specter` → `ipfs://<CID>`
+   - ENS: Set text record `specter` → `ipfs://<CID>`
+   - SuiNS: Set `contentHash` → `ipfs://<CID>`
 
 ### Sending Phase
 
-1. **Resolution**: Sender resolves `alice.eth` → meta-address
+1. **Resolution**: Sender resolves `alice.eth` or `alice.sui` → meta-address
 2. **Encapsulation**: Create shared secret with viewing key
 3. **View Tag**: Compute 1-byte tag for efficient scanning
 4. **Stealth Address**: Derive one-time address from spending key
