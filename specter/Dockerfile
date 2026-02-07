@@ -28,7 +28,6 @@ WORKDIR /app
 COPY --from=builder /app/target/release/specter /app/specter
 
 EXPOSE 3001
-ENV PORT=3001
 
-# Railway sets PORT at runtime
-CMD ["sh", "-c", "/app/specter serve --port ${PORT:-3001}"]
+# PORT is read from env by the binary via clap (defaults to 3001)
+CMD ["/app/specter", "serve"]
