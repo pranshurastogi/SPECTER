@@ -72,14 +72,19 @@ impl ApiConfig {
             }
         });
 
+        let pinata_gateway_url = std::env::var("PINATA_GATEWAY_URL").unwrap_or_default();
+        let pinata_gateway_token = std::env::var("PINATA_GATEWAY_TOKEN").unwrap_or_default();
+
+        if pinata_gateway_url.is_empty() || pinata_gateway_token.is_empty() {
+            eprintln!("⚠️  PINATA_GATEWAY_URL and/or PINATA_GATEWAY_TOKEN not set — IPFS features will be unavailable");
+        }
+
         Self {
             rpc_url,
             use_testnet,
             pinata_jwt: std::env::var("PINATA_JWT").ok(),
-            pinata_gateway_url: std::env::var("PINATA_GATEWAY_URL")
-                .expect("PINATA_GATEWAY_URL required (e.g. beige-hollow-ermine-440.mypinata.cloud)"),
-            pinata_gateway_token: std::env::var("PINATA_GATEWAY_TOKEN")
-                .expect("PINATA_GATEWAY_TOKEN required for IPFS retrieves"),
+            pinata_gateway_url,
+            pinata_gateway_token,
             sui_rpc_url,
             enable_cache: std::env::var("ENABLE_CACHE")
                 .map(|v| v != "false" && v != "0")
