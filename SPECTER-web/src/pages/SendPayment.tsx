@@ -47,6 +47,7 @@ import {
   useCurrentAccount,
   useDisconnectWallet,
   useSignAndExecuteTransaction,
+  useSuiClient,
   ConnectModal,
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
@@ -82,6 +83,7 @@ export default function SendPayment() {
   // Wallet hooks
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
   const suiAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
   const { mutate: disconnectSui } = useDisconnectWallet();
   const { mutateAsync: signAndExecuteSui } = useSignAndExecuteTransaction();
 
@@ -226,6 +228,8 @@ export default function SendPayment() {
         ephemeral_key: stealthResult.announcement.ephemeral_key,
         view_tag: stealthResult.view_tag,
         tx_hash: verified.txHash,
+        amount: verified.amountFormatted,
+        chain: publishChain,
       });
       setAnnouncementId(res.id);
       toast.success(`Verified ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);
@@ -264,13 +268,12 @@ export default function SendPayment() {
           setIsSending(false);
           return;
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         txHashResult = await walletClient.sendTransaction({
           to: stealthResult.stealth_address as `0x${string}`,
           value: parseEther(amt),
           account: walletClient.account,
           chain,
-        } as any);
+        } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
         await publicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
       } else {
         if (!suiAccount) {
@@ -284,6 +287,7 @@ export default function SendPayment() {
         tx.transferObjects([coin], stealthResult.stealth_sui_address);
         const result = await signAndExecuteSui({ transaction: tx });
         txHashResult = result.digest;
+        await suiClient.waitForTransaction({ digest: result.digest });
       }
 
       // Verify + publish
@@ -297,6 +301,8 @@ export default function SendPayment() {
         ephemeral_key: stealthResult.announcement.ephemeral_key,
         view_tag: stealthResult.view_tag,
         tx_hash: verified.txHash,
+        amount: verified.amountFormatted,
+        chain: publishChain,
       });
       setAnnouncementId(res.id);
       toast.success(`Sent ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);

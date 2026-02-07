@@ -117,6 +117,9 @@ export interface AnnouncementDto {
   view_tag: number;
   timestamp: number;
   channel_id?: string | null;
+  tx_hash?: string | null;
+  amount?: string | null;
+  chain?: string | null;
 }
 
 export interface CreateStealthResponse {
@@ -144,6 +147,9 @@ export interface DiscoveryDto {
   announcement_id: number;
   timestamp: number;
   channel_id?: string | null;
+  tx_hash?: string | null;
+  amount: string;
+  chain: string;
 }
 
 export interface ScanStatsDto {
@@ -191,6 +197,8 @@ export interface PublishAnnouncementRequest {
   view_tag: number;
   channel_id?: string | null;
   tx_hash: string;
+  amount?: string | null;
+  chain?: string | null;
 }
 
 export interface PublishAnnouncementResponse {

@@ -24,7 +24,7 @@ export async function verifyEthTx(
   txHash: string,
   expectedRecipient: string
 ): Promise<VerifiedTx> {
-  const hash = txHash.startsWith("0x") ? txHash : `0x${txHash}`;
+  const hash = (txHash.startsWith("0x") ? txHash : `0x${txHash}`) as `0x${string}`;
   const tx = await publicClient.getTransaction({ hash });
   if (!tx) {
     throw new Error("Transaction not found");
@@ -78,28 +78,45 @@ export async function verifySuiTx(
   let tx: Awaited<ReturnType<SuiJsonRpcClient["getTransactionBlock"]>> | null = null;
   let client: SuiJsonRpcClient | null = null;
 
+  const fetchTx = async (c: SuiJsonRpcClient, d: string) =>
+    c.getTransactionBlock({
+      digest: d,
+      options: {
+        showBalanceChanges: true,
+        showEffects: true,
+        showObjectChanges: true,
+      },
+    });
+
+  const maxRetries = 5;
+  const retryDelayMs = 1500;
+
   for (const network of networks) {
     client = new SuiJsonRpcClient({
       url: getJsonRpcFullnodeUrl(network),
       network,
     });
-    try {
-      tx = await client.getTransactionBlock({
-        digest,
-        options: {
-          showBalanceChanges: true,
-          showEffects: true,
-          showObjectChanges: true,
-        },
-      });
-      break;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("not found") || msg.includes("Transaction") || msg.includes("Could not find")) {
-        continue; // Try other network
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        tx = await fetchTx(client, digest);
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const isNotFound =
+          msg.includes("not found") ||
+          msg.includes("Transaction") ||
+          msg.includes("Could not find");
+        if (isNotFound && attempt < maxRetries - 1) {
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+          continue;
+        }
+        if (isNotFound) {
+          break; // Try next network
+        }
+        throw e;
       }
-      throw e;
     }
+    if (tx) break;
   }
 
   if (!tx) {

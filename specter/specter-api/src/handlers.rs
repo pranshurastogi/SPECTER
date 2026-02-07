@@ -135,6 +135,8 @@ pub async fn scan_payments(
             timestamp: d.announcement.timestamp,
             channel_id: d.announcement.channel_id.map(hex::encode),
             tx_hash: d.announcement.tx_hash.clone(),
+            amount: d.announcement.amount.clone().unwrap_or_default(),
+            chain: d.announcement.chain.clone().unwrap_or_default(),
         })
         .collect();
 
@@ -275,6 +277,8 @@ pub async fn publish_announcement(
         Announcement::new(ephemeral_key, req.view_tag)
     };
     announcement.tx_hash = Some(tx_hash.to_string());
+    announcement.amount = req.amount.filter(|s| !s.trim().is_empty());
+    announcement.chain = req.chain.filter(|s| !s.trim().is_empty());
 
     let id = state.registry.publish(announcement).await
         .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
