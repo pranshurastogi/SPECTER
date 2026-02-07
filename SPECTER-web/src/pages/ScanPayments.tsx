@@ -51,6 +51,7 @@ export default function ScanPayments() {
   const [revealedPk, setRevealedPk] = useState(false);
   const [derivedAddress, setDerivedAddress] = useState<string | null>(null);
   const [addressMatch, setAddressMatch] = useState<boolean | null>(null);
+  const [suiPrivateKeyBech32, setSuiPrivateKeyBech32] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -78,19 +79,23 @@ export default function ScanPayments() {
           const expected = normalizeSuiAddress(selectedPayment.stealth_sui_address);
           setDerivedAddress(derived);
           setAddressMatch(normalizeSuiAddress(derived) === expected);
+          setSuiPrivateKeyBech32(keypair.getSecretKey());
         } else {
           const derived = privateKeyToAddress(`0x${pkHex}` as `0x${string}`);
           setDerivedAddress(derived.toLowerCase());
           setAddressMatch(derived.toLowerCase() === selectedPayment.stealth_address.toLowerCase());
+          setSuiPrivateKeyBech32(null);
         }
       } catch (err) {
         console.error("Failed to derive address:", err);
         setDerivedAddress(null);
         setAddressMatch(null);
+        setSuiPrivateKeyBech32(null);
       }
     } else {
       setDerivedAddress(null);
       setAddressMatch(null);
+      setSuiPrivateKeyBech32(null);
     }
   }, [selectedPayment, revealedPk]);
 
@@ -488,7 +493,9 @@ export default function ScanPayments() {
                     ) : (
                       <div className="space-y-3 p-3 rounded-lg bg-muted/40 border border-border">
                         <code className="text-xs font-mono break-all block bg-background/80 p-2 rounded border overflow-x-auto">
-                          {selectedPayment.eth_private_key}
+                          {selectedPayment.chain === "sui" && suiPrivateKeyBech32
+                            ? suiPrivateKeyBech32
+                            : selectedPayment.eth_private_key}
                         </code>
                         {derivedAddress && (
                           <div
@@ -513,7 +520,11 @@ export default function ScanPayments() {
                         )}
                         <div className="flex gap-2 flex-wrap">
                           <CopyButton
-                            text={selectedPayment.eth_private_key}
+                            text={
+                              selectedPayment.chain === "sui" && suiPrivateKeyBech32
+                                ? suiPrivateKeyBech32
+                                : selectedPayment.eth_private_key
+                            }
                             label="Copy pvt key"
                             successMessage="Copied"
                             variant="quantum"
