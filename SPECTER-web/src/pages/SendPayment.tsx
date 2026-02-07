@@ -203,6 +203,7 @@ export default function SendPayment() {
       const res = await api.publishAnnouncement({
         ephemeral_key: stealthResult.announcement.ephemeral_key,
         view_tag: stealthResult.view_tag,
+        tx_hash: verified.txHash,
       });
       setAnnouncementId(res.id);
       toast.success(`Verified ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);
@@ -563,9 +564,11 @@ export default function SendPayment() {
                                 </Select>
                               </div>
                               <div>
-                                <Label className="text-xs text-muted-foreground">Transaction hash</Label>
+                                <Label className="text-xs text-muted-foreground">
+                                  {publishChain === "sui" ? "Transaction digest (base58)" : "Transaction hash"}
+                                </Label>
                                 <Input
-                                  placeholder={publishChain === "sui" ? "0x..." : "0x..."}
+                                  placeholder={publishChain === "sui" ? "e.g. DFBxP4qNbDPYyXdwwDxUu3MSVXV13g51PwHkWv34VMCv" : "0x..."}
                                   value={txHash}
                                   onChange={(e) => {
                                     setTxHash(e.target.value);
@@ -609,40 +612,7 @@ export default function SendPayment() {
                             barcodeValue={`${announcementId}${stealthResult.stealth_address.slice(2, 14)}`}
                             currency={verifiedTx?.chain === "sui" ? "SUI" : "ETH"}
                           />
-                          <p className="text-xs text-muted-foreground mt-4 text-center">
-                            Send to the stealth address in your wallet.
-                          </p>
                           <div className="flex flex-col gap-3 mt-6 w-full max-w-xs mx-auto">
-                            <div className="flex gap-2">
-                              <CopyButton
-                                text={stealthResult.stealth_address}
-                                label={
-                                  <>
-                                    <EthereumIcon size={14} className="mr-1.5" />
-                                    Copy Ethereum
-                                  </>
-                                }
-                                variant="outline"
-                                className="flex-1"
-                                tooltip="Copy Ethereum address"
-                                successMessage="Ethereum address copied"
-                              />
-                              {stealthResult.stealth_sui_address && (
-                                <CopyButton
-                                  text={stealthResult.stealth_sui_address}
-                                  label={
-                                    <>
-                                      <SuiIcon size={14} className="mr-1.5 text-[#4DA2FF]" />
-                                      Copy Sui
-                                    </>
-                                  }
-                                  variant="outline"
-                                  className="flex-1"
-                                  tooltip="Copy Sui address"
-                                  successMessage="Sui address copied"
-                                />
-                              )}
-                            </div>
                             <DownloadJsonButton
                               data={{
                                 stealth_address: stealthResult.stealth_address,

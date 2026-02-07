@@ -190,6 +190,7 @@ export interface PublishAnnouncementRequest {
   ephemeral_key: string;
   view_tag: number;
   channel_id?: string | null;
+  tx_hash: string;
 }
 
 export interface PublishAnnouncementResponse {

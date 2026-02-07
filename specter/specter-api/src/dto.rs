@@ -87,6 +87,8 @@ pub struct DiscoveryDto {
     pub timestamp: u64,
     /// Optional channel ID
     pub channel_id: Option<String>,
+    /// Optional transaction hash
+    pub tx_hash: Option<String>,
 }
 
 /// Scan statistics.
@@ -165,6 +167,8 @@ pub struct AnnouncementDto {
     pub timestamp: u64,
     /// Optional channel ID (hex)
     pub channel_id: Option<String>,
+    /// Optional transaction hash (when published with verified tx)
+    pub tx_hash: Option<String>,
 }
 
 impl From<Announcement> for AnnouncementDto {
@@ -175,6 +179,7 @@ impl From<Announcement> for AnnouncementDto {
             view_tag: ann.view_tag,
             timestamp: ann.timestamp,
             channel_id: ann.channel_id.map(hex::encode),
+            tx_hash: ann.tx_hash,
         }
     }
 }
@@ -206,7 +211,7 @@ impl TryFrom<AnnouncementDto> for Announcement {
             timestamp: dto.timestamp,
             channel_id,
             block_number: None,
-            tx_hash: None,
+            tx_hash: dto.tx_hash,
         })
     }
 }
@@ -220,6 +225,8 @@ pub struct PublishAnnouncementRequest {
     pub view_tag: u8,
     /// Optional channel ID (hex)
     pub channel_id: Option<String>,
+    /// Transaction hash (required; for duplicate detection and storage)
+    pub tx_hash: String,
 }
 
 /// Response for publish.

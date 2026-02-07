@@ -134,6 +134,7 @@ pub async fn scan_payments(
             announcement_id: d.announcement.id,
             timestamp: d.announcement.timestamp,
             channel_id: d.announcement.channel_id.map(hex::encode),
+            tx_hash: d.announcement.tx_hash.clone(),
         })
         .collect();
 
@@ -263,11 +264,17 @@ pub async fn publish_announcement(
         })
         .transpose()?;
 
-    let announcement = if let Some(ch_id) = channel_id {
+    let tx_hash = req.tx_hash.trim();
+    if tx_hash.is_empty() {
+        return Err(ApiError::bad_request("tx_hash is required and cannot be empty"));
+    }
+
+    let mut announcement = if let Some(ch_id) = channel_id {
         Announcement::with_channel(ephemeral_key, req.view_tag, ch_id)
     } else {
         Announcement::new(ephemeral_key, req.view_tag)
     };
+    announcement.tx_hash = Some(tx_hash.to_string());
 
     let id = state.registry.publish(announcement).await
         .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
