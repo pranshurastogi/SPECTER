@@ -84,7 +84,7 @@ export default function GenerateKeys() {
       return;
     }
     if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
-      toast.error("Connect an EVM wallet to set the ENS record");
+      toast.error("Connect an Ethereum wallet to set the ENS record");
       return;
     }
     setEnsUploading(true);
@@ -242,9 +242,7 @@ export default function GenerateKeys() {
                         <div className="flex gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
                           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
                           <p className="text-sm text-amber-800 dark:text-amber-200">
-                            Download and store your keys now. You need this file to scan and claim payments.
-                            <br />
-                            Without it, you cannot recover funds.
+                            Store this file safely. You need it to scan and claim payments. Once lost, it cannot be recovered.
                           </p>
                         </div>
 
@@ -254,7 +252,7 @@ export default function GenerateKeys() {
                             filename="specter-keys.json"
                             label="Download keys (backup securely)"
                             className="w-full"
-                            tooltip="Save keys — keep this file safe and never share it"
+                            tooltip="Keep this file safe and never share it"
                           />
                         )}
 
@@ -321,7 +319,7 @@ export default function GenerateKeys() {
                           onClick={() => setShowAuthFlow(true)}
                         >
                           <Wallet className="h-4 w-4 mr-2" />
-                          Connect EVM wallet
+                          Connect Ethereum wallet
                         </Button>
                         <Button
                           variant="ghost"
@@ -388,7 +386,7 @@ export default function GenerateKeys() {
                                     </Button>
                                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                                       <Info className="h-3 w-3 shrink-0" />
-                                      Uploads meta-address to IPFS, then prompts you to sign a tx to set the ENS text record.
+                                      Meta address is uploaded to IPFS and attached to ENS as a text record.
                                     </p>
                                   </>
                                 )}
@@ -416,7 +414,7 @@ export default function GenerateKeys() {
                           </div>
                         ) : (
                           <p className="text-sm text-muted-foreground">
-                            No ENS name found for this wallet. You can skip this step and use your meta-address directly.
+                            No ENS name found. Connect a wallet with an ENS name.
                           </p>
                         )}
 
