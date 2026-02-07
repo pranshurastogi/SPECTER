@@ -7,13 +7,11 @@ import { SearchBar } from "@/components/ui/search-bar";
 import {
   Check,
   Zap,
-  ExternalLink,
   ArrowRight,
   Loader2,
   Lock,
   Target,
   AlertCircle,
-  FileText,
   User,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -376,29 +374,6 @@ export default function SendPayment() {
                               {resolvedENS.spending_pk.slice(0, 16)}...
                             </span>
                           </div>
-                          {ipfsHash && (
-                            <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground">IPFS Content</span>
-                              <div className="flex items-center gap-2">
-                                <FileText className="h-3 w-3 text-accent" />
-                                {ipfsUrl ? (
-                                  <a
-                                    href={ipfsUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs text-accent hover:underline flex items-center gap-1"
-                                  >
-                                    View on IPFS
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                ) : (
-                                  <span className="text-xs font-mono">
-                                    {ipfsHash.slice(0, 12)}...
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )}
                           <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">Quantum-safe</span>
                             <div className="flex items-center gap-1 text-success">
