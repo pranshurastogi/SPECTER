@@ -40,6 +40,16 @@ impl Default for ApiConfig {
 impl ApiConfig {
     pub fn from_env() -> Self {
         let _ = dotenvy::dotenv();
+        // If running via cargo from repo root, cwd has no .env; try crate root (specter/.env)
+        if std::env::var("PINATA_GATEWAY_URL").is_err() {
+            if let Ok(exe) = std::env::current_exe() {
+                // exe is e.g. .../specter/target/debug/specter -> parent 3 times = .../specter
+                if let Some(crate_root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                    let env_path = crate_root.join(".env");
+                    let _ = dotenvy::from_path(env_path);
+                }
+            }
+        }
 
         let use_testnet = std::env::var("USE_TESTNET")
             .map(|v| v == "true" || v == "1")
