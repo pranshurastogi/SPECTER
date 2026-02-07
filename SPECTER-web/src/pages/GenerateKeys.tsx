@@ -652,8 +652,8 @@ export default function GenerateKeys() {
                         ) : (
                           <p className="text-sm text-muted-foreground">
                             No SuiNS name found. Register a name at{" "}
-                            <a href="https://suins.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                              suins.io
+                            <a href={useTestnet ? "https://testnet.suins.io/" : "https://suins.io"} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              {useTestnet ? "testnet.suins.io" : "suins.io"}
                             </a>{" "}
                             first.
                           </p>
