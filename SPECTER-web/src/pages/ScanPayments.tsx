@@ -28,6 +28,7 @@ import { api, ApiError, type DiscoveryDto, type ScanStatsDto, type RegistryStats
 import { CopyButton } from "@/components/ui/copy-button";
 import { DownloadJsonButton } from "@/components/ui/download-json-button";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AnimatedTicket } from "@/components/ui/ticket-confirmation-card";
 
@@ -450,8 +451,8 @@ export default function ScanPayments() {
                   <div className="space-y-4">
                     <div>
                       <TooltipLabel
-                        label="Stealth address"
-                        tooltip="One-time address for this payment."
+                        label="EVM address"
+                        tooltip="One-time Ethereum address for this payment."
                         className="text-xs text-muted-foreground mb-1 block"
                       />
                       <div className="flex items-center gap-2 flex-wrap">
@@ -468,6 +469,30 @@ export default function ScanPayments() {
                         />
                       </div>
                     </div>
+                    {selectedPayment.stealth_sui_address && (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
+                          <SuiIcon size={14} className="text-[#4DA2FF]" />
+                          <TooltipLabel
+                            label="Sui address"
+                            tooltip="One-time Sui address for this payment."
+                          />
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-xs font-mono break-all flex-1 min-w-0">
+                            {selectedPayment.stealth_sui_address}
+                          </code>
+                          <CopyButton
+                            text={selectedPayment.stealth_sui_address}
+                            label="Copy"
+                            successMessage="Copied"
+                            variant="outline"
+                            size="sm"
+                            showLabel={true}
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div>
                       <span className="text-xs text-muted-foreground">Announcement #</span>
                       <span className="font-mono text-sm ml-2">{selectedPayment.announcement_id}</span>
@@ -555,6 +580,7 @@ export default function ScanPayments() {
                       <DownloadJsonButton
                         data={{
                           stealth_address: selectedPayment.stealth_address,
+                          stealth_sui_address: selectedPayment.stealth_sui_address,
                           announcement_id: selectedPayment.announcement_id,
                           timestamp: selectedPayment.timestamp,
                           ...(revealedPk ? { eth_private_key: selectedPayment.eth_private_key } : {}),

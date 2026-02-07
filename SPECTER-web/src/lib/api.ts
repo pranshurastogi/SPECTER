@@ -9,6 +9,15 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+
+  /** Error code from API response (e.g. ENS_NAME_NOT_FOUND, NO_SPECTER_RECORD). */
+  get code(): string | undefined {
+    if (this.body && typeof this.body === "object" && "error" in this.body) {
+      const err = (this.body as { error?: { code?: string } }).error;
+      return err && typeof err === "object" ? err.code : undefined;
+    }
+    return undefined;
+  }
 }
 
 function getBaseUrl(): string {
@@ -29,12 +38,18 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok) {
-    const message =
-      (body && typeof body === "object" && "message" in body && String((body as { message: unknown }).message)) ||
-      (body && typeof body === "object" && "error" in body && String((body as { error: unknown }).error)) ||
-      text ||
-      `Request failed: ${res.status} ${res.statusText}`;
-    throw new ApiError(message, res.status, body);
+    let message = text;
+    if (body && typeof body === "object") {
+      const obj = body as Record<string, unknown>;
+      if (typeof obj.message === "string") {
+        message = obj.message;
+      } else if (obj.error && typeof obj.error === "object" && typeof (obj.error as Record<string, unknown>).message === "string") {
+        message = (obj.error as Record<string, unknown>).message as string;
+      } else if (obj.error && typeof obj.error === "string") {
+        message = obj.error;
+      }
+    }
+    throw new ApiError(message || `Request failed: ${res.status} ${res.statusText}`, res.status, body);
   }
 
   return body as T;
@@ -106,6 +121,7 @@ export interface AnnouncementDto {
 
 export interface CreateStealthResponse {
   stealth_address: string;
+  stealth_sui_address: string;
   ephemeral_ciphertext: string;
   view_tag: number;
   announcement: AnnouncementDto;
@@ -122,6 +138,7 @@ export interface ScanRequest {
 
 export interface DiscoveryDto {
   stealth_address: string;
+  stealth_sui_address: string;
   stealth_sk: string;
   eth_private_key: string;
   announcement_id: number;
