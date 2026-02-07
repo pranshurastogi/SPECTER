@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { privateKeyToAddress } from "viem/accounts";
+import { Secp256k1Keypair } from "@mysten/sui/keypairs/secp256k1";
+import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
@@ -12,14 +14,12 @@ import {
   Loader2,
   Wallet,
   Clock,
-  ArrowDownToLine,
   AlertTriangle,
   Check,
   Upload,
   KeyRound,
   CheckCircle2,
   XCircle,
-  Receipt,
   Eye,
   EyeOff,
   Info,
@@ -28,11 +28,8 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
 import { CopyButton } from "@/components/ui/copy-button";
-import { DownloadJsonButton } from "@/components/ui/download-json-button";
-import { TooltipLabel } from "@/components/ui/tooltip-label";
 import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { AnimatedTicket } from "@/components/ui/ticket-confirmation-card";
+import { formatCryptoAmount } from "@/lib/utils";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -54,17 +51,12 @@ export default function ScanPayments() {
   const [revealedPk, setRevealedPk] = useState(false);
   const [derivedAddress, setDerivedAddress] = useState<string | null>(null);
   const [addressMatch, setAddressMatch] = useState<boolean | null>(null);
-  const [showReceipt, setShowReceipt] = useState(false);
   const [page, setPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const PAGE_SIZE = 10;
   const paginatedDiscoveries = discoveries.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
   const totalPages = Math.ceil(discoveries.length / PAGE_SIZE) || 1;
-
-  useEffect(() => {
-    if (!selectedPayment) setShowReceipt(false);
-  }, [selectedPayment]);
 
   useEffect(() => {
     setPage(0);
@@ -74,11 +66,23 @@ export default function ScanPayments() {
     if (selectedPayment && revealedPk) {
       try {
         const pkHex = selectedPayment.eth_private_key.startsWith("0x")
-          ? selectedPayment.eth_private_key
-          : `0x${selectedPayment.eth_private_key}`;
-        const derived = privateKeyToAddress(pkHex as `0x${string}`);
-        setDerivedAddress(derived.toLowerCase());
-        setAddressMatch(derived.toLowerCase() === selectedPayment.stealth_address.toLowerCase());
+          ? selectedPayment.eth_private_key.slice(2)
+          : selectedPayment.eth_private_key;
+        const bytes = new Uint8Array(pkHex.length / 2);
+        for (let i = 0; i < pkHex.length; i += 2) {
+          bytes[i / 2] = parseInt(pkHex.substring(i, i + 2), 16);
+        }
+        if (selectedPayment.chain === "sui") {
+          const keypair = Secp256k1Keypair.fromSecretKey(bytes);
+          const derived = keypair.getPublicKey().toSuiAddress();
+          const expected = normalizeSuiAddress(selectedPayment.stealth_sui_address);
+          setDerivedAddress(derived);
+          setAddressMatch(normalizeSuiAddress(derived) === expected);
+        } else {
+          const derived = privateKeyToAddress(`0x${pkHex}` as `0x${string}`);
+          setDerivedAddress(derived.toLowerCase());
+          setAddressMatch(derived.toLowerCase() === selectedPayment.stealth_address.toLowerCase());
+        }
       } catch (err) {
         console.error("Failed to derive address:", err);
         setDerivedAddress(null);
@@ -312,49 +316,35 @@ export default function ScanPayments() {
                       {paginatedDiscoveries.map((d) => {
                         const addr = d.chain === "sui" ? d.stealth_sui_address : d.stealth_address;
                         const shortAddr = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr;
-                        const symbol = d.chain === "sui" ? "SUI" : "ETH";
+                        const ChainIcon = d.chain === "sui" ? SuiIcon : EthereumIcon;
                         return (
                           <div
                             key={`${d.stealth_address}-${d.announcement_id}`}
-                            className="p-3 rounded-lg bg-muted/40 border border-border flex items-center justify-between gap-3"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedPayment(d)}
+                            onKeyDown={(e) => e.key === "Enter" && setSelectedPayment(d)}
+                            className="p-3 rounded-lg bg-muted/40 border border-border flex items-center gap-3 cursor-pointer hover:bg-muted/60 transition-colors"
                           >
-                            <div className="flex items-center gap-3 min-w-0 flex-1">
-                              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                                {d.chain === "sui" ? (
-                                  <SuiIcon className="h-4 w-4 text-primary" />
-                                ) : (
-                                  <Wallet className="h-4 w-4 text-primary" />
+                            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                              <ChainIcon className={`h-4 w-4 ${d.chain === "sui" ? "text-[#4DA2FF]" : "text-primary"}`} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap text-xs">
+                                <span className="font-mono truncate" title={addr}>
+                                  {shortAddr}
+                                </span>
+                                {d.amount !== "" && (
+                                  <span className="font-medium text-foreground shrink-0">
+                                    {formatCryptoAmount(d.amount)} {d.chain === "sui" ? "SUI" : "ETH"}
+                                  </span>
                                 )}
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap text-xs">
-                                  <span className="font-medium text-muted-foreground shrink-0">
-                                    {symbol}
-                                  </span>
-                                  <span className="font-mono truncate" title={addr}>
-                                    {shortAddr}
-                                  </span>
-                                  {d.amount !== "" && (
-                                    <span className="font-medium text-foreground shrink-0">
-                                      {d.amount} {symbol}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                                  <Clock className="h-3 w-3" />
-                                  {formatTimestamp(d.timestamp)}
-                                </div>
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                                <Clock className="h-3 w-3" />
+                                {formatTimestamp(d.timestamp)}
                               </div>
                             </div>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setSelectedPayment(d)}
-                              className="shrink-0"
-                            >
-                              <ArrowDownToLine className="h-3.5 w-3.5 mr-1.5" />
-                              View
-                            </Button>
                           </div>
                         );
                       })}
@@ -416,18 +406,41 @@ export default function ScanPayments() {
                 <CardContent className="p-6 max-h-[90vh] overflow-y-auto">
                   <h3 className="font-display text-lg font-bold mb-4">Discovered payment</h3>
                   <div className="space-y-4">
+                    {/* Chain */}
                     <div>
-                      <TooltipLabel
-                        label="EVM address"
-                        tooltip="One-time Ethereum address for this payment."
-                        className="text-xs text-muted-foreground mb-1 block"
-                      />
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Chain</span>
+                      <div className="flex items-center gap-2 mt-1">
+                        {selectedPayment.chain === "sui" ? (
+                          <>
+                            <SuiIcon size={18} className="text-[#4DA2FF]" />
+                            <span className="font-medium">Sui</span>
+                          </>
+                        ) : (
+                          <>
+                            <EthereumIcon size={18} />
+                            <span className="font-medium">Ethereum</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Address for chain only */}
+                    <div>
+                      <span className="text-xs text-muted-foreground">
+                        {selectedPayment.chain === "sui" ? "Sui address" : "EVM address"}
+                      </span>
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
                         <code className="text-xs font-mono break-all flex-1 min-w-0">
-                          {selectedPayment.stealth_address}
+                          {selectedPayment.chain === "sui"
+                            ? selectedPayment.stealth_sui_address
+                            : selectedPayment.stealth_address}
                         </code>
                         <CopyButton
-                          text={selectedPayment.stealth_address}
+                          text={
+                            selectedPayment.chain === "sui"
+                              ? selectedPayment.stealth_sui_address ?? ""
+                              : selectedPayment.stealth_address
+                          }
                           label="Copy"
                           successMessage="Copied"
                           variant="outline"
@@ -436,39 +449,29 @@ export default function ScanPayments() {
                         />
                       </div>
                     </div>
-                    {selectedPayment.stealth_sui_address && (
-                      <div>
-                        <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5">
-                          <SuiIcon size={14} className="text-[#4DA2FF]" />
-                          <TooltipLabel
-                            label="Sui address"
-                            tooltip="One-time Sui address for this payment."
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <code className="text-xs font-mono break-all flex-1 min-w-0">
-                            {selectedPayment.stealth_sui_address}
-                          </code>
-                          <CopyButton
-                            text={selectedPayment.stealth_sui_address}
-                            label="Copy"
-                            successMessage="Copied"
-                            variant="outline"
-                            size="sm"
-                            showLabel={true}
-                          />
-                        </div>
-                      </div>
-                    )}
+
+                    {/* Amount */}
                     <div>
-                      <span className="text-xs text-muted-foreground">Announcement #</span>
-                      <span className="font-mono text-sm ml-2">{selectedPayment.announcement_id}</span>
+                      <span className="text-xs text-muted-foreground">Amount</span>
+                      <p className="font-medium mt-1">
+                        {selectedPayment.amount
+                          ? `${formatCryptoAmount(selectedPayment.amount)} ${selectedPayment.chain === "sui" ? "SUI" : "ETH"}`
+                          : "—"}
+                      </p>
                     </div>
+
+                    {/* Timestamp */}
+                    <div>
+                      <span className="text-xs text-muted-foreground">Timestamp</span>
+                      <p className="font-medium mt-1">{formatTimestamp(selectedPayment.timestamp)}</p>
+                    </div>
+
+                    {/* View private key */}
                     <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">
                       <div className="flex items-start gap-2">
                         <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
                         <p className="text-xs text-muted-foreground">
-                          Use the private key only in a secure wallet. Do not share.
+                          Import this private key into a secure wallet.
                         </p>
                       </div>
                     </div>
@@ -511,7 +514,7 @@ export default function ScanPayments() {
                         <div className="flex gap-2 flex-wrap">
                           <CopyButton
                             text={selectedPayment.eth_private_key}
-                            label="Copy key"
+                            label="Copy pvt key"
                             successMessage="Copied"
                             variant="quantum"
                             size="sm"
@@ -525,42 +528,6 @@ export default function ScanPayments() {
                         </div>
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedPayment(null);
-                          setRevealedPk(false);
-                        }}
-                      >
-                        Close
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowReceipt(true)}
-                      >
-                        <Receipt className="h-4 w-4 mr-1.5" />
-                        Receipt
-                      </Button>
-                      <DownloadJsonButton
-                        data={{
-                          stealth_address: selectedPayment.stealth_address,
-                          stealth_sui_address: selectedPayment.stealth_sui_address,
-                          announcement_id: selectedPayment.announcement_id,
-                          timestamp: selectedPayment.timestamp,
-                          tx_hash: selectedPayment.tx_hash ?? undefined,
-                          amount: selectedPayment.amount || undefined,
-                          chain: selectedPayment.chain || undefined,
-                          ...(revealedPk ? { eth_private_key: selectedPayment.eth_private_key } : {}),
-                        }}
-                        filename={`specter-discovery-${selectedPayment.announcement_id}.json`}
-                        label="Download"
-                        variant="outline"
-                        size="sm"
-                      />
-                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -569,21 +536,6 @@ export default function ScanPayments() {
         )}
       </AnimatePresence>
 
-      <Dialog open={showReceipt} onOpenChange={setShowReceipt}>
-        <DialogContent className="max-w-sm border-0 bg-transparent shadow-none p-0 overflow-visible">
-          {selectedPayment && (
-            <AnimatedTicket
-              ticketId={String(selectedPayment.announcement_id)}
-              amount={selectedPayment.amount ? parseFloat(selectedPayment.amount) || 0 : 0}
-              date={new Date(selectedPayment.timestamp * 1000)}
-              cardHolder={`Payment #${selectedPayment.announcement_id}`}
-              last4Digits={selectedPayment.stealth_address.replace(/^0x/, "").slice(-4)}
-              barcodeValue={`${selectedPayment.announcement_id}${selectedPayment.stealth_address.slice(2, 14)}`}
-              currency={selectedPayment.chain === "sui" ? "SUI" : "ETH"}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

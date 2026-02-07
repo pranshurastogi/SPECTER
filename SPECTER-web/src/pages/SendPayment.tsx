@@ -38,6 +38,7 @@ const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 import { validateEnsName, EnsResolverError } from "@/lib/ensResolver";
 import { validateSuinsName, SuinsResolverError } from "@/lib/suinsResolver";
 import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
+import { formatCryptoAmount } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
 // Wallet imports
@@ -232,7 +233,9 @@ export default function SendPayment() {
         chain: publishChain,
       });
       setAnnouncementId(res.id);
-      toast.success(`Verified ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);
+      toast.success(
+        `Verified ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to verify or publish";
       setVerifyError(message);
@@ -305,7 +308,9 @@ export default function SendPayment() {
         chain: publishChain,
       });
       setAnnouncementId(res.id);
-      toast.success(`Sent ${verified.amountFormatted} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`);
+      toast.success(
+        `Sent ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Transaction failed";
       setSendError(message);
@@ -526,8 +531,8 @@ export default function SendPayment() {
 
                               {/* Stealth address (read-only + copy) */}
                               <div>
-                                <Label className="text-xs text-muted-foreground">
-                                  Stealth address (send {publishChain === "sui" ? "SUI" : "ETH"} here)
+                                <Label className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                                  Stealth address (send {publishChain === "sui" ? <SuiIcon size={14} /> : <EthereumIcon size={14} />} here)
                                 </Label>
                                 <div className="flex items-center gap-2 mt-1">
                                   <Input
@@ -637,8 +642,8 @@ export default function SendPayment() {
 
                               {/* Amount input */}
                               <div>
-                                <Label className="text-xs text-muted-foreground">
-                                  Amount ({publishChain === "sui" ? "SUI" : "ETH"})
+                                <Label className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                                  Amount ({publishChain === "sui" ? <SuiIcon size={14} /> : <EthereumIcon size={14} />})
                                 </Label>
                                 <Input
                                   type="number"

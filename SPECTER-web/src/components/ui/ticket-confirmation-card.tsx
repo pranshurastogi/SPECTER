@@ -1,6 +1,6 @@
 import * as React from "react";
 import { CheckCircle2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatCryptoAmount } from "@/lib/utils";
 
 // --- SVG Icons (logos - keep custom) ---
 
@@ -137,7 +137,7 @@ export interface TicketProps extends React.HTMLAttributes<HTMLDivElement> {
   cardHolder: string;
   last4Digits: string;
   barcodeValue: string;
-  /** Currency for amount display (default "USD"). Use "ETH" for crypto. */
+  /** Currency for amount display (default "USD"). Use "ETH" or "SUI" for crypto (shows icon). */
   currency?: string;
   icon?: React.ReactNode;
 }
@@ -168,13 +168,13 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
       };
     }, []);
 
-    const formattedAmount =
-      currency === "ETH"
-        ? `${Number(amount).toFixed(4)} ETH`
-        : new Intl.NumberFormat("en-US", {
-            style: "currency",
-            currency,
-          }).format(amount);
+    const isCrypto = currency === "ETH" || currency === "SUI";
+    const formattedAmount = isCrypto
+      ? formatCryptoAmount(amount)
+      : new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency,
+        }).format(amount);
 
     const formattedDate = new Intl.DateTimeFormat("en-GB", {
       day: "numeric",
@@ -227,7 +227,9 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
                 <p className="text-xs text-muted-foreground uppercase">
                   Amount
                 </p>
-                <p className="font-semibold text-lg">{formattedAmount}</p>
+                <p className="font-semibold text-lg">
+                  {isCrypto ? `${formattedAmount} ${currency}` : formattedAmount}
+                </p>
               </div>
             </div>
 
