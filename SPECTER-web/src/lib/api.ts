@@ -151,6 +151,14 @@ export interface ResolveEnsResponse {
   ipfs_url?: string;
 }
 
+export interface ResolveSuinsResponse {
+  suins_name: string;
+  meta_address: string;
+  spending_pk: string;
+  viewing_pk: string;
+  ipfs_cid?: string;
+}
+
 export interface UploadIpfsRequest {
   meta_address: string;
   name?: string | null;
@@ -223,6 +231,11 @@ export const api = {
   async resolveEns(name: string): Promise<ResolveEnsResponse> {
     const encoded = encodeURIComponent(name);
     return request<ResolveEnsResponse>(`/api/v1/ens/resolve/${encoded}`);
+  },
+
+  async resolveSuins(name: string): Promise<ResolveSuinsResponse> {
+    const encoded = encodeURIComponent(name);
+    return request<ResolveSuinsResponse>(`/api/v1/suins/resolve/${encoded}`);
   },
 
   async uploadIpfs(body: UploadIpfsRequest): Promise<UploadIpfsResponse> {

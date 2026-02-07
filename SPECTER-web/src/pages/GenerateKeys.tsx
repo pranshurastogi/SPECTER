@@ -6,6 +6,15 @@ import { useQuery } from "@tanstack/react-query";
 import { publicClient } from "@/lib/viemClient";
 import { chain, useTestnet } from "@/lib/chainConfig";
 import { setEnsTextRecord } from "@/lib/ensSetText";
+import { setSuinsContentHash } from "@/lib/suinsSetContent";
+import {
+  useCurrentAccount,
+  useDisconnectWallet,
+  useSuiClient,
+  useSignAndExecuteTransaction,
+  ConnectModal,
+} from "@mysten/dapp-kit";
+import { SuinsClient } from "@mysten/suins";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/button";
@@ -23,7 +32,6 @@ import {
   CheckCircle2,
   Globe,
   Wallet,
-  Sparkles,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
@@ -49,6 +57,13 @@ export default function GenerateKeys() {
   const [ensTxHash, setEnsTxHash] = useState<string | null>(null);
   const [ensUploadResult, setEnsUploadResult] = useState<{ cid: string; text_record: string; ensName: string } | null>(null);
 
+  // SuiNS state
+  const [suinsUploading, setSuinsUploading] = useState(false);
+  const [suinsTxDigest, setSuinsTxDigest] = useState<string | null>(null);
+  const [suinsUploadResult, setSuinsUploadResult] = useState<{ cid: string; text_record: string; suinsName: string } | null>(null);
+  const [suinsConnectOpen, setSuinsConnectOpen] = useState(false);
+
+  // EVM wallet (Dynamic Labs)
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
   const evmAddress = primaryWallet?.address as `0x${string}` | undefined;
   const evmConnected = !!primaryWallet;
@@ -60,10 +75,30 @@ export default function GenerateKeys() {
     staleTime: 2 * 60 * 1000,
   });
 
+  // Sui wallet (dapp-kit)
+  const suiAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const { mutate: disconnectSui } = useDisconnectWallet();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+  const suiAddress = suiAccount?.address;
+  const suiConnected = !!suiAccount;
+  const suiNetwork = useTestnet ? "testnet" : "mainnet";
+
+  // Query SuiNS names for connected Sui wallet
+  const { data: suiNamesData, isLoading: fetchingSuiNames } = useQuery({
+    queryKey: ["suins-names", suiAddress],
+    queryFn: () => suiClient.resolveNameServiceNames({ address: suiAddress! }),
+    enabled: !!suiAddress,
+    staleTime: 2 * 60 * 1000,
+  });
+  const suiNames = suiNamesData?.data ?? [];
+  const primarySuiName = suiNames[0] ?? null;
+
   const handleGenerate = async () => {
     setStep1Status("generating");
     setKeys(null);
     setEnsUploadResult(null);
+    setSuinsUploadResult(null);
     try {
       const response = await api.generateKeys();
       setKeys(response);
@@ -131,6 +166,63 @@ export default function GenerateKeys() {
     }
   };
 
+  const handleAttachToSuins = async () => {
+    if (!keys?.meta_address) return;
+    if (!primarySuiName) {
+      toast.error("No SuiNS name found for your wallet");
+      return;
+    }
+    if (!suiAccount) {
+      toast.error("Connect a Sui wallet first");
+      return;
+    }
+    setSuinsUploading(true);
+    setSuinsUploadResult(null);
+    setSuinsTxDigest(null);
+    try {
+      // 1. Upload meta-address to IPFS (backend)
+      const res = await api.uploadIpfs({
+        meta_address: keys.meta_address,
+        name: `${primarySuiName.replace(/\.sui$/i, "")}.sui-specter-profile`,
+      });
+      const textRecordValue = res.text_record; // ipfs://<CID>
+
+      // 2. Get name record for NFT ID
+      const suinsClient = new SuinsClient({ client: suiClient, network: suiNetwork });
+      const nameRecord = await suinsClient.getNameRecord(primarySuiName);
+      if (!nameRecord?.nftId) {
+        toast.error("Could not find SuiNS name record NFT");
+        return;
+      }
+
+      // 3. Set contentHash on-chain
+      const digest = await setSuinsContentHash({
+        suinsName: primarySuiName,
+        nftId: nameRecord.nftId,
+        value: textRecordValue,
+        suiClient,
+        network: suiNetwork,
+        signAndExecute: (args) => signAndExecute({ transaction: args.transaction }),
+      });
+
+      setSuinsTxDigest(digest);
+      toast.info("Transaction submitted. Waiting for confirmation…");
+
+      // 4. Wait for tx confirmation
+      await suiClient.waitForTransaction({ digest });
+
+      setSuinsUploadResult({ cid: res.cid, text_record: textRecordValue, suinsName: primarySuiName });
+      setSuinsTxDigest(null);
+      toast.success("Meta address attached to SuiNS.");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
+      toast.error(message);
+      setSuinsTxDigest(null);
+    } finally {
+      setSuinsUploading(false);
+    }
+  };
+
   const keysJson = keys
     ? {
         spending_pk: keys.spending_pk,
@@ -151,6 +243,7 @@ export default function GenerateKeys() {
 
   const canProceedFromStep1 = step1Status === "complete" && keys != null;
   const ensCompleted = ensUploadResult != null;
+  const suinsCompleted = suinsUploadResult != null;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -432,7 +525,7 @@ export default function GenerateKeys() {
                   </motion.div>
                 )}
 
-                {/* ─── Step 3: Attach to SuiNS (dummy) ────────────────────────── */}
+                {/* ─── Step 3: Attach to SuiNS ─────────────────────────────── */}
                 {currentStep === 3 && (
                   <motion.div
                     key="step3"
@@ -445,21 +538,138 @@ export default function GenerateKeys() {
                       Step 3 — Attach to SuiNS
                     </h2>
                     <p className="text-sm text-muted-foreground">
-                      Connect a Sui wallet with SuiNS to receive private payments at your SuiNS name. Coming soon.
+                      Connect a Sui wallet to link your SuiNS name to your meta-address.
                     </p>
-                    <div className="p-6 rounded-lg border border-dashed border-muted-foreground/30 text-center text-sm text-muted-foreground">
-                      <Sparkles className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      SuiNS support coming soon
-                    </div>
-                    <div className="flex gap-3">
-                      <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(2)}>
-                        Back
-                      </Button>
-                      <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(4)}>
-                        Continue
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    </div>
+
+                    {!suiConnected ? (
+                      <div className="flex flex-col gap-3">
+                        <ConnectModal
+                          trigger={
+                            <Button
+                              variant="outline"
+                              size="lg"
+                              className="w-full"
+                              onClick={() => setSuinsConnectOpen(true)}
+                            >
+                              <Wallet className="h-4 w-4 mr-2" />
+                              Connect Sui wallet
+                            </Button>
+                          }
+                          open={suinsConnectOpen}
+                          onOpenChange={setSuinsConnectOpen}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-muted-foreground"
+                          onClick={() => setCurrentStep(4)}
+                        >
+                          Skip
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/40 border border-border">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Wallet className="h-4 w-4 text-primary shrink-0" />
+                            <span className="text-sm font-mono text-foreground truncate">
+                              {suiAddress && formatAddress(suiAddress)}
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => disconnectSui()}
+                          >
+                            Disconnect
+                          </Button>
+                        </div>
+
+                        {fetchingSuiNames ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Fetching SuiNS names…
+                          </div>
+                        ) : primarySuiName ? (
+                          <div className="space-y-3">
+                            <p className="text-sm">
+                              SuiNS name: <span className="font-mono font-medium text-primary">{primarySuiName}</span>
+                            </p>
+                            {!suinsUploadResult ? (
+                              <div className="space-y-2">
+                                {suinsTxDigest ? (
+                                  <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
+                                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                                    <p className="text-sm">Waiting for transaction confirmation…</p>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Button
+                                      variant="quantum"
+                                      size="default"
+                                      onClick={handleAttachToSuins}
+                                      disabled={suinsUploading}
+                                      className="w-full"
+                                    >
+                                      {suinsUploading ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <>
+                                          <Upload className="h-4 w-4 mr-2" />
+                                          Attach to SuiNS
+                                        </>
+                                      )}
+                                    </Button>
+                                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                      <Info className="h-3 w-3 shrink-0" />
+                                      Meta address is uploaded to IPFS and attached to SuiNS as content hash.
+                                    </p>
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                                <p className="text-xs font-medium text-success mb-2 flex items-center gap-1.5">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Meta address attached to SuiNS.
+                                </p>
+                                <Button variant="outline" size="sm" className="w-full" asChild>
+                                  <a
+                                    href={useTestnet ? `https://testnet.suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}` : `https://suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center gap-1.5"
+                                  >
+                                    <Globe className="h-3.5 w-3.5" />
+                                    Open SuiNS
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No SuiNS name found. Register a name at{" "}
+                            <a href="https://suins.io" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              suins.io
+                            </a>{" "}
+                            first.
+                          </p>
+                        )}
+
+                        <div className="flex gap-3">
+                          <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(2)}>
+                            Back
+                          </Button>
+                          <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(4)}>
+                            {suinsCompleted ? "Continue" : "Skip"}
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </motion.div>
                 )}
 
@@ -489,12 +699,15 @@ export default function GenerateKeys() {
                           <span className="font-mono">{ensUploadResult.ensName}</span>
                         </li>
                       )}
+                      {suinsUploadResult && (
+                        <li className="flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-primary" />
+                          <span className="font-mono">{suinsUploadResult.suinsName}</span>
+                        </li>
+                      )}
                       <li className="flex items-center gap-2">
                         <Key className="h-4 w-4 text-primary" />
                         <span>Meta-address (hex)</span>
-                      </li>
-                      <li className="text-muted-foreground text-xs">
-                        SuiNS — coming soon
                       </li>
                     </ul>
                     <Button variant="quantum" className="w-full" asChild>

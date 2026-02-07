@@ -1,6 +1,7 @@
 import { DynamicContextProvider } from '@dynamic-labs/sdk-react-core';
 import { EthereumWalletConnectors } from '@dynamic-labs/ethereum';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SuiWalletProvider } from './SuiWalletProvider';
 
 const queryClient = new QueryClient();
 
@@ -16,7 +17,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       <QueryClientProvider client={queryClient}>
-        {children}
+        <SuiWalletProvider>
+          {children}
+        </SuiWalletProvider>
       </QueryClientProvider>
     </DynamicContextProvider>
   );

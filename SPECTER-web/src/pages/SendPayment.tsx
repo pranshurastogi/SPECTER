@@ -29,6 +29,7 @@ import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } fr
 
 const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
 import { validateEnsName, EnsResolverError } from "@/lib/ensResolver";
+import { validateSuinsName, SuinsResolverError } from "@/lib/suinsResolver";
 import { Link } from "react-router-dom";
 
 type SendStep = "input" | "resolved" | "generated" | "published";
@@ -50,7 +51,7 @@ export default function SendPayment() {
   const handleResolve = async (overrideName?: string) => {
     const name = (overrideName || ensName).trim();
     if (!name) {
-      toast.error("Enter an ENS name (e.g. bob.eth) or paste meta-address (hex)");
+      toast.error("Enter a name (e.g. bob.eth or alice.sui) or paste meta-address (hex)");
       return;
     }
 
@@ -73,7 +74,8 @@ export default function SendPayment() {
       return;
     }
 
-    // Ensure .eth extension
+    const isSuiName = name.endsWith(".sui");
+    // Ensure extension: default to .eth if no dot
     const normalized = name.includes(".") ? name : `${name}.eth`;
 
     setIsResolving(true);
@@ -82,29 +84,52 @@ export default function SendPayment() {
     setIpfsHash(null);
     setIpfsUrl(null);
 
+    // Validate name format
     try {
-      validateEnsName(normalized);
+      if (isSuiName) {
+        validateSuinsName(normalized);
+      } else {
+        validateEnsName(normalized);
+      }
     } catch (validationError) {
-      const msg = validationError instanceof EnsResolverError
+      const msg = validationError instanceof EnsResolverError || validationError instanceof SuinsResolverError
         ? validationError.message
-        : "Invalid ENS name format";
+        : "Invalid name format";
       setResolveError(msg);
       toast.error(msg);
       setIsResolving(false);
       return;
     }
 
+    // Resolve via backend
     try {
-      const res = await api.resolveEns(normalized);
-      setResolvedENS(res);
-      const cid = res.ipfs_cid ?? null;
-      setIpfsHash(cid);
-      setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
-      setResolveError(null);
-      setStep("resolved");
-      toast.success(`Resolved ${res.ens_name}`);
+      if (isSuiName) {
+        const res = await api.resolveSuins(normalized);
+        setResolvedENS({
+          ens_name: res.suins_name,
+          meta_address: res.meta_address,
+          spending_pk: res.spending_pk,
+          viewing_pk: res.viewing_pk,
+          ipfs_cid: res.ipfs_cid,
+        });
+        const cid = res.ipfs_cid ?? null;
+        setIpfsHash(cid);
+        setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
+        setResolveError(null);
+        setStep("resolved");
+        toast.success(`Resolved ${res.suins_name}`);
+      } else {
+        const res = await api.resolveEns(normalized);
+        setResolvedENS(res);
+        const cid = res.ipfs_cid ?? null;
+        setIpfsHash(cid);
+        setIpfsUrl(cid ? api.ipfsUrl(cid) : null);
+        setResolveError(null);
+        setStep("resolved");
+        toast.success(`Resolved ${res.ens_name}`);
+      }
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to resolve ENS";
+      const message = err instanceof ApiError ? err.message : `Failed to resolve ${isSuiName ? "SuiNS" : "ENS"}`;
       setResolveError(message);
       toast.error(message);
     } finally {
@@ -183,7 +208,7 @@ export default function SendPayment() {
             </HeadingScramble>
             <p className="text-muted-foreground text-sm flex items-center justify-center gap-2">
               <Zap className="h-4 w-4 text-primary/80" />
-              ENS · stealth · private
+              ENS · SuiNS · stealth · private
             </p>
           </motion.div>
 
@@ -212,11 +237,11 @@ export default function SendPayment() {
                           <User className="h-4 w-4 shrink-0" />
                           <TooltipLabel
                             label="Recipient"
-                            tooltip="ENS (e.g. bob.eth) or paste meta-address hex from Setup."
+                            tooltip="ENS (e.g. bob.eth), SuiNS (e.g. alice.sui), or paste meta-address hex from Setup."
                           />
                         </div>
                         <SearchBar
-                          placeholder="bob.eth or meta-address"
+                          placeholder="bob.eth, alice.sui, or meta-address"
                           onSearch={(val) => {
                             setEnsName(val);
                             handleResolve(val);
