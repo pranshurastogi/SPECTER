@@ -195,11 +195,12 @@ SPECTER/
 │   ├── specter-registry/     # Announcement storage
 │   ├── specter-scanner/      # Batch scanning
 │   ├── specter-ens/          # ENS resolution
-│   └── specter-suins/        # SuiNS resolution
+│   ├── specter-suins/        # SuiNS resolution
+│   └── specter-yellow/       # Yellow Network state channel integration
 ├── SPECTER-web/              # React frontend
 │   └── src/
-│       ├── pages/            # Setup, Send, Scan
-│       ├── lib/              # API client, wallet utils, tx verification
+│       ├── pages/            # Setup, Send, Scan, Yellow, Use Cases
+│       ├── lib/              # API client, wallet utils, tx verification, Yellow services
 │       └── components/       # UI components
 └── scripts/                  # Build, test, E2E scripts
 ```
