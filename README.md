@@ -60,70 +60,19 @@ Existing solutions also only cover EVM chains. SPECTER supports Ethereum and Sui
 
 Recipient generates ML-KEM-768 spending + viewing keypairs, uploads the meta-address to IPFS, and links it to their ENS or SuiNS name.
 
-```mermaid
-sequenceDiagram
-    participant R as Recipient
-    participant API as SPECTER API
-    participant IPFS as IPFS (Pinata)
-    participant NS as ENS / SuiNS
-
-    R->>API: Generate keypairs
-    API-->>R: spending_pk, viewing_pk, spending_sk, viewing_sk
-
-    Note over R: meta_address = version || spending_pk || viewing_pk
-
-    R->>API: Upload meta-address
-    API->>IPFS: Pin meta-address bytes
-    IPFS-->>API: CID
-    API-->>R: ipfs://CID
-
-    R->>NS: Set text record / content hash to ipfs://CID
-```
+![Setup Flow](assets/setup.png)
 
 ### 2. Send
 
 Sender resolves the recipient's name, a stealth address is derived from the meta-address, and the sender transfers funds to that address. An announcement is published so the recipient can discover the payment.
 
-```mermaid
-sequenceDiagram
-    participant S as Sender
-    participant API as SPECTER API
-    participant NS as ENS / SuiNS
-    participant IPFS as IPFS
-    participant Chain as Ethereum / Sui
-
-    S->>API: Resolve alice.eth
-    API->>NS: Lookup text record
-    NS-->>API: ipfs://CID
-    API->>IPFS: Fetch meta-address
-    IPFS-->>API: meta-address bytes
-    API-->>S: meta-address, spending_pk, viewing_pk
-
-    S->>API: Create stealth payment
-    Note over API: Encapsulate to viewing_pk<br/>Derive shared secret<br/>Compute view tag<br/>Derive stealth address
-    API-->>S: stealth_address, ephemeral_key, view_tag
-
-    S->>Chain: Send funds to stealth_address
-    S->>API: Publish announcement (ephemeral_key, view_tag, tx_hash)
-```
+![Send Flow](assets/send.png)
 
 ### 3. Receive
 
 Recipient scans announcements using their viewing key. View tags filter out ~99.6% of irrelevant entries. Matching payments yield the stealth private key, which can be imported into any wallet to spend.
 
-```mermaid
-sequenceDiagram
-    participant R as Recipient
-    participant API as SPECTER API
-    participant Chain as Ethereum / Sui
-
-    R->>API: Scan (viewing_sk, spending_pk, spending_sk)
-    Note over API: For each announcement:<br/>1. Check view tag (skip ~99.6%)<br/>2. Decapsulate with viewing_sk<br/>3. Derive stealth private key
-
-    API-->>R: discoveries (stealth_address, private_key)
-
-    R->>Chain: Import private key and spend
-```
+![Receive Flow](assets/receive.png)
 
 ---
 
