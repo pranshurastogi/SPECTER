@@ -1,149 +1,67 @@
-# SPECTER
+# SPECTER Web
 
-**Stealth Post-quantum ENS Cryptographic Transaction Engine for Routing**
+Frontend for the SPECTER stealth address protocol. Built with React, Vite, and TypeScript.
 
-Private ENS payments using post-quantum cryptography. Send funds to anyone with an ENS name while keeping the recipient completely hidden.
+See the [root README](../README.md) for full project documentation.
 
-## 🛡️ Features
-
-### Quantum-Safe Cryptography
-- **ML-KEM-768**: Uses NIST-standardized post-quantum cryptography
-- **Future-Proof**: Designed to resist attacks from quantum computers
-- **SPECTER Protocol**: Advanced stealth address generation for maximum privacy
-
-### Privacy & Anonymity
-- **Stealth Addresses**: Each payment goes to a unique, unlinkable address
-- **ENS Integration**: Human-readable payments with complete privacy
-- **On-chain Privacy**: Recipients remain hidden from blockchain observers
-
-### Performance
-- **99.6% Scan Efficiency**: View tag optimization enables lightning-fast scanning
-- **1.5s Scan Time**: Quickly find your payments among 80k+ announcements
-- **Optimized Filtering**: Efficient blockchain scanning with minimal computation
-
-### User Experience
-- **Intuitive Interface**: Beautiful, modern UI with smooth animations
-- **Wallet Integration**: Connect with MetaMask, WalletConnect, and more
-- **Key Management**: Secure key generation and encryption
-- **Payment Scanning**: Automated detection of incoming stealth payments
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js 18+ and npm/yarn/pnpm
-- A Web3 wallet (MetaMask, WalletConnect, etc.)
-
-### Installation
+## Setup
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd quantum-shield
-
-# Install dependencies
-npm install
-
-# Set up environment variables
 cp .env.example .env
-# Edit .env:
-# - VITE_API_BASE_URL: SPECTER backend URL (default http://localhost:3001)
-# - Optional: VITE_WALLET_CONNECT_PROJECT_ID for WalletConnect
-
-# Start the SPECTER backend (in another terminal, from repo root/specter)
-cd ../specter && cargo run --bin specter -- serve --port 3001
-
-# Start development server (from SPECTER-web)
+npm install
 npm run dev
 ```
 
-The application will be available at `http://localhost:8080`. The header shows a green/red dot for API status (backend must be running for Generate Keys, Send, and Scan).
+Requires the Rust backend running at `http://localhost:3001` (default). Set `VITE_API_BASE_URL` in `.env` to override.
 
-**Note**: For WalletConnect support, you'll need to:
-1. Create a free account at [WalletConnect Cloud](https://cloud.walletconnect.com)
-2. Create a new project named "SPECTER" and copy your Project ID
-3. In your WalletConnect Cloud project settings, set:
-   - **Name**: SPECTER
-   - **Description**: Stealth Post-quantum ENS Cryptographic Transaction Engine for Routing
-   - **Homepage URL**: Your app URL
-   - **Icon**: Upload SPECTER logo/favicon
-4. Add the Project ID to your `.env` file as `VITE_WALLET_CONNECT_PROJECT_ID`
+## Pages
 
-### Build for Production
+- **Setup** - Generate ML-KEM-768 keypairs, upload meta-address to IPFS, attach to ENS or SuiNS
+- **Send** - Resolve a recipient name, generate stealth address, send from wallet or manually, verify and publish
+- **Scan** - Scan announcements with viewing key, discover payments, export stealth private keys
+- **Yellow** - Private trading via Yellow Network state channels (create channels, fund, send payments, settle to stealth addresses)
+- **Use Cases** - Overview of SPECTER use cases and Yellow Network integration
 
-```bash
-npm run build
-```
+## Tech
 
-## 📖 How It Works
+- **React + Vite + TypeScript**
+- **TailwindCSS** + **Radix UI** for styling
+- **Dynamic Labs** for EVM wallet connection
+- **@mysten/dapp-kit** for Sui wallet connection
+- **viem** for Ethereum transactions
+- **Framer Motion** + **GSAP** for animations
+- **Nitrolite SDK** for Yellow Network state channel operations
 
-1. **Register**: Register your ENS name with SPECTER meta-address
-2. **Send**: Alice sends to bob.eth privately
-3. **On-chain**: Payment goes to a random stealth address
-4. **Claim**: Bob scans and claims the funds
-
-## 🏗️ Tech Stack
-
-- **Frontend**: React 18 + TypeScript
-- **Styling**: Tailwind CSS + shadcn/ui
-- **Animations**: Framer Motion
-- **Routing**: React Router
-- **State Management**: React Query
-- **Blockchain**: Viem + Wagmi (for wallet connections)
-- **Wallet Support**: MetaMask, WalletConnect
-- **Build Tool**: Vite
-
-## 📁 Project Structure
+## Project structure
 
 ```
 src/
+├── pages/
+│   ├── GenerateKeys.tsx    # Setup: keypair generation, IPFS upload, ENS/SuiNS attach
+│   ├── SendPayment.tsx     # Send: resolve name, stealth address, wallet/manual send
+│   ├── ScanPayments.tsx    # Scan: discover payments, export stealth keys
+│   ├── YellowPage.tsx      # Yellow Network: channels, funding, payments, settlement
+│   └── UseCasesPage.tsx    # Use cases overview
+├── lib/
+│   ├── api.ts              # Backend API client
+│   ├── verifyTx.ts         # On-chain tx verification (ETH + Sui)
+│   ├── ensSetText.ts       # ENS text record signing
+│   ├── suinsSetContent.ts  # SuiNS content hash signing
+│   ├── viemClient.ts       # Shared viem public client
+│   ├── chainConfig.ts      # ETH chain configuration
+│   ├── yellowService.ts    # Yellow Network WebSocket + session management
+│   ├── nitroliteYellow.ts  # Nitrolite SDK: on-chain channel creation + auth
+│   └── yellowBalances.ts   # Token balance fetching for Yellow channels
 ├── components/
-│   ├── landing/      # Landing page sections
-│   ├── layout/       # Layout components (Header, etc.)
-│   └── ui/           # shadcn/ui components
-├── pages/            # Main application pages
-│   ├── Index.tsx     # Landing page
-│   ├── GenerateKeys.tsx
-│   ├── SendPayment.tsx
-│   └── ScanPayments.tsx
-├── hooks/            # Custom React hooks
-├── lib/              # Utility functions
-└── main.tsx          # Application entry point
+│   ├── ui/                 # Radix-based UI primitives
+│   └── layout/             # Header, Footer
+└── main.tsx
 ```
 
-## 🔐 Security
+## Scripts
 
-- Private keys are encrypted with user-provided passwords
-- Keys are generated client-side and never leave your device
-- Post-quantum cryptography ensures long-term security
-- Stealth addresses prevent on-chain linkability
-
-## 🔌 Wallet Connection
-
-SPECTER supports connecting with popular Web3 wallets:
-
-- **MetaMask**: Browser extension wallet
-- **WalletConnect**: Connect with mobile wallets via QR code
-
-Click the "Connect Wallet" button in the header to get started. Once connected, your wallet address will be displayed in a shortened format.
-
-## 🎯 Use Cases
-
-- **Private Payments**: Send funds without revealing recipient identity
-- **ENS Privacy**: Use ENS names while maintaining complete anonymity
-- **Future-Proof**: Quantum-resistant cryptography for long-term security
-- **Efficient Scanning**: Quickly find your payments with optimized algorithms
-
-## 📝 License
-
-This project is open source and available under the MIT License.
-
-## 👤 Author
-
-**Pranshu Rastogi**
-
-Created for ETHGlobal HackMoney 2026
-
----
-
-**Note**: This is a frontend prototype. Cryptographic implementations and blockchain integrations are currently mocked for demonstration purposes.
+```bash
+npm run dev       # Development server
+npm run build     # Production build
+npm run test      # Run tests (vitest)
+```
