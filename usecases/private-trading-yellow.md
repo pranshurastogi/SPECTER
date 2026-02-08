@@ -13,44 +13,9 @@ SPECTER + Yellow:  Alice ── channel ──> 0xStealth      (nobody knows 0xS
 
 ## How it works
 
-```mermaid
-sequenceDiagram
-    participant A as Alice (Sender)
-    participant API as SPECTER API
-    participant NS as ENS / SuiNS
-    participant Y as Yellow ClearNode
-    participant L1 as Sepolia L1
+![SPECTER x Yellow Flow](../assets/yellow.png)
 
-    Note over A: 1. Channel Creation
-    A->>API: Resolve bob.eth
-    API->>NS: Lookup meta-address
-    NS-->>API: ipfs://CID
-    API-->>A: meta-address
-
-    A->>API: Create stealth address
-    API-->>A: stealth_address, ephemeral_key, view_tag
-
-    A->>Y: Auth + CreateChannel request
-    Y-->>A: Channel params
-    A->>L1: depositAndCreateChannel (Nitrolite SDK)
-    L1-->>A: channel_id, tx_hash
-
-    A->>API: Publish announcement (ephemeral_key, view_tag, channel_id)
-
-    Note over A: 2. Discovery (Bob)
-    participant B as Bob (Recipient)
-    B->>API: Scan announcements (viewing_sk, spending_pk, spending_sk)
-    API-->>B: Discovered channel + stealth private key
-    Note over B: Bob imports channel with derived key
-
-    Note over A,B: 3. Trading (off-chain, instant, gasless)
-    A->>B: Signed state updates via Yellow
-
-    Note over A,B: 4. Settlement
-    A->>Y: Cooperative close (funds_destination = stealth_address)
-    Y->>L1: Submit settlement to adjudicator
-    L1-->>B: Funds arrive at stealth address
-```
+<!-- Source: ../assets/yellow-flow.excalidraw — open in Excalidraw to edit, export as PNG -->
 
 ---
 
