@@ -23,6 +23,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/registry/announcements", get(handlers::list_announcements))
         .route("/api/v1/registry/announcements", post(handlers::publish_announcement))
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
+        // Yellow Network endpoints
+        .route("/api/v1/yellow/channel/create", post(handlers::yellow_create_channel))
+        .route("/api/v1/yellow/channel/discover", post(handlers::yellow_discover_channels))
+        .route("/api/v1/yellow/channel/fund", post(handlers::yellow_fund_channel))
+        .route("/api/v1/yellow/channel/close", post(handlers::yellow_close_channel))
+        .route("/api/v1/yellow/channel/:id/status", get(handlers::yellow_channel_status))
+        .route("/api/v1/yellow/transfer", post(handlers::yellow_transfer))
+        .route("/api/v1/yellow/config", get(handlers::yellow_config))
         .with_state(state)
 }
 

@@ -341,7 +341,8 @@ export default function ScanPayments() {
                                 </span>
                                 {d.amount !== "" && (
                                   <span className="font-medium text-foreground shrink-0">
-                                    {formatCryptoAmount(d.amount)} {d.chain === "sui" ? "SUI" : "ETH"}
+                                    {formatCryptoAmount(d.amount)}{" "}
+                                    {d.chain === "sui" ? "SUI" : d.channel_id ? "USDC" : "ETH"}
                                   </span>
                                 )}
                               </div>
@@ -460,7 +461,13 @@ export default function ScanPayments() {
                       <span className="text-xs text-muted-foreground">Amount</span>
                       <p className="font-medium mt-1">
                         {selectedPayment.amount
-                          ? `${formatCryptoAmount(selectedPayment.amount)} ${selectedPayment.chain === "sui" ? "SUI" : "ETH"}`
+                          ? `${formatCryptoAmount(selectedPayment.amount)} ${
+                              selectedPayment.chain === "sui"
+                                ? "SUI"
+                                : selectedPayment.channel_id
+                                  ? "USDC"
+                                  : "ETH"
+                            }`
                           : "—"}
                       </p>
                     </div>
@@ -470,6 +477,14 @@ export default function ScanPayments() {
                       <span className="text-xs text-muted-foreground">Timestamp</span>
                       <p className="font-medium mt-1">{formatTimestamp(selectedPayment.timestamp)}</p>
                     </div>
+
+                    {selectedPayment.channel_id && (
+                      <div className="p-3 rounded-lg bg-muted/50 border border-border">
+                        <p className="text-xs text-muted-foreground">
+                          Yellow channel (USDC). Funds will appear at this address after the sender closes the channel and it settles on Sepolia.
+                        </p>
+                      </div>
+                    )}
 
                     {/* View private key */}
                     <div className="p-3 rounded-lg bg-warning/10 border border-warning/20">

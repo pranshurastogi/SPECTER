@@ -1,6 +1,6 @@
 # Build stage
-# Rust 1.85+ required for dependencies using edition2024 (e.g. ruint)
-FROM rust:1.85-bookworm AS builder
+# Rust 1.88+ required for time crate (0.3.47); 1.85+ for edition2024 (e.g. ruint)
+FROM rust:1.88-bookworm AS builder
 WORKDIR /app
 
 # Copy workspace manifests and lockfile
@@ -14,6 +14,7 @@ COPY specter-registry ./specter-registry
 COPY specter-scanner ./specter-scanner
 COPY specter-ipfs ./specter-ipfs
 COPY specter-ens ./specter-ens
+COPY specter-yellow ./specter-yellow
 COPY specter-suins ./specter-suins
 COPY specter-api ./specter-api
 COPY specter-cli ./specter-cli

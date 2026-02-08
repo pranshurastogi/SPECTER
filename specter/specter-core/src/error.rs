@@ -210,6 +210,14 @@ pub enum SpecterError {
     /// Feature not yet implemented.
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // YELLOW NETWORK ERRORS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Yellow Network error.
+    #[error("Yellow Network error: {0}")]
+    YellowError(String),
 }
 
 impl SpecterError {
