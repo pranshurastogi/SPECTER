@@ -81,7 +81,7 @@ Under the hood: for each announcement, decapsulate with viewing_sk -> shared sec
               (resolve names)     (content hash)       (upload meta)
                     │
                     v
-            Yellow Network (wss://clearnet-sandbox.yellow.com/ws)
+            Yellow Network (wss://clearnet.yellow.com/ws)
             (private state channels on Sepolia)
 ```
 
@@ -125,7 +125,7 @@ Under the hood: for each announcement, decapsulate with viewing_sk -> shared sec
 
 - **ENS resolve**: Backend uses `ETH_RPC_URL` (default: PublicNode). No extra config for resolve-only.
 - **Upload to IPFS**: Set `PINATA_JWT`, `PINATA_GATEWAY_URL`, `PINATA_GATEWAY_TOKEN` in `specter/.env`.
-- **Yellow Network**: Set `YELLOW_WS_URL`, `YELLOW_CHAIN_ID`, etc. Defaults to Sepolia sandbox. See [Yellow.md](Yellow.md).
+- **Yellow Network**: Set `YELLOW_WS_URL`, `YELLOW_CHAIN_ID`, etc. Defaults to production `wss://clearnet.yellow.com/ws`. See [Yellow.md](Yellow.md).
 
 ### E2E check
 

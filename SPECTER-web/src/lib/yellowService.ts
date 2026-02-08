@@ -1,9 +1,12 @@
 /**
  * Yellow Network (ClearNode) integration for SPECTER.
- * Uses Sepolia sandbox: wss://clearnet-sandbox.yellow.com/ws
+ * Default: production wss://clearnet.yellow.com/ws (override with backend config or setYellowWsUrl).
  * Based on Yellow Quick Start: createAppSessionMessage, parseRPCResponse, sendPayment.
  */
 
+/** Production Yellow WebSocket URL (default for both backend and frontend). */
+const YELLOW_WS_PRODUCTION = "wss://clearnet.yellow.com/ws";
+/** Sandbox URL (use only when testing). */
 const YELLOW_WS_SANDBOX = "wss://clearnet-sandbox.yellow.com/ws";
 
 export type MessageSigner = (message: string) => Promise<string>;
@@ -105,7 +108,7 @@ export class YellowClient {
   private resolveReady: (() => void) | null = null;
   private readyPromise: Promise<void>;
 
-  constructor(wsUrl: string = YELLOW_WS_SANDBOX) {
+  constructor(wsUrl: string = YELLOW_WS_PRODUCTION) {
     this.wsUrl = wsUrl;
     this.readyPromise = new Promise((resolve) => {
       this.resolveReady = resolve;
@@ -245,19 +248,33 @@ export class YellowClient {
 
   /**
    * Request cooperative close of the session (Yellow Network).
-   * Sends a close message to ClearNode; settlement may complete on-chain via adjudicator.
+   * Sends close in Yellow's expected format (close_channel with funds_destination) so production
+   * ClearNode can perform on-chain settlement. fundsDestination should be the stealth address
+   * so settled USDC goes to the recipient.
    */
-  async closeSession(params: { messageSigner: MessageSigner; senderAddress: string; channelId?: string }): Promise<void> {
+  async closeSession(params: {
+    messageSigner: MessageSigner;
+    senderAddress: string;
+    channelId?: string;
+    /** Stealth address where settled funds should go (required for Yellow to settle correctly). */
+    fundsDestination?: string;
+  }): Promise<void> {
     await this.ensureConnected();
-    const { messageSigner, senderAddress, channelId } = params;
-    const closeData = {
-      type: "close",
-      channelId: channelId ?? "",
-      timestamp: Date.now(),
+    const { messageSigner, senderAddress, channelId = "", fundsDestination } = params;
+
+    // Yellow production expects "req": [ id, "close_channel", { channel_id, funds_destination } ]
+    const closeParams = {
+      channel_id: channelId,
+      funds_destination: fundsDestination ?? senderAddress,
     };
-    const signature = await messageSigner(JSON.stringify(closeData));
+    const reqPayload = {
+      req: [crypto.randomUUID(), "close_channel", closeParams],
+    };
+    const toSign = JSON.stringify(closeParams);
+    const signature = await messageSigner(toSign);
+
     const payload = JSON.stringify({
-      ...closeData,
+      ...reqPayload,
       signature,
       sender: senderAddress,
     });
@@ -280,12 +297,35 @@ export class YellowClient {
   }
 }
 
-/** Default Yellow client instance (Sepolia sandbox). */
+/** Preferred WebSocket URL from API config; when set, overrides sandbox default. */
+let preferredWsUrl: string | null = null;
+/** Single Yellow client instance; recreated when URL changes. */
 let defaultClient: YellowClient | null = null;
+/** URL used to create current defaultClient (so we know when to recreate). */
+let lastUsedWsUrl: string = YELLOW_WS_PRODUCTION;
+
+/**
+ * Use the WebSocket URL from backend config (e.g. prod). Call this when Yellow config is loaded
+ * so that create/close/fund use the same WSS as the backend (YELLOW_WS_URL).
+ */
+export function setYellowWsUrl(url: string | null): void {
+  if (url === preferredWsUrl) return;
+  preferredWsUrl = url;
+  if (defaultClient) {
+    defaultClient.disconnect();
+    defaultClient = null;
+  }
+}
 
 export function getYellowClient(wsUrl?: string): YellowClient {
+  const url = wsUrl ?? preferredWsUrl ?? YELLOW_WS_PRODUCTION;
+  if (defaultClient && lastUsedWsUrl !== url) {
+    defaultClient.disconnect();
+    defaultClient = null;
+  }
   if (!defaultClient) {
-    defaultClient = new YellowClient(wsUrl);
+    defaultClient = new YellowClient(url);
+    lastUsedWsUrl = url;
   }
   return defaultClient;
 }

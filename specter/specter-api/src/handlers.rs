@@ -455,12 +455,22 @@ pub async fn yellow_discover_channels(
     let channels: Vec<YellowDiscoveredChannelDto> = discoveries
         .into_iter()
         .filter(|d| d.announcement.channel_id.is_some())
-        .map(|d| YellowDiscoveredChannelDto {
-            channel_id: d.announcement.channel_id.map(hex::encode).unwrap_or_default(),
-            stealth_address: d.keys.address.to_checksum_string(),
-            eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
-            status: "open".into(),
-            discovered_at: d.announcement.timestamp,
+        .map(|d| {
+            let amount = d.announcement.amount.clone().unwrap_or_else(|| "0".into());
+            let token = if d.announcement.chain.as_deref() == Some("ethereum") {
+                "USDC".into()
+            } else {
+                "USDC".into()
+            };
+            YellowDiscoveredChannelDto {
+                channel_id: d.announcement.channel_id.map(hex::encode).unwrap_or_default(),
+                stealth_address: d.keys.address.to_checksum_string(),
+                eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
+                status: "open".into(),
+                discovered_at: d.announcement.timestamp,
+                amount,
+                token,
+            }
         })
         .collect();
 
@@ -487,16 +497,39 @@ pub async fn yellow_fund_channel(
 
 /// POST /api/v1/yellow/channel/close
 ///
-/// Initiates cooperative close and settlement of a Yellow channel.
+/// Records the channel close and returns final balances. Does NOT submit an L1 transaction:
+/// the frontend sends the close to Yellow Network (closeSession); real on-chain settlement
+/// is performed by Yellow's ClearNode/adjudicator when they process the close. In sandbox
+/// mode, Yellow may not perform real Sepolia settlement, so USDC balance may not change.
 pub async fn yellow_close_channel(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<YellowCloseChannelRequest>,
 ) -> Result<Json<YellowCloseChannelResponse>> {
     info!(channel_id = %req.channel_id, "Closing Yellow channel");
 
+    // Look up the channel announcement to get the funded amount
+    let announcements = state.registry.all_announcements();
+    let channel_id_bytes = hex::decode(strip_hex_prefix(&req.channel_id)).unwrap_or_default();
+    let mut channel_id_arr = [0u8; 32];
+    if channel_id_bytes.len() == 32 {
+        channel_id_arr.copy_from_slice(&channel_id_bytes);
+    }
+    let matching = announcements.iter().find(|a| a.channel_id == Some(channel_id_arr));
+    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+
+    // Placeholder tx_hash for UI reference; no L1 tx is submitted by this backend.
+    let placeholder_tx = format!("0x{}", hex::encode(channel_id_bytes.get(..16).unwrap_or(b"pending_close_tx")));
+
     Ok(Json(YellowCloseChannelResponse {
-        tx_hash: format!("0x{}", hex::encode(req.channel_id.as_bytes().get(..16).unwrap_or(b"pending_close_tx"))),
-        final_balances: vec![],
+        tx_hash: placeholder_tx,
+        tx_hash_is_placeholder: true,
+        final_balances: vec![
+            YellowAllocationDto {
+                destination: "stealth_address".into(),
+                token: "USDC".into(),
+                amount,
+            },
+        ],
     }))
 }
 
@@ -523,11 +556,22 @@ pub async fn yellow_channel_status(
     });
 
     let created_at = matching.map(|a| a.timestamp).unwrap_or(0);
+    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+
+    let balances = if matching.is_some() {
+        vec![YellowAllocationDto {
+            destination: "stealth".into(),
+            token: "USDC".into(),
+            amount,
+        }]
+    } else {
+        vec![]
+    };
 
     Ok(Json(YellowChannelStatusResponse {
         channel_id: channel_id.clone(),
         status: if matching.is_some() { "open" } else { "unknown" }.into(),
-        balances: vec![],
+        balances,
         participants: vec![],
         created_at,
         version: 1,

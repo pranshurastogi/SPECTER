@@ -374,6 +374,10 @@ pub struct YellowDiscoveredChannelDto {
     pub status: String,
     /// Discovery timestamp
     pub discovered_at: u64,
+    /// Funded amount (from announcement)
+    pub amount: String,
+    /// Token symbol (e.g. "USDC")
+    pub token: String,
 }
 
 /// Response for Yellow channel discovery.
@@ -411,8 +415,11 @@ pub struct YellowCloseChannelRequest {
 /// Response for Yellow channel closure.
 #[derive(Debug, Serialize)]
 pub struct YellowCloseChannelResponse {
-    /// Transaction hash
+    /// Transaction hash (placeholder from backend when no L1 tx is submitted; real tx comes from Yellow Network when they settle)
     pub tx_hash: String,
+    /// When true, tx_hash is not a real Sepolia tx; real settlement depends on Yellow Network processing the close.
+    #[serde(default)]
+    pub tx_hash_is_placeholder: bool,
     /// Final balances
     pub final_balances: Vec<YellowAllocationDto>,
 }

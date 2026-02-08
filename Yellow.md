@@ -130,7 +130,7 @@ SPECTER + Yellow:       Alice ──channel──> 0xStealth (nobody knows 0xSte
 
 | Parameter | Value |
 |-----------|-------|
-| WebSocket | `wss://clearnet-sandbox.yellow.com/ws` |
+| WebSocket (prod default) | `wss://clearnet.yellow.com/ws` (sandbox: `wss://clearnet-sandbox.yellow.com/ws`) |
 | Custody Contract | `0x019B65A265EB3363822f2752141b3dF16131b262` |
 | Adjudicator | `0x7c7ccbc98469190849BCC6c926307794fDfB11F2` |
 | Chain | Sepolia (`11155111`) |
@@ -207,7 +207,7 @@ curl http://localhost:3001/api/v1/yellow/config
 ```
 ```json
 {
-  "ws_url": "wss://clearnet-sandbox.yellow.com/ws",
+  "ws_url": "wss://clearnet.yellow.com/ws",
   "custody_address": "0x019B65A265EB3363822f2752141b3dF16131b262",
   "adjudicator_address": "0x7c7ccbc98469190849BCC6c926307794fDfB11F2",
   "chain_id": 11155111,
@@ -298,7 +298,9 @@ cargo test -p specter-api
 Add these to `specter/.env` if you want to override defaults:
 
 ```bash
-YELLOW_WS_URL=wss://clearnet-sandbox.yellow.com/ws
+# Optional: default is production; for testing use sandbox:
+# YELLOW_WS_URL=wss://clearnet-sandbox.yellow.com/ws
+YELLOW_WS_URL=wss://clearnet.yellow.com/ws
 YELLOW_CUSTODY_ADDRESS=0x019B65A265EB3363822f2752141b3dF16131b262
 YELLOW_ADJUDICATOR_ADDRESS=0x7c7ccbc98469190849BCC6c926307794fDfB11F2
 YELLOW_CHAIN_ID=11155111
@@ -373,9 +375,39 @@ Step 5:  (Optional) Sweep to main wallet
 
 ---
 
+## Why you don't see on-chain transactions
+
+Even with production WebSocket (`wss://clearnet.yellow.com/ws`), **no Sepolia tx appears** because the current integration does not create or settle real on-chain channels:
+
+1. **No on-chain channel creation**  
+   Yellow’s protocol requires the **Creator** to call the **custody contract’s `create()`** on Sepolia to lock USDC and open a channel. In this app we only:
+   - Create a SPECTER announcement with a **random** `channel_id`
+   - Send `session/create` to the ClearNode (app session)
+
+   We **never** call the custody contract, so no channel is opened on-chain and no USDC is locked.
+
+2. **Funding is off-chain only**  
+   “Fund channel” sends allocations to the ClearNode via `session/create`. The backend `yellow_fund_channel` is a stub and does not move USDC on-chain. So there is no on-chain balance to settle.
+
+3. **Close uses our ID, not Yellow’s**  
+   We send `close_channel` with **our** random `channel_id`. The ClearNode’s session is identified by **their** `sessionId` (from `session_created`). So the close request may not match any session they track, and we never submit a settlement tx to the adjudicator/custody contract ourselves.
+
+4. **Backend never submits L1 tx**  
+   The API’s `yellow_close_channel` only looks up the announcement and returns a placeholder `tx_hash`; it does not call the custody or adjudicator contract.
+
+**To get real on-chain settlement** you would need to:
+
+- Use Yellow’s official SDK (e.g. Nitrolite / Nitro RPC) to **create a channel on-chain** (lock USDC via the custody contract) and to **close** (mutual close or challenge/response so the contract settles).
+- Or implement custody-contract calls in this backend: create channel (lock funds), then on close submit the agreed state so the contract moves USDC to the stealth address.
+
+Until then, the flow is “SPECTER announcement + off-chain session” only; no on-chain channel is created or closed, so no on-chain tx appears.
+
+---
+
 ## Limitations (current)
 
-- **Sandbox only**: Yellow WebSocket connects to `clearnet-sandbox.yellow.com`
+- **No on-chain channel**: Channel creation and funding do not call the custody contract; no USDC is locked on Sepolia. Closing does not submit a settlement tx. See [Why you don't see on-chain transactions](#why-you-dont-see-on-chain-transactions) above.
+- **Default: production**: Yellow WebSocket defaults to `wss://clearnet.yellow.com/ws`. Set `YELLOW_WS_URL=wss://clearnet-sandbox.yellow.com/ws` for sandbox testing.
 - **In-memory registry**: Announcements are lost on backend restart
 - **Simplified auth**: EIP-712 signing is placeholder (not full production auth)
 - **No persistent channels**: Channel state is client-side only

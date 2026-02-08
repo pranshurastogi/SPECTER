@@ -134,7 +134,7 @@ impl AppState {
         // Yellow Network config
         let yellow_config = YellowConfig {
             ws_url: std::env::var("YELLOW_WS_URL")
-                .unwrap_or_else(|_| "wss://clearnet-sandbox.yellow.com/ws".into()),
+                .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
             rpc_url: std::env::var("ETH_RPC_URL_SEPOLIA")
                 .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
             chain_id: std::env::var("YELLOW_CHAIN_ID")

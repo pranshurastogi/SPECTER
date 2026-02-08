@@ -13,8 +13,6 @@ import {
   Search,
   X,
   ExternalLink,
-  Copy,
-  Zap,
   Shield,
   Send,
   DollarSign,
@@ -25,7 +23,28 @@ import {
   AlertCircle,
   Upload,
   Info,
+  Clock,
+  ArrowDownRight,
+  ArrowUpRight,
+  Hash,
+  Activity,
+  Wallet,
+  Network,
+  Share2,
+  PlusCircle,
+  Layers,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import {
+  DataReadout,
+  HoloButton,
+  ProgressBar,
+  DataViz,
+  GlowingOrb,
+  ScrollingRow,
+  type HoloCardTypeInfo,
+} from "@/components/ui/scrolling-holographic-card-feed";
 import { toast } from "@/components/ui/sonner";
 import { CopyButton } from "@/components/ui/copy-button";
 import { HeadingScramble } from "@/components/ui/heading-scramble";
@@ -36,16 +55,16 @@ import {
   type YellowCreateChannelResponse,
   type YellowDiscoveredChannel,
   type YellowConfigResponse,
-  type YellowChannelStatusResponse,
   type ResolveEnsResponse,
 } from "@/lib/api";
 import { formatAddress } from "@/lib/utils";
 import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "react-router-dom";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
 import { chain } from "@/lib/chainConfig";
-import { getYellowClient } from "@/lib/yellowService";
+import { getYellowClient, setYellowWsUrl } from "@/lib/yellowService";
 
 const CARD_PIXEL_COLORS = ["#eab30818", "#fbbf2414", "#f59e0b12", "#fcd34d10"];
 
@@ -66,7 +85,59 @@ function isRealTxHash(h: string): boolean {
   return /^0x[0-9a-fA-F]{64}$/.test(h);
 }
 
-type YellowTab = "dashboard" | "create" | "discover";
+/** Resolve token display from address or symbol */
+function tokenLabel(token: string): string {
+  if (token === "USDC" || token.toLowerCase() === "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238") return "USDC";
+  if (token === "ETH" || token === "0x0000000000000000000000000000000000000000") return "ETH";
+  return token.length > 10 ? `${token.slice(0, 6)}...` : token;
+}
+
+type YellowTab = "dashboard" | "create" | "discover" | "activity";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Activity Log types
+// ═══════════════════════════════════════════════════════════════════════════
+
+const YELLOW_ACTIVITY_STORAGE_KEY = "specter_yellow_activity";
+
+type ActivityType = "channel_created" | "channel_funded" | "transfer_sent" | "transfer_received" | "channel_closed" | "channel_discovered";
+
+interface ActivityEvent {
+  id: string;
+  type: ActivityType;
+  timestamp: number;
+  channel_id: string;
+  amount: string;
+  token: string;
+  details: string;
+  tx_hash?: string;
+  session_id?: string;
+  from?: string;
+  to?: string;
+}
+
+function loadActivityFromStorage(): ActivityEvent[] {
+  try {
+    const raw = localStorage.getItem(YELLOW_ACTIVITY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ActivityEvent[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveActivityToStorage(events: ActivityEvent[]): void {
+  try {
+    localStorage.setItem(YELLOW_ACTIVITY_STORAGE_KEY, JSON.stringify(events));
+  } catch {
+    // ignore
+  }
+}
+
+function createActivityId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Channel types for local state
@@ -107,6 +178,142 @@ function saveChannelsToStorage(channels: LocalChannel[]): void {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Activity Log Component
+// ═══════════════════════════════════════════════════════════════════════════
+
+const activityTypeConfig: Record<ActivityType, { label: string; color: string; bgColor: string; icon: typeof Share2 }> = {
+  channel_created: { label: "Channel Created", color: "text-yellow-400", bgColor: "bg-yellow-500/10 border-yellow-500/20", icon: Share2 },
+  channel_funded: { label: "Channel Funded", color: "text-green-400", bgColor: "bg-green-500/10 border-green-500/20", icon: DollarSign },
+  transfer_sent: { label: "Transfer Sent", color: "text-blue-400", bgColor: "bg-blue-500/10 border-blue-500/20", icon: ArrowUpRight },
+  transfer_received: { label: "Transfer Received", color: "text-emerald-400", bgColor: "bg-emerald-500/10 border-emerald-500/20", icon: ArrowDownRight },
+  channel_closed: { label: "Channel Closed", color: "text-red-400", bgColor: "bg-red-500/10 border-red-500/20", icon: X },
+  channel_discovered: { label: "Channel Discovered", color: "text-purple-400", bgColor: "bg-purple-500/10 border-purple-500/20", icon: Search },
+};
+
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  if (diff < 60_000) return "Just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function ActivityLog({ events }: { events: ActivityEvent[] }) {
+  if (events.length === 0) {
+    return (
+      <motion.div
+        variants={fadeIn}
+        initial="hidden"
+        animate="visible"
+        className="text-center py-16 rounded-xl border border-dashed border-border"
+      >
+        <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-30" />
+        <p className="text-muted-foreground mb-1">No activity yet</p>
+        <p className="text-xs text-muted-foreground">
+          Create, fund, or discover channels to see activity here
+        </p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="visible"
+      className="space-y-2"
+    >
+      {events.map((event) => {
+        const cfg = activityTypeConfig[event.type];
+        const Icon = cfg.icon;
+        return (
+          <motion.div
+            key={event.id}
+            variants={fadeIn}
+            className={`relative overflow-hidden rounded-lg border ${cfg.bgColor} p-4 transition-all hover:scale-[1.005]`}
+          >
+            <div className="flex items-start gap-3">
+              {/* Icon */}
+              <div className={`flex items-center justify-center w-9 h-9 rounded-lg ${cfg.bgColor} shrink-0`}>
+                <Icon className={`w-4 h-4 ${cfg.color}`} />
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className={`text-sm font-medium ${cfg.color}`}>
+                    {cfg.label}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground flex items-center gap-1 shrink-0">
+                    <Clock className="w-3 h-3" />
+                    {formatTimestamp(event.timestamp)}
+                  </span>
+                </div>
+
+                <p className="text-xs text-muted-foreground mb-2">
+                  {event.details}
+                </p>
+
+                <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                  {/* Amount */}
+                  {event.amount && event.amount !== "0" && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 font-medium">
+                      <DollarSign className="w-3 h-3 text-green-400" />
+                      {event.amount} {tokenLabel(event.token)}
+                    </span>
+                  )}
+
+                  {/* Channel ID */}
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 font-mono text-muted-foreground">
+                    <Hash className="w-3 h-3" />
+                    {formatAddress(event.channel_id)}
+                  </span>
+
+                  {/* Tx Hash Link */}
+                  {event.tx_hash && isRealTxHash(event.tx_hash) && (
+                    <a
+                      href={`https://sepolia.etherscan.io/tx/${event.tx_hash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 text-yellow-400 hover:text-yellow-300 transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Etherscan
+                    </a>
+                  )}
+
+                  {/* Session ID */}
+                  {event.session_id && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 font-mono text-muted-foreground">
+                      <Radio className="w-3 h-3" />
+                      Session: {event.session_id.slice(0, 8)}...
+                    </span>
+                  )}
+
+                  {/* From/To */}
+                  {event.from && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 font-mono text-muted-foreground">
+                      From: {formatAddress(event.from)}
+                    </span>
+                  )}
+                  {event.to && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background/50 font-mono text-muted-foreground">
+                      To: {formatAddress(event.to)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Create Channel Wizard
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -114,13 +321,15 @@ type CreateStep = 1 | 2 | 3 | 4 | 5;
 
 function CreatePrivateChannel({
   onCreated,
+  onActivity,
 }: {
   onCreated: (ch: LocalChannel) => void;
+  onActivity: (event: ActivityEvent) => void;
 }) {
   const { primaryWallet, setShowAuthFlow } = useDynamicContext();
   const [step, setStep] = useState<CreateStep>(1);
   const [recipient, setRecipient] = useState("");
-  const [token, setToken] = useState("0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238");
+  const [token] = useState("0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238");
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +373,7 @@ function CreatePrivateChannel({
     }
 
     const normalized = name.includes(".") ? name : `${name}.eth`;
-    setResolveStatus("Resolving…");
+    setResolveStatus("Resolving...");
     setResolveError(null);
     setResolvedENS(null);
     setResolvedMetaAddress(null);
@@ -249,16 +458,47 @@ function CreatePrivateChannel({
 
       toast.success("Private channel created and funded on Yellow Network!");
 
-      onCreated({
+      const fundedAmount = amount || "100";
+      const newChannel: LocalChannel = {
         channel_id: result.channel_id,
         stealth_address: result.stealth_address,
         status: "open",
-        token,
-        amount: amount || "100",
+        token: "USDC",
+        amount: fundedAmount,
         recipient: resolvedENS?.ens_name ?? recipient,
         created_at: Date.now() / 1000,
         tx_hash: result.tx_hash,
         session_id: sessionId,
+      };
+      onCreated(newChannel);
+
+      // Log creation activity
+      onActivity({
+        id: createActivityId(),
+        type: "channel_created",
+        timestamp: Date.now(),
+        channel_id: result.channel_id,
+        amount: fundedAmount,
+        token: "USDC",
+        details: `Opened channel to ${resolvedENS?.ens_name ?? formatAddress(result.stealth_address)} with ${fundedAmount} USDC`,
+        tx_hash: result.tx_hash,
+        session_id: sessionId,
+        from: userAddress,
+        to: result.stealth_address,
+      });
+
+      // Log funding activity
+      onActivity({
+        id: createActivityId(),
+        type: "channel_funded",
+        timestamp: Date.now(),
+        channel_id: result.channel_id,
+        amount: fundedAmount,
+        token: "USDC",
+        details: `Funded ${fundedAmount} USDC via Yellow Network session${sessionId ? ` (${sessionId.slice(0, 8)}...)` : ""}`,
+        session_id: sessionId,
+        from: userAddress,
+        to: result.stealth_address,
       });
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : (err instanceof Error ? err.message : "Channel creation failed");
@@ -276,7 +516,7 @@ function CreatePrivateChannel({
       initial="hidden"
       animate="visible"
     >
-      <div className="relative overflow-hidden rounded-xl border border-border bg-card/50 backdrop-blur-sm p-6">
+      <div className="relative overflow-hidden rounded-3xl border border-border bg-card shadow-lg backdrop-blur-sm p-6 sm:p-8">
         <PixelCanvas colors={CARD_PIXEL_COLORS} gap={8} speed={25} />
 
         <div className="relative z-10">
@@ -399,22 +639,18 @@ function CreatePrivateChannel({
                   <Label className="text-sm text-muted-foreground">
                     Token
                   </Label>
-                  <Input
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    placeholder="Token address"
-                    className="bg-background/50 border-border font-mono text-xs"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Default: USDC on Sepolia
-                  </p>
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/50 border border-border">
+                    <DollarSign className="w-4 h-4 text-green-400" />
+                    <span className="text-sm font-medium">USDC</span>
+                    <span className="text-xs text-muted-foreground font-mono ml-auto">Sepolia</span>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-sm text-muted-foreground flex items-center gap-1">
                     <TooltipLabel
-                      label="Funding amount"
-                      tooltip="Amount to deposit into the channel. Ensure you have sufficient USDC (Sepolia) to fund."
+                      label="Funding amount (USDC)"
+                      tooltip="Amount of USDC to deposit into the channel. Ensure you have sufficient USDC (Sepolia) to fund."
                     />
                   </Label>
                   <Input
@@ -431,7 +667,7 @@ function CreatePrivateChannel({
                         Channel funding: {amount || "100"} USDC
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Ensure you have sufficient USDC on Sepolia to fund this channel.
+                        This USDC will be locked in a Yellow Network state channel on Sepolia.
                       </p>
                     </div>
                   )}
@@ -471,8 +707,8 @@ function CreatePrivateChannel({
                 <div className="space-y-3">
                   {[
                     { s: 2, label: "Generate stealth address", icon: Shield },
-                    { s: 3, label: "Open Yellow channel", icon: Zap },
-                    { s: 4, label: "Fund channel", icon: DollarSign },
+                    { s: 3, label: "Open Yellow channel", icon: Network },
+                    { s: 4, label: "Fund channel with USDC", icon: DollarSign },
                     { s: 5, label: "Publish announcement", icon: Radio },
                   ].map(({ s, label, icon: Icon }) => (
                     <div
@@ -534,14 +770,11 @@ function CreatePrivateChannel({
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Channel ref:</span>
-                        <span className="flex items-center gap-1 font-mono text-muted-foreground">
-                          {formatAddress(channelResult.tx_hash)}
+                        <span className="text-muted-foreground">Funded:</span>
+                        <span className="text-green-400 font-medium">
+                          {amount || "100"} USDC
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        No on-chain tx yet; this is a channel reference. Fund the channel to use it.
-                      </p>
                     </div>
                   </motion.div>
                 )}
@@ -580,7 +813,7 @@ function CreatePrivateChannel({
               <Button
                 onClick={handleCreateChannel}
                 disabled={isLoading || !evmConnected}
-                className="bg-yellow-500 hover:bg-yellow-600 text-black"
+                className="rounded-xl py-6 font-bold bg-yellow-500 hover:bg-yellow-600 text-black"
               >
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -603,8 +836,14 @@ function CreatePrivateChannel({
 
 function DiscoverChannels({
   onDiscovered,
+  onViewChannel,
+  onMigrateChannel,
+  onActivity,
 }: {
   onDiscovered: (channels: LocalChannel[]) => void;
+  onViewChannel?: (ch: LocalChannel) => void;
+  onMigrateChannel?: (ch: LocalChannel) => void;
+  onActivity: (event: ActivityEvent) => void;
 }) {
   const [viewingSk, setViewingSk] = useState("");
   const [spendingPk, setSpendingPk] = useState("");
@@ -690,17 +929,31 @@ function DiscoverChannels({
 
       if (result.channels.length > 0) {
         toast.success(`Found ${result.channels.length} private channel(s)!`);
-        onDiscovered(
-          result.channels.map((ch) => ({
+
+        const localChannels = result.channels.map((ch) => ({
+          channel_id: ch.channel_id,
+          stealth_address: ch.stealth_address,
+          eth_private_key: ch.eth_private_key,
+          status: ch.status,
+          token: ch.token || "USDC",
+          amount: ch.amount || "0",
+          created_at: ch.discovered_at,
+        }));
+        onDiscovered(localChannels);
+
+        // Log discovery activity for each channel
+        for (const ch of result.channels) {
+          onActivity({
+            id: createActivityId(),
+            type: "channel_discovered",
+            timestamp: Date.now(),
             channel_id: ch.channel_id,
-            stealth_address: ch.stealth_address,
-            eth_private_key: ch.eth_private_key,
-            status: ch.status,
-            token: "USDC",
-            amount: "0",
-            created_at: ch.discovered_at,
-          }))
-        );
+            amount: ch.amount || "0",
+            token: ch.token || "USDC",
+            details: `Discovered channel with ${ch.amount || "0"} ${ch.token || "USDC"} at stealth address ${formatAddress(ch.stealth_address)}`,
+            to: ch.stealth_address,
+          });
+        }
       } else {
         toast.info("No private channels found");
       }
@@ -721,7 +974,7 @@ function DiscoverChannels({
       initial="hidden"
       animate="visible"
     >
-      <div className="relative overflow-hidden rounded-xl border border-border bg-card/50 backdrop-blur-sm p-6">
+      <div className="relative overflow-hidden rounded-3xl border border-border bg-card shadow-lg backdrop-blur-sm p-6 sm:p-8">
         <PixelCanvas colors={CARD_PIXEL_COLORS} gap={8} speed={25} />
 
         <div className="relative z-10 space-y-4">
@@ -828,7 +1081,7 @@ function DiscoverChannels({
           <Button
             onClick={handleScan}
             disabled={isScanning}
-            className="w-full bg-yellow-500 hover:bg-yellow-600 text-black"
+            className="w-full rounded-xl py-6 font-bold bg-yellow-500 hover:bg-yellow-600 text-black"
           >
             {isScanning ? (
               <>
@@ -871,37 +1124,79 @@ function DiscoverChannels({
               <h3 className="text-sm font-bold text-yellow-400">
                 Found {discovered.length} Channel(s)
               </h3>
-              {discovered.map((ch) => (
-                <motion.div
-                  key={ch.channel_id}
-                  variants={fadeIn}
-                  className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20"
-                >
-                  <div className="space-y-1 text-xs font-mono">
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Channel:</span>
-                      <span className="flex items-center gap-1">
-                        {formatAddress(ch.channel_id)}
-                        <CopyButton text={ch.channel_id} />
-                      </span>
+              {discovered.map((ch) => {
+                const localCh: LocalChannel = {
+                  channel_id: ch.channel_id,
+                  stealth_address: ch.stealth_address,
+                  eth_private_key: ch.eth_private_key,
+                  status: ch.status,
+                  token: ch.token || "USDC",
+                  amount: ch.amount || "0",
+                  created_at: ch.discovered_at,
+                };
+                return (
+                  <motion.div
+                    key={ch.channel_id}
+                    variants={fadeIn}
+                    className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20 space-y-3"
+                  >
+                    <div className="space-y-2 text-xs font-mono">
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Channel:</span>
+                        <span className="flex items-center gap-1">
+                          {formatAddress(ch.channel_id)}
+                          <CopyButton text={ch.channel_id} />
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Stealth:</span>
+                        <span className="flex items-center gap-1">
+                          {formatAddress(ch.stealth_address)}
+                          <CopyButton text={ch.stealth_address} />
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Balance:</span>
+                        <span className="flex items-center gap-1 text-green-400 font-medium">
+                          <DollarSign className="w-3 h-3" />
+                          {ch.amount || "0"} {tokenLabel(ch.token || "USDC")}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Status:</span>
+                        <span className="text-green-400 flex items-center gap-1">
+                          <span className="inline-block w-2 h-2 rounded-full bg-green-400" />
+                          {ch.status}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Stealth:</span>
-                      <span className="flex items-center gap-1">
-                        {formatAddress(ch.stealth_address)}
-                        <CopyButton text={ch.stealth_address} />
-                      </span>
+                    <div className="flex flex-wrap gap-2 pt-2 border-t border-yellow-500/20">
+                      {onViewChannel && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onViewChannel(localCh)}
+                          className="text-xs border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                        >
+                          <Eye className="w-3 h-3 mr-1" />
+                          View Channel
+                        </Button>
+                      )}
+                      {onMigrateChannel && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onMigrateChannel(localCh)}
+                          className="text-xs border-green-500/30 text-green-400 hover:bg-green-500/10"
+                        >
+                          <ArrowRight className="w-3 h-3 mr-1" />
+                          Add to My Channels
+                        </Button>
+                      )}
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Status:</span>
-                      <span className="text-green-400 flex items-center gap-1">
-                        <span className="inline-block w-2 h-2 rounded-full bg-green-400" />
-                        {ch.status}
-                      </span>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                );
+              })}
             </motion.div>
           )}
 
@@ -913,6 +1208,109 @@ function DiscoverChannels({
           )}
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// View Channel Modal (discovered channel details + actions)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ViewChannelModal({
+  channel,
+  onClose,
+  onTransfer,
+  onFund,
+  onCloseChannel,
+}: {
+  channel: LocalChannel;
+  onClose: () => void;
+  onTransfer: (ch: LocalChannel) => void;
+  onFund: (ch: LocalChannel) => void;
+  onCloseChannel: (ch: LocalChannel) => void;
+}) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="bg-card border border-border rounded-3xl shadow-xl p-0 w-full max-w-md max-h-[90vh] overflow-y-auto"
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="rounded-t-3xl bg-muted/30 border-b border-border px-6 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Balance</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-green-400" />
+            {channel.amount} {tokenLabel(channel.token)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">{channel.status}</p>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-display font-bold flex items-center gap-2">
+              <Lock className="w-5 h-5 text-yellow-400" />
+              Channel Details
+            </h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground rounded-lg p-1">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="text-muted-foreground text-xs">Channel ID</span>
+              <div className="font-mono flex items-center gap-2 mt-0.5">
+                {formatAddress(channel.channel_id)}
+                <CopyButton text={channel.channel_id} />
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground text-xs">Stealth address</span>
+              <div className="font-mono flex items-center gap-2 mt-0.5">
+                {formatAddress(channel.stealth_address)}
+                <CopyButton text={channel.stealth_address} />
+              </div>
+            </div>
+          </div>
+          {channel.status === "open" && (
+            <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { onTransfer(channel); onClose(); }}
+                className="flex-1 rounded-xl border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+              >
+                <Send className="w-3 h-3 mr-1" />
+                Transfer
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { onFund(channel); onClose(); }}
+                className="flex-1 rounded-xl border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+              >
+                <DollarSign className="w-3 h-3 mr-1" />
+                Fund
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { onCloseChannel(channel); onClose(); }}
+                className="flex-1 rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                <X className="w-3 h-3 mr-1" />
+                Close
+              </Button>
+            </div>
+          )}
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
@@ -949,48 +1347,62 @@ function ChannelCard({
   return (
     <motion.div
       variants={fadeIn}
-      className="relative overflow-hidden rounded-xl border border-border bg-card/50 backdrop-blur-sm p-4"
+      className="relative overflow-hidden rounded-2xl border border-border bg-card shadow-md p-0"
     >
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Lock className="w-4 h-4 text-yellow-400" />
-            <span className="text-sm font-medium">
-              {channel.recipient
-                ? channel.recipient
-                : formatAddress(channel.channel_id)}
-            </span>
-          </div>
+      {/* Amount / balance block (WithdrawalCard-style) */}
+      <div className="rounded-t-2xl bg-muted/30 border-b border-border px-5 py-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Balance</p>
+        <p className="mt-1 text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+          <DollarSign className="w-5 h-5 text-green-400" />
+          {channel.amount} {tokenLabel(channel.token)}
+        </p>
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
           <span className={`text-xs flex items-center gap-1 ${statusColor}`}>
             <span className={`inline-block w-2 h-2 rounded-full ${statusDot}`} />
             {channel.status}
           </span>
+          <span className="flex items-center gap-1 rounded-full bg-yellow-500/20 text-yellow-400 px-2 py-0.5 text-[10px] font-medium">
+            <Radio className="w-3 h-3" />
+            Announcement
+          </span>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {/* Row: icon + name + details (account-style) */}
+        <div className="flex items-center gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-yellow-500/20 text-yellow-400">
+            <Lock className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold truncate">
+              {channel.recipient ? channel.recipient : formatAddress(channel.channel_id)}
+            </p>
+            <p className="text-sm text-muted-foreground font-mono flex items-center gap-1">
+              {formatAddress(channel.channel_id)}
+              <CopyButton text={channel.channel_id} size="icon" />
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
-            <span className="text-muted-foreground">Stealth:</span>
-            <div className="font-mono flex items-center gap-1">
+            <span className="text-muted-foreground">Stealth</span>
+            <div className="font-mono flex items-center gap-1 mt-0.5">
               {formatAddress(channel.stealth_address)}
               <CopyButton text={channel.stealth_address} />
             </div>
           </div>
           <div>
-            <span className="text-muted-foreground">Balance:</span>
-            <div className="font-bold text-foreground">
-              {channel.amount} {channel.token === "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" ? "USDC" : channel.token.slice(0, 6)}
-            </div>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Created:</span>
-            <div>{new Date(channel.created_at * 1000).toLocaleDateString()}</div>
+            <span className="text-muted-foreground">Created</span>
+            <div className="mt-0.5">{new Date(channel.created_at * 1000).toLocaleDateString()}</div>
           </div>
           {channel.tx_hash && (
-            <div>
+            <div className="col-span-2">
               <span className="text-muted-foreground">
-                {isRealTxHash(channel.tx_hash) ? "Tx:" : "Ref:"}
+                {isRealTxHash(channel.tx_hash) ? "Tx" : "Ref"}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 mt-0.5">
                 <span className="font-mono">{formatAddress(channel.tx_hash)}</span>
                 {isRealTxHash(channel.tx_hash) && (
                   <a
@@ -1008,34 +1420,55 @@ function ChannelCard({
         </div>
 
         {channel.status === "open" && (
-          <div className="flex gap-2 pt-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onTransfer(channel)}
-              className="flex-1 text-xs border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
-            >
-              <Send className="w-3 h-3 mr-1" />
-              Transfer
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onFund(channel)}
-              className="flex-1 text-xs border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
-            >
-              <DollarSign className="w-3 h-3 mr-1" />
-              Fund
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onClose(channel)}
-              className="flex-1 text-xs border-destructive/30 text-destructive hover:bg-destructive/10"
-            >
-              <X className="w-3 h-3 mr-1" />
-              Close
-            </Button>
+          <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onTransfer(channel)}
+                  className="flex-1 min-w-0 text-xs rounded-xl border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                >
+                  <Send className="w-3 h-3 mr-1 shrink-0" />
+                  Transfer
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[200px]">
+                Send USDC off-chain to another address. Gasless and instant.
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onFund(channel)}
+                  className="flex-1 min-w-0 text-xs rounded-xl border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                >
+                  <DollarSign className="w-3 h-3 mr-1 shrink-0" />
+                  Fund
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[200px]">
+                Add USDC from your wallet into this channel.
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onClose(channel)}
+                  className="flex-1 min-w-0 text-xs rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10"
+                >
+                  <X className="w-3 h-3 mr-1 shrink-0" />
+                  Close
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[200px]">
+                Close channel and settle USDC balance on Sepolia.
+              </TooltipContent>
+            </Tooltip>
           </div>
         )}
       </div>
@@ -1050,14 +1483,19 @@ function ChannelCard({
 function TransferModal({
   channel,
   onClose,
+  onActivity,
+  onBalanceUpdate,
 }: {
   channel: LocalChannel;
   onClose: () => void;
+  onActivity: (event: ActivityEvent) => void;
+  onBalanceUpdate: (channelId: string, newBalance: string) => void;
 }) {
-  const { primaryWallet } = useDynamicContext();
+  const { primaryWallet, setShowAuthFlow } = useDynamicContext();
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const needsWallet = !channel.eth_private_key && (!primaryWallet || !isEthereumWallet(primaryWallet));
 
   const handleTransfer = async () => {
     if (!destination || !amount) {
@@ -1083,7 +1521,7 @@ function TransferModal({
           account.signMessage({ message: msg });
       } else {
         if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
-          toast.error("Connect an Ethereum wallet, or use a discovered channel (recipient) to transfer");
+          setShowAuthFlow?.(true);
           setIsLoading(false);
           return;
         }
@@ -1098,7 +1536,26 @@ function TransferModal({
         amount: amountSix,
         recipient: destination,
       });
-      toast.success("Transfer sent on Yellow Network!");
+
+      // Update local balance
+      const currentBalance = parseFloat(channel.amount || "0");
+      const transferAmount = parseFloat(amount);
+      const newBalance = Math.max(0, currentBalance - transferAmount).toFixed(2);
+      onBalanceUpdate(channel.channel_id, newBalance);
+
+      onActivity({
+        id: createActivityId(),
+        type: "transfer_sent",
+        timestamp: Date.now(),
+        channel_id: channel.channel_id,
+        amount,
+        token: "USDC",
+        details: `Transferred ${amount} USDC off-chain to ${formatAddress(destination)}`,
+        from: senderAddress,
+        to: destination,
+      });
+
+      toast.success(`Transferred ${amount} USDC off-chain!`);
       onClose();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Transfer failed");
@@ -1109,29 +1566,50 @@ function TransferModal({
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClose}
     >
       <motion.div
-        className="bg-card border border-border rounded-xl p-6 w-full max-w-md mx-4"
+        className="bg-card border border-border rounded-3xl shadow-xl p-0 w-full max-w-md"
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-display font-bold">Off-Chain Transfer</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
-          </button>
+        <div className="rounded-t-3xl bg-muted/30 border-b border-border px-6 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Channel balance</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-green-400" />
+            {channel.amount} USDC
+          </p>
         </div>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-display font-bold">Off-Chain Transfer</h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground rounded-lg p-1">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
-        <p className="text-xs text-muted-foreground mb-4">
-          Channel: {formatAddress(channel.channel_id)}
-        </p>
+          {needsWallet && (
+          <div className="mb-4 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 flex flex-col gap-2">
+            <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+              <Wallet className="h-4 w-4 shrink-0" />
+              <span>Connect wallet to sign the transfer</span>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setShowAuthFlow?.(true)}
+              className="bg-amber-500 hover:bg-amber-600 text-black"
+            >
+              <Wallet className="w-4 h-4 mr-2" />
+              Connect Ethereum Wallet
+            </Button>
+          </div>
+        )}
 
         <div className="space-y-3">
           <div className="space-y-1">
@@ -1144,7 +1622,7 @@ function TransferModal({
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Amount</Label>
+            <Label className="text-xs text-muted-foreground">Amount (USDC)</Label>
             <Input
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
@@ -1155,22 +1633,23 @@ function TransferModal({
           </div>
         </div>
 
-        <div className="flex gap-2 mt-6">
-          <Button variant="outline" onClick={onClose} className="flex-1">
+        <div className="flex gap-3 mt-6">
+          <Button variant="outline" onClick={onClose} className="flex-1 rounded-xl">
             Cancel
           </Button>
           <Button
             onClick={handleTransfer}
-            disabled={isLoading}
-            className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black"
+            disabled={isLoading || needsWallet}
+            className="flex-1 rounded-xl py-6 font-bold bg-yellow-500 hover:bg-yellow-600 text-black"
           >
             {isLoading ? (
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
             ) : (
               <Send className="w-4 h-4 mr-2" />
             )}
-            Transfer
+            Transfer USDC
           </Button>
+        </div>
         </div>
       </motion.div>
     </motion.div>
@@ -1185,22 +1664,25 @@ function FundModal({
   channel,
   onClose,
   onFunded,
+  onActivity,
 }: {
   channel: LocalChannel;
   onClose: () => void;
   onFunded: (newBalance: string) => void;
+  onActivity: (event: ActivityEvent) => void;
 }) {
-  const { primaryWallet } = useDynamicContext();
+  const { primaryWallet, setShowAuthFlow } = useDynamicContext();
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const needsWallet = !primaryWallet || !isEthereumWallet(primaryWallet);
 
   const handleFund = async () => {
     if (!amount) {
       toast.error("Enter an amount");
       return;
     }
-    if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
-      toast.error("Connect an Ethereum wallet (Sepolia) to add funds");
+    if (needsWallet) {
+      setShowAuthFlow?.(true);
       return;
     }
     setIsLoading(true);
@@ -1216,7 +1698,7 @@ function FundModal({
         walletClient.signMessage({ message: msg });
       const yellow = getYellowClient();
       await yellow.connect();
-      await yellow.createSession({
+      const { sessionId } = await yellow.createSession({
         messageSigner,
         userAddress,
         partnerAddress: channel.stealth_address,
@@ -1225,7 +1707,21 @@ function FundModal({
         amountPartner: newPartnerSix.toString(),
       });
       const newBalance = (currentSix / 1e6 + parseFloat(amount)).toFixed(2);
-      toast.success(`Funded on Yellow! New balance: ${newBalance} USDC`);
+
+      onActivity({
+        id: createActivityId(),
+        type: "channel_funded",
+        timestamp: Date.now(),
+        channel_id: channel.channel_id,
+        amount,
+        token: "USDC",
+        details: `Added ${amount} USDC to channel. New balance: ${newBalance} USDC`,
+        session_id: sessionId,
+        from: userAddress,
+        to: channel.stealth_address,
+      });
+
+      toast.success(`Funded ${amount} USDC! New balance: ${newBalance} USDC`);
       onFunded(newBalance);
       onClose();
     } catch (err) {
@@ -1244,53 +1740,73 @@ function FundModal({
       onClick={onClose}
     >
       <motion.div
-        className="bg-card border border-border rounded-xl p-6 w-full max-w-md mx-4"
+        className="bg-card border border-border rounded-3xl shadow-xl p-0 w-full max-w-md"
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-display font-bold">Add Funds</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
-          </button>
+        <div className="rounded-t-3xl bg-muted/30 border-b border-border px-6 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Current balance</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-green-400" />
+            {channel.amount} USDC
+          </p>
+          <p className="text-xs font-mono text-muted-foreground mt-1">{formatAddress(channel.channel_id)}</p>
         </div>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-display font-bold">Add USDC Funds</h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground rounded-lg p-1">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
-        <p className="text-xs text-muted-foreground mb-2">
-          Channel: {formatAddress(channel.channel_id)}
-        </p>
-        <p className="text-sm mb-4">
-          Current Balance: <span className="font-bold">{channel.amount} USDC</span>
-        </p>
+          {needsWallet && (
+            <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                <Wallet className="h-4 w-4 shrink-0" />
+                <span>Connect wallet to fund the channel</span>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => setShowAuthFlow?.(true)}
+                className="rounded-xl bg-amber-500 hover:bg-amber-600 text-black"
+              >
+                <Wallet className="w-4 h-4 mr-2" />
+                Connect Ethereum Wallet
+              </Button>
+            </div>
+          )}
 
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Amount to Add</Label>
-          <Input
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="0"
-            type="number"
-            className="bg-background/50 border-border"
-          />
-        </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Amount to Add (USDC)</Label>
+            <Input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0"
+              type="number"
+              className="bg-background/50 border-border rounded-xl"
+            />
+          </div>
 
-        <div className="flex gap-2 mt-6">
-          <Button variant="outline" onClick={onClose} className="flex-1">
-            Cancel
-          </Button>
-          <Button
-            onClick={handleFund}
-            disabled={isLoading}
-            className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-black"
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <DollarSign className="w-4 h-4 mr-2" />
-            )}
-            Fund
-          </Button>
+          <div className="flex gap-3 mt-6">
+            <Button variant="outline" onClick={onClose} className="flex-1 rounded-xl">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleFund}
+              disabled={isLoading || needsWallet}
+              className="flex-1 rounded-xl py-6 font-bold bg-yellow-500 hover:bg-yellow-600 text-black"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <DollarSign className="w-4 h-4 mr-2" />
+              )}
+              Fund USDC
+            </Button>
+          </div>
         </div>
       </motion.div>
     </motion.div>
@@ -1305,17 +1821,25 @@ function CloseChannelModal({
   channel,
   onClose,
   onClosed,
+  onActivity,
 }: {
   channel: LocalChannel;
   onClose: () => void;
   onClosed: () => void;
+  onActivity: (event: ActivityEvent) => void;
 }) {
-  const { primaryWallet } = useDynamicContext();
+  const { primaryWallet, setShowAuthFlow } = useDynamicContext();
   const [settlementStep, setSettlementStep] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [txHashIsPlaceholder, setTxHashIsPlaceholder] = useState(false);
+  const needsWallet = !channel.eth_private_key && (!primaryWallet || !isEthereumWallet(primaryWallet));
 
   const handleClose = async () => {
+    if (needsWallet) {
+      setShowAuthFlow?.(true);
+      return;
+    }
     setIsLoading(true);
 
     try {
@@ -1336,7 +1860,7 @@ function CloseChannelModal({
           account.signMessage({ message: msg });
       } else {
         if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
-          toast.error("Connect wallet or use a discovered channel to close");
+          setShowAuthFlow?.(true);
           setIsLoading(false);
           return;
         }
@@ -1349,6 +1873,7 @@ function CloseChannelModal({
         messageSigner,
         senderAddress,
         channelId: channel.channel_id,
+        fundsDestination: channel.stealth_address,
       });
 
       // Step 2: Record close with backend (returns settlement tx info when available)
@@ -1357,11 +1882,33 @@ function CloseChannelModal({
         channel_id: channel.channel_id,
       });
       setTxHash(result.tx_hash);
+      setTxHashIsPlaceholder(result.tx_hash_is_placeholder ?? !isRealTxHash(result.tx_hash));
 
+      // Step 3: Settlement
       setSettlementStep(3);
       await new Promise((r) => setTimeout(r, 800));
+
+      // Step 4: Complete
       setSettlementStep(4);
-      toast.success("Close sent to Yellow. Settlement on Sepolia when finalized.");
+
+      const settledAmount = result.final_balances.length > 0
+        ? result.final_balances[0].amount
+        : channel.amount;
+
+      onActivity({
+        id: createActivityId(),
+        type: "channel_closed",
+        timestamp: Date.now(),
+        channel_id: channel.channel_id,
+        amount: settledAmount,
+        token: "USDC",
+        details: `Channel closed. ${settledAmount} USDC settled to stealth address ${formatAddress(channel.stealth_address)}`,
+        tx_hash: result.tx_hash,
+        from: senderAddress,
+        to: channel.stealth_address,
+      });
+
+      toast.success(`Channel closed! ${settledAmount} USDC settled.`);
       onClosed();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Settlement failed");
@@ -1372,55 +1919,77 @@ function CloseChannelModal({
 
   const steps = [
     { label: "Send close to Yellow Network", detail: "Signed close request" },
-    { label: "Record close with backend", detail: txHash ? `Ref: ${formatAddress(txHash)}` : "Recording..." },
-    { label: "Processing", detail: "Yellow / Sepolia" },
-    { label: "Complete", detail: "Channel closed" },
+    { label: "Record close", detail: txHash ? `Ref: ${formatAddress(txHash)}` : "Recording..." },
+    { label: "Settlement on Sepolia", detail: `${channel.amount} USDC to stealth address` },
+    { label: "Complete", detail: "Funds settled to your stealth address" },
   ];
 
   return (
     <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onClick={onClose}
     >
       <motion.div
-        className="bg-card border border-border rounded-xl p-6 w-full max-w-md mx-4"
+        className="bg-card border border-border rounded-3xl shadow-xl p-0 w-full max-w-md"
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-display font-bold">Close & Settle</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
-          </button>
+        <div className="rounded-t-3xl bg-muted/30 border-b border-border px-6 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Channel balance</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-green-400" />
+            {channel.amount} USDC
+          </p>
+          <p className="text-xs font-mono text-muted-foreground mt-1">{formatAddress(channel.channel_id)}</p>
         </div>
-
-        <p className="text-xs text-muted-foreground mb-2">
-          Channel: {formatAddress(channel.channel_id)}
-        </p>
-        <p className="text-sm mb-4">
-          Balance: <span className="font-bold">{channel.amount} USDC</span>
-        </p>
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-display font-bold">Close & Settle</h3>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground rounded-lg p-1">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
         {settlementStep === 0 ? (
           <div className="space-y-4">
+            {needsWallet && (
+              <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                  <Wallet className="h-4 w-4 shrink-0" />
+                  <span>Connect wallet to sign the close request</span>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setShowAuthFlow?.(true)}
+                  className="bg-amber-500 hover:bg-amber-600 text-black"
+                >
+                  <Wallet className="w-4 h-4 mr-2" />
+                  Connect Ethereum Wallet
+                </Button>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
-              This will close the channel and settle funds on Sepolia L1.
-              Funds will be sent to your stealth address.
+              Close is sent to Yellow Network. {channel.amount} USDC will be settled to your stealth address on Sepolia.
             </p>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={onClose} className="flex-1">
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-muted-foreground flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
+              <span>L1 settlement tx appears on Sepolia after Yellow finalizes. The ref below is for tracking until then.</span>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={onClose} className="flex-1 rounded-xl">
                 Cancel
               </Button>
               <Button
                 onClick={handleClose}
-                className="flex-1 bg-destructive hover:bg-destructive/90"
+                disabled={needsWallet}
+                className="flex-1 rounded-xl font-bold bg-destructive hover:bg-destructive/90"
               >
-                Close Channel
+                {needsWallet ? "Connect Wallet First" : "Close Channel"}
               </Button>
             </div>
           </div>
@@ -1453,12 +2022,13 @@ function CloseChannelModal({
                     {s.detail && (
                       <p className="text-xs text-muted-foreground flex items-center gap-1">
                         {s.detail}
-                        {txHash && stepNum === 2 && (
+                        {txHash && stepNum === 2 && isRealTxHash(txHash) && (
                           <a
                             href={`https://sepolia.etherscan.io/tx/${txHash}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-yellow-400 hover:text-yellow-300"
+                            title="View on Etherscan"
                           >
                             <ExternalLink className="w-3 h-3" />
                           </a>
@@ -1481,8 +2051,18 @@ function CloseChannelModal({
                 />
               </div>
             )}
+
+            {/* No on-chain tx: current flow doesn't create/close real custody channels */}
+            {settlementStep === 4 && txHashIsPlaceholder && (
+              <div className="mt-4 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-left">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Close was sent to Yellow Network. In this integration, <strong>no on-chain channel is created or closed</strong> (we don’t call the custody contract to lock or settle USDC), so you won’t see a Sepolia tx or balance change. See Yellow.md → “Why you don’t see on-chain transactions” for details and how to get real settlement.
+                </p>
+              </div>
+            )}
           </div>
         )}
+        </div>
       </motion.div>
     </motion.div>
   );
@@ -1492,27 +2072,31 @@ function CloseChannelModal({
 // Network Stats
 // ═══════════════════════════════════════════════════════════════════════════
 
-function YellowStats({ config }: { config: YellowConfigResponse | null }) {
+function YellowStats({ config, totalUSDC }: { config: YellowConfigResponse | null; totalUSDC: string }) {
   if (!config) return null;
 
   return (
-    <motion.div variants={fadeIn} className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-      {[
-        { label: "Network", value: "Sepolia" },
-        { label: "Chain ID", value: config.chain_id.toString() },
-        { label: "Tokens", value: config.supported_tokens.length.toString() },
-        { label: "Status", value: "Connected", color: "text-green-400" },
-      ].map((stat) => (
-        <div
-          key={stat.label}
-          className="rounded-lg border border-border bg-card/30 p-3 text-center"
-        >
-          <p className="text-xs text-muted-foreground">{stat.label}</p>
-          <p className={`text-sm font-bold ${stat.color || "text-foreground"}`}>
-            {stat.value}
-          </p>
-        </div>
-      ))}
+    <motion.div
+      variants={fadeIn}
+      className="rounded-3xl border border-border bg-card p-6 shadow-lg mb-6"
+    >
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+        {[
+          { label: "Network", value: "Sepolia", color: "" },
+          { label: "Total USDC", value: `$${totalUSDC}`, color: "text-green-400" },
+          { label: "Token", value: "USDC", color: "text-yellow-400" },
+          { label: "Status", value: "Connected", color: "text-green-400" },
+        ].map((stat) => (
+          <div key={stat.label} className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {stat.label}
+            </p>
+            <p className={`mt-1 text-2xl font-bold tracking-tight sm:text-3xl ${stat.color || "text-foreground"}`}>
+              {stat.value}
+            </p>
+          </div>
+        ))}
+      </div>
     </motion.div>
   );
 }
@@ -1522,19 +2106,33 @@ function YellowStats({ config }: { config: YellowConfigResponse | null }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function YellowPage() {
+  const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
+  const evmConnected = !!primaryWallet;
   const [activeTab, setActiveTab] = useState<YellowTab>("dashboard");
   const [channels, setChannels] = useState<LocalChannel[]>(() => loadChannelsFromStorage());
   const [config, setConfig] = useState<YellowConfigResponse | null>(null);
+  const [activityEvents, setActivityEvents] = useState<ActivityEvent[]>(() => loadActivityFromStorage());
   const [transferChannel, setTransferChannel] = useState<LocalChannel | null>(null);
   const [fundChannel, setFundChannel] = useState<LocalChannel | null>(null);
   const [closeChannel, setCloseChannel] = useState<LocalChannel | null>(null);
+  const [viewingChannel, setViewingChannel] = useState<LocalChannel | null>(null);
+  const [channelPanelMinimized, setChannelPanelMinimized] = useState(false);
 
   // Persist channels to localStorage whenever they change
   useEffect(() => {
     saveChannelsToStorage(channels);
   }, [channels]);
 
-  // Load Yellow config on mount; backend must be running (see Yellow.md for local setup)
+  // Persist activity to localStorage
+  useEffect(() => {
+    saveActivityToStorage(activityEvents);
+  }, [activityEvents]);
+
+  const addActivity = useCallback((event: ActivityEvent) => {
+    setActivityEvents((prev) => [event, ...prev]);
+  }, []);
+
+  // Load Yellow config on mount
   const [configError, setConfigError] = useState<string | null>(null);
   const fetchConfig = useCallback(() => {
     setConfigError(null);
@@ -1543,9 +2141,12 @@ export default function YellowPage() {
       .then((c) => {
         setConfig(c);
         setConfigError(null);
+        // Use same WebSocket URL as backend (e.g. prod) so create/close/fund hit the right Yellow endpoint
+        setYellowWsUrl(c.ws_url);
       })
       .catch(() => {
         setConfig(null);
+        setYellowWsUrl(null);
         const base = api.getBaseUrl();
         setConfigError(
           `Backend not reachable at ${base}. Start the SPECTER backend first (see Yellow.md): in specter/ run: cargo run --bin specter -- serve --port 3001`
@@ -1558,6 +2159,10 @@ export default function YellowPage() {
 
   const activeCount = channels.filter((c) => c.status === "open").length;
   const closedCount = channels.filter((c) => c.status === "closed").length;
+  const totalUSDC = channels
+    .filter((c) => c.status === "open")
+    .reduce((sum, c) => sum + parseFloat(c.amount || "0"), 0)
+    .toFixed(2);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1572,7 +2177,7 @@ export default function YellowPage() {
             transition={{ duration: 0.6, ease }}
           >
             <div className="flex items-center justify-center gap-3 mb-3">
-              <Zap className="w-8 h-8 text-yellow-400" />
+              <Network className="w-8 h-8 text-yellow-400" />
               <HeadingScramble
                 text="Yellow Network"
                 as="h1"
@@ -1583,6 +2188,96 @@ export default function YellowPage() {
               Private state channel trading powered by SPECTER stealth addresses.
               Trade anonymously with post-quantum security.
             </p>
+          </motion.div>
+
+          {/* Wallet connection bar */}
+          <motion.div
+            className="mb-6"
+            variants={fadeIn}
+            initial="hidden"
+            animate="visible"
+          >
+            {evmConnected ? (
+              <div className="rounded-xl border border-green-500/20 bg-green-500/5 p-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-green-500/20">
+                    <Wallet className="w-4 h-4 text-green-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">Connected (Sepolia)</p>
+                    <p className="text-sm font-mono truncate">{formatAddress(primaryWallet?.address ?? "")}</p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleLogOut()}
+                  className="text-xs text-muted-foreground hover:text-destructive shrink-0"
+                >
+                  Disconnect
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-2 flex-1">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20">
+                    <Wallet className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Wallet not connected</p>
+                    <p className="text-xs text-muted-foreground">Connect an Ethereum wallet (Sepolia) to create, fund, and close channels</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setShowAuthFlow?.(true)}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-black shrink-0"
+                >
+                  <Wallet className="w-4 h-4 mr-2" />
+                  Connect Wallet
+                </Button>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Holographic scrolling card feed */}
+          <motion.div
+            className="relative my-8 overflow-hidden"
+            variants={fadeIn}
+            initial="hidden"
+            animate="visible"
+          >
+            <div className="pointer-events-none absolute top-0 bottom-0 left-0 w-24 bg-gradient-to-r from-background to-transparent z-10" />
+            <div className="pointer-events-none absolute top-0 bottom-0 right-0 w-24 bg-gradient-to-l from-background to-transparent z-10" />
+            <ScrollingRow
+              cards={[
+                { id: "r1", component: DataReadout, props: { value: "USDC" } },
+                { id: "b1", component: HoloButton, props: { text: "PRIVATE" } },
+                { id: "p1", component: ProgressBar, props: { progress: 75 } },
+                { id: "v1", component: DataViz, props: { bars: 5 } },
+                { id: "o1", component: GlowingOrb, props: {} },
+                { id: "r2", component: DataReadout, props: { value: "Sepolia" } },
+                { id: "b2", component: HoloButton, props: { text: "CHANNEL" } },
+                { id: "p2", component: ProgressBar, props: { progress: 40 } },
+                { id: "v2", component: DataViz, props: { bars: 4 } },
+                { id: "o2", component: GlowingOrb, props: { color: "rgb(234, 179, 8)" } },
+              ] as HoloCardTypeInfo[]}
+              duration="85s"
+              direction="left"
+            />
+            <ScrollingRow
+              cards={[
+                { id: "r3", component: DataReadout, props: { value: "STEALTH" } },
+                { id: "b3", component: HoloButton, props: { text: "OFF-CHAIN" } },
+                { id: "p3", component: ProgressBar, props: { progress: 90 } },
+                { id: "v3", component: DataViz, props: { bars: 6 } },
+                { id: "r4", component: DataReadout, props: { value: "SPECTER" } },
+                { id: "b4", component: HoloButton, props: { text: "SECURE" } },
+                { id: "p4", component: ProgressBar, props: { progress: 55 } },
+              ] as HoloCardTypeInfo[]}
+              duration="92s"
+              direction="right"
+            />
           </motion.div>
 
           {/* Yellow API unavailable */}
@@ -1606,49 +2301,97 @@ export default function YellowPage() {
           )}
 
           {/* Stats */}
-          <YellowStats config={config} />
+          <YellowStats config={config} totalUSDC={totalUSDC} />
 
           {/* Channel counts */}
           <motion.div
-            className="grid grid-cols-3 gap-3 mb-6"
+            className="grid grid-cols-3 gap-4 mb-6"
             variants={fadeIn}
             initial="hidden"
             animate="visible"
           >
-            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-4 text-center">
-              <p className="text-2xl font-bold text-yellow-400">{activeCount}</p>
-              <p className="text-xs text-muted-foreground">Active</p>
+            <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 shadow-md p-5 text-center">
+              <p className="text-3xl font-bold tracking-tight text-yellow-400">{activeCount}</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Active</p>
             </div>
-            <div className="rounded-xl border border-border bg-card/30 p-4 text-center">
-              <p className="text-2xl font-bold">
+            <div className="rounded-2xl border border-border bg-card shadow-md p-5 text-center">
+              <p className="text-3xl font-bold tracking-tight text-foreground">
                 {channels.filter((c) => c.status === "pending").length}
               </p>
-              <p className="text-xs text-muted-foreground">Pending</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Pending</p>
             </div>
-            <div className="rounded-xl border border-border bg-card/30 p-4 text-center">
-              <p className="text-2xl font-bold">{closedCount}</p>
-              <p className="text-xs text-muted-foreground">Closed</p>
+            <div className="rounded-2xl border border-border bg-card shadow-md p-5 text-center">
+              <p className="text-3xl font-bold tracking-tight text-foreground">{closedCount}</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Closed</p>
             </div>
           </motion.div>
 
-          {/* Tabs */}
-          <Tabs
-            value={activeTab}
-            onValueChange={(v) => setActiveTab(v as YellowTab)}
-          >
-            <TabsList className="grid w-full grid-cols-3 mb-6">
-              <TabsTrigger value="dashboard" className="text-xs sm:text-sm">
+          {/* Channel panel with minimize/maximize and vertical scroll */}
+          <div className="rounded-2xl border border-border bg-card/50 shadow-md overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setChannelPanelMinimized((p) => !p)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+              aria-expanded={!channelPanelMinimized}
+            >
+              <span className="text-sm font-semibold text-foreground">
+                {channelPanelMinimized ? "Channels" : "Channels"}
+              </span>
+              <span className="flex items-center gap-2 text-muted-foreground">
+                {channelPanelMinimized ? (
+                  <>
+                    <span className="text-xs">Expand</span>
+                    <ChevronDown className="w-4 h-4" />
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs">Minimize</span>
+                    <ChevronUp className="w-4 h-4" />
+                  </>
+                )}
+              </span>
+            </button>
+            {!channelPanelMinimized && (
+              <div className="p-4">
+                <Tabs
+                  value={activeTab}
+                  onValueChange={(v) => setActiveTab(v as YellowTab)}
+                >
+                  <TabsList className="grid w-full grid-cols-4 mb-4 h-12 p-1.5 rounded-xl bg-muted/50 border border-border">
+              <TabsTrigger
+                value="dashboard"
+                className="text-xs sm:text-sm rounded-lg data-[state=active]:bg-yellow-500 data-[state=active]:text-black data-[state=active]:shadow-sm transition-all duration-200"
+              >
                 My Channels
               </TabsTrigger>
-              <TabsTrigger value="create" className="text-xs sm:text-sm">
+              <TabsTrigger
+                value="create"
+                className="text-xs sm:text-sm rounded-lg data-[state=active]:bg-yellow-500 data-[state=active]:text-black data-[state=active]:shadow-sm transition-all duration-200"
+              >
                 Create Channel
               </TabsTrigger>
-              <TabsTrigger value="discover" className="text-xs sm:text-sm">
+              <TabsTrigger
+                value="discover"
+                className="text-xs sm:text-sm rounded-lg data-[state=active]:bg-yellow-500 data-[state=active]:text-black data-[state=active]:shadow-sm transition-all duration-200"
+              >
                 Discover
+              </TabsTrigger>
+              <TabsTrigger
+                value="activity"
+                className="text-xs sm:text-sm flex items-center justify-center gap-1 rounded-lg data-[state=active]:bg-yellow-500 data-[state=active]:text-black data-[state=active]:shadow-sm transition-all duration-200"
+              >
+                <Activity className="w-3 h-3" />
+                Activity
+                {activityEvents.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-yellow-500/20 text-yellow-400">
+                    {activityEvents.length}
+                  </span>
+                )}
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="dashboard">
+            <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden rounded-xl pr-1 -mr-1" style={{ maxHeight: "min(60vh, 600px)" }} aria-label="Channel content">
+            <TabsContent value="dashboard" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
               <motion.div
                 variants={stagger}
                 initial="hidden"
@@ -1658,28 +2401,29 @@ export default function YellowPage() {
                 {channels.length === 0 ? (
                   <motion.div
                     variants={fadeIn}
-                    className="text-center py-12 rounded-xl border border-dashed border-border"
+                    className="text-center py-16 rounded-3xl border-2 border-dashed border-border bg-card/30"
                   >
-                    <Zap className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-30" />
-                    <p className="text-muted-foreground mb-1">No channels yet</p>
-                    <p className="text-xs text-muted-foreground mb-4">
+                    <Layers className="w-14 h-14 text-muted-foreground mx-auto mb-4 opacity-40" />
+                    <p className="text-foreground font-semibold mb-1">No channels yet</p>
+                    <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
                       Create a private channel or discover incoming ones
                     </p>
-                    <div className="flex gap-2 justify-center">
+                    <div className="flex gap-3 justify-center flex-wrap">
                       <Button
-                        size="sm"
+                        size="lg"
                         onClick={() => setActiveTab("create")}
-                        className="bg-yellow-500 hover:bg-yellow-600 text-black"
+                        className="rounded-xl bg-yellow-500 hover:bg-yellow-600 text-black font-semibold"
                       >
-                        <Zap className="w-3 h-3 mr-1" />
-                        Create
+                        <PlusCircle className="w-4 h-4 mr-2" />
+                        Create Channel
                       </Button>
                       <Button
-                        size="sm"
+                        size="lg"
                         variant="outline"
                         onClick={() => setActiveTab("discover")}
+                        className="rounded-xl border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
                       >
-                        <Search className="w-3 h-3 mr-1" />
+                        <Search className="w-4 h-4 mr-2" />
                         Discover
                       </Button>
                     </div>
@@ -1698,16 +2442,17 @@ export default function YellowPage() {
               </motion.div>
             </TabsContent>
 
-            <TabsContent value="create">
+            <TabsContent value="create" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
               <CreatePrivateChannel
                 onCreated={(ch) => {
                   setChannels((prev) => [ch, ...prev]);
                   setActiveTab("dashboard");
                 }}
+                onActivity={addActivity}
               />
             </TabsContent>
 
-            <TabsContent value="discover">
+            <TabsContent value="discover" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
               <DiscoverChannels
                 onDiscovered={(newChannels) => {
                   setChannels((prev) => {
@@ -1718,9 +2463,62 @@ export default function YellowPage() {
                     return [...unique, ...prev];
                   });
                 }}
+                onViewChannel={(ch) => setViewingChannel(ch)}
+                onMigrateChannel={(ch) => {
+                  setChannels((prev) =>
+                    prev.some((c) => c.channel_id === ch.channel_id)
+                      ? prev
+                      : [ch, ...prev]
+                  );
+                  setActiveTab("dashboard");
+                  toast.success("Channel added to My Channels");
+                }}
+                onActivity={addActivity}
               />
             </TabsContent>
+
+            <TabsContent value="activity" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
+              <motion.div
+                className="space-y-4"
+                variants={fadeIn}
+                initial="hidden"
+                animate="visible"
+              >
+                <div className="relative overflow-hidden rounded-3xl border border-border bg-card shadow-lg backdrop-blur-sm p-6 sm:p-8">
+                  <PixelCanvas colors={CARD_PIXEL_COLORS} gap={8} speed={25} />
+                  <div className="relative z-10">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-display font-bold flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-yellow-400" />
+                        Channel Activity
+                      </h2>
+                      {activityEvents.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setActivityEvents([]);
+                            toast.success("Activity log cleared");
+                          }}
+                          className="text-xs border-border text-muted-foreground hover:text-foreground"
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-6">
+                      Real-time log of all Yellow Network operations — channel creation, funding, transfers, and settlements.
+                    </p>
+                    <ActivityLog events={activityEvents} />
+                  </div>
+                </div>
+              </motion.div>
+            </TabsContent>
+            </div>
           </Tabs>
+              </div>
+            )}
+          </div>
 
           {/* Network info */}
           {config && (
@@ -1728,7 +2526,7 @@ export default function YellowPage() {
               variants={fadeIn}
               initial="hidden"
               animate="visible"
-              className="mt-8 rounded-xl border border-border bg-card/30 p-4"
+              className="mt-8 rounded-3xl border border-border bg-card shadow-md p-6"
             >
               <h3 className="text-sm font-display font-bold mb-3 flex items-center gap-2">
                 <Shield className="w-4 h-4 text-yellow-400" />
@@ -1768,10 +2566,8 @@ export default function YellowPage() {
                   </span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Tokens: </span>
-                  <span>
-                    {config.supported_tokens.map((t) => t.symbol).join(", ")}
-                  </span>
+                  <span className="text-muted-foreground">Token: </span>
+                  <span>USDC (Sepolia)</span>
                 </div>
               </div>
             </motion.div>
@@ -1786,6 +2582,14 @@ export default function YellowPage() {
           <TransferModal
             channel={transferChannel}
             onClose={() => setTransferChannel(null)}
+            onActivity={addActivity}
+            onBalanceUpdate={(channelId, newBalance) => {
+              setChannels((prev) =>
+                prev.map((c) =>
+                  c.channel_id === channelId ? { ...c, amount: newBalance } : c
+                )
+              );
+            }}
           />
         )}
         {fundChannel && (
@@ -1801,6 +2605,7 @@ export default function YellowPage() {
                 )
               );
             }}
+            onActivity={addActivity}
           />
         )}
         {closeChannel && (
@@ -1817,6 +2622,16 @@ export default function YellowPage() {
               );
               setCloseChannel(null);
             }}
+            onActivity={addActivity}
+          />
+        )}
+        {viewingChannel && (
+          <ViewChannelModal
+            channel={viewingChannel}
+            onClose={() => setViewingChannel(null)}
+            onTransfer={setTransferChannel}
+            onFund={setFundChannel}
+            onCloseChannel={setCloseChannel}
           />
         )}
       </AnimatePresence>

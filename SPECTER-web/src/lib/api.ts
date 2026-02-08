@@ -264,6 +264,8 @@ export interface YellowDiscoveredChannel {
   eth_private_key: string;
   status: string;
   discovered_at: number;
+  amount: string;
+  token: string;
 }
 
 export interface YellowDiscoverResponse {
@@ -292,6 +294,8 @@ export interface YellowAllocationDto {
 
 export interface YellowCloseChannelResponse {
   tx_hash: string;
+  /** When true, tx_hash is not a real Sepolia tx; settlement depends on Yellow Network. */
+  tx_hash_is_placeholder?: boolean;
   final_balances: YellowAllocationDto[];
 }
 
