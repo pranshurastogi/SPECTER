@@ -14,6 +14,7 @@ COPY specter-registry ./specter-registry
 COPY specter-scanner ./specter-scanner
 COPY specter-ipfs ./specter-ipfs
 COPY specter-ens ./specter-ens
+COPY specter-yellow ./specter-yellow
 COPY specter-suins ./specter-suins
 COPY specter-api ./specter-api
 COPY specter-cli ./specter-cli
