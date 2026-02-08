@@ -14,9 +14,9 @@ SPECTER is a **post-quantum stealth address protocol** for Ethereum. It enables 
 
 - **Post-quantum**: ML-KEM-768 key encapsulation (NIST FIPS 203).
 - **Stealth addresses**: One distinct address per payment; no link between payments and identity.
-- **ENS**: Send to names like `alice.eth`; meta-address is resolved from ENS (IPFS content hash).
+- **ENS + SuiNS**: Send to names like `alice.eth` or `alice.sui`; meta-address is resolved from ENS/SuiNS (IPFS content hash).
 - **View tags**: 1-byte tag per announcement; ~99.6% of announcements skipped when scanning.
-- **Yellow**: Optional off-chain private settlement via channel IDs in announcements.
+- **Yellow Network**: Private off-chain trading via state channels routed through stealth addresses. See [Yellow.md](Yellow.md).
 
 ---
 
@@ -28,8 +28,8 @@ SPECTER is a **post-quantum stealth address protocol** for Ethereum. It enables 
 |------|--------|--------|
 | 1.1 | Generate spending + viewing keypairs (ML-KEM-768). | `POST /api/v1/keys/generate` or CLI `specter generate` |
 | 1.2 | Build meta-address = version \|\| spending_pk \|\| viewing_pk (hex). | Response: `meta_address`, `view_tag` |
-| 1.3 | Upload meta-address to IPFS. | `POST /api/v1/ens/upload` with `meta_address` and optional `name` |
-| 1.4 | Set ENS text record for your name (e.g. `alice.eth`) → `specter` = `ipfs://<CID>`. | Your ENS resolver (e.g. app.ens.domains) |
+| 1.3 | Upload meta-address to IPFS. | `POST /api/v1/ipfs/upload` with `meta_address` and optional `name` |
+| 1.4 | Set ENS text record for your name (e.g. `alice.eth`) -> `specter` = `ipfs://<CID>`. | Your ENS resolver (e.g. app.ens.domains) |
 
 Recipient keeps `spending_sk`, `viewing_sk` secret; shares only the ENS name.
 
@@ -42,7 +42,7 @@ Recipient keeps `spending_sk`, `viewing_sk` secret; shares only the ENS name.
 | 2.3 | Send funds (ETH/tokens) to `stealth_address` from the response. | Your wallet / chain |
 | 2.4 | Publish announcement so recipient can discover the payment. | `POST /api/v1/registry/announcements` with `ephemeral_key`, `view_tag` (and optional `channel_id`) |
 
-Under the hood: encapsulate to viewing key → shared secret → view tag + derive stealth address from spending key.
+Under the hood: encapsulate to viewing key -> shared secret -> view tag + derive stealth address from spending key.
 
 ### 3. Recipient: receive and spend
 
@@ -53,25 +53,36 @@ Under the hood: encapsulate to viewing key → shared secret → view tag + deri
 | 3.3 | For each discovery: use `stealth_address` and `eth_private_key`. | Response: `discoveries[]` with `stealth_address`, `eth_private_key` |
 | 3.4 | Import `eth_private_key` into a wallet (e.g. MetaMask) and spend from the matching stealth address. | Your wallet |
 
-Under the hood: for each announcement, decapsulate with viewing_sk → shared secret; if view tag matches, derive stealth keys; only ~0.4% of announcements need decapsulation.
+Under the hood: for each announcement, decapsulate with viewing_sk -> shared secret; if view tag matches, derive stealth keys; only ~0.4% of announcements need decapsulation.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  SPECTER-web (Vite + React)  │  specter (Rust workspace)                    │
-│  • GenerateKeys, SendPayment, │  • specter-api (Axum REST, port 3001)         │
-│    ScanPayments, EnsManager   │  • specter-core, specter-crypto,             │
-│  • Calls API at 3001          │    specter-stealth, specter-registry,        │
-│                               │    specter-ens, specter-scanner, specter-cli │
-└──────────────────────────────┴──────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│  SPECTER-web (Vite + React)       │  specter (Rust workspace)            │
+│  -------------------------------- │  ----------------------------------- │
+│  Pages:                           │  specter-api (Axum REST, port 3001)  │
+│   /setup   - Generate keys        │  specter-core    - types, errors     │
+│   /send    - Send payment          │  specter-crypto  - ML-KEM, SHAKE256 │
+│   /scan    - Scan payments         │  specter-stealth - payment + scan   │
+│   /yellow  - Yellow channels       │  specter-registry - announcements   │
+│                                   │  specter-ens     - ENS + IPFS       │
+│  Calls API at localhost:3001      │  specter-suins   - SuiNS resolver   │
+│                                   │  specter-yellow  - Yellow Network    │
+│                                   │  specter-scanner - batch scanning    │
+│                                   │  specter-cli     - CLI tool          │
+└───────────────────────────────────┴──────────────────────────────────────┘
                                         │
-                    ┌──────────────────┼──────────────────┐
-                    ▼                  ▼                  ▼
-              Ethereum RPC          ENS (resolve)      IPFS (Pinata)
-              (resolve ENS)         content hash      (upload meta)
+                    ┌───────────────────┼───────────────────┐
+                    v                   v                   v
+              Ethereum RPC        ENS / SuiNS          IPFS (Pinata)
+              (resolve names)     (content hash)       (upload meta)
+                    │
+                    v
+            Yellow Network (wss://clearnet.yellow.com/ws)
+            (private state channels on Sepolia)
 ```
 
 - **Backend**: single Rust workspace under `specter/`; API server is `specter-api`; CLI is `specter-cli`.
@@ -84,7 +95,7 @@ Under the hood: for each announcement, decapsulate with viewing_sk → shared se
 ### Prerequisites
 
 - **Rust** (latest stable)
-- **Node.js** v18+ and **Yarn** or **npm**
+- **Node.js** v18+ and **npm**
 
 ### Build and run
 
@@ -105,15 +116,16 @@ Under the hood: for each announcement, decapsulate with viewing_sk → shared se
 3. **Frontend (Vite)**
    ```bash
    cd ../SPECTER-web
-   npm install   # or yarn
-   npm run dev   # or yarn dev
+   npm install
+   npm run dev
    ```
    Set `VITE_API_BASE_URL=http://localhost:3001` if needed (default is already that).
 
-### Optional: ENS and IPFS
+### Optional: ENS, IPFS, Yellow
 
 - **ENS resolve**: Backend uses `ETH_RPC_URL` (default: PublicNode). No extra config for resolve-only.
-- **Upload to IPFS**: Set `PINATA_API_KEY` and `PINATA_SECRET_KEY` so `POST /api/v1/ens/upload` can pin to Pinata.
+- **Upload to IPFS**: Set `PINATA_JWT`, `PINATA_GATEWAY_URL`, `PINATA_GATEWAY_TOKEN` in `specter/.env`.
+- **Yellow Network**: Set `YELLOW_WS_URL`, `YELLOW_CHAIN_ID`, etc. Defaults to production `wss://clearnet.yellow.com/ws`. See [Yellow.md](Yellow.md).
 
 ### E2E check
 
@@ -121,29 +133,45 @@ With the API running on 3001:
 ```bash
 ./scripts/e2e-stealth-flow.sh
 ```
-Runs: generate keys → create stealth payment → publish announcement → scan → verify stealth address and `eth_private_key` match.
+Runs: generate keys -> create stealth payment -> publish announcement -> scan -> verify stealth address and `eth_private_key` match.
 
 ---
 
 ## API summary
+
+### Core stealth protocol
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/health` | Health and uptime |
 | POST | `/api/v1/keys/generate` | Generate spending/viewing keys and meta-address |
 | POST | `/api/v1/stealth/create` | Create stealth address + announcement for a meta-address |
-| POST | `/api/v1/stealth/scan` | Scan registry for payments (body: viewing_sk, spending_pk, spending_sk; optional view_tags / time range) |
+| POST | `/api/v1/stealth/scan` | Scan registry for payments |
 | GET | `/api/v1/ens/resolve/:name` | Resolve ENS name to meta-address |
-| POST | `/api/v1/ens/upload` | Upload meta-address to IPFS; returns CID and text record value |
-| GET | `/api/v1/registry/announcements` | List announcements (query: view_tag, offset, limit, from_timestamp, to_timestamp) |
-| POST | `/api/v1/registry/announcements` | Publish announcement (body: ephemeral_key, view_tag, optional channel_id) |
-| GET | `/api/v1/registry/stats` | Registry stats (total, view_tag distribution) |
+| GET | `/api/v1/suins/resolve/:name` | Resolve SuiNS name to meta-address |
+| POST | `/api/v1/ipfs/upload` | Upload meta-address to IPFS |
+| GET | `/api/v1/ipfs/:cid` | Retrieve IPFS content |
+| GET | `/api/v1/registry/announcements` | List announcements (with filters) |
+| POST | `/api/v1/registry/announcements` | Publish announcement |
+| GET | `/api/v1/registry/stats` | Registry stats |
+
+### Yellow Network
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/v1/yellow/channel/create` | Create private channel via stealth address |
+| POST | `/api/v1/yellow/channel/discover` | Scan for incoming channels |
+| POST | `/api/v1/yellow/channel/fund` | Add funds to a channel |
+| POST | `/api/v1/yellow/channel/close` | Close and settle on L1 |
+| GET | `/api/v1/yellow/channel/:id/status` | Channel status |
+| POST | `/api/v1/yellow/transfer` | Off-chain transfer |
+| GET | `/api/v1/yellow/config` | Yellow Network configuration |
 
 ---
 
 ## Why Rust
 
-SPECTER’s critical path—key generation, encapsulation, decapsulation, stealth derivation, and scanning—runs in **Rust** for good reason:
+SPECTER's critical path -- key generation, encapsulation, decapsulation, stealth derivation, and scanning -- runs in **Rust** for good reason:
 
 - **Security**: No undefined behavior; memory and thread safety enforced by the compiler. Secret keys are zeroized on drop. Constant-time crypto where it matters.
 - **Performance**: No GC pauses; predictable latency. ML-KEM and SHAKE256 run at tens of thousands of ops per second per core, so scanning large announcement sets stays fast.
@@ -162,14 +190,16 @@ The backend is a **single Cargo workspace** under `specter/`. Each crate has a f
 |-------|------|
 | **specter-core** | Shared types (`MetaAddress`, `Announcement`, `EthAddress`, `KyberPublicKey`), errors (`SpecterError`), constants (key sizes, domain strings), and traits (e.g. `AnnouncementRegistry`). No I/O; used by every other crate. |
 | **specter-crypto** | Post-quantum and derived crypto: ML-KEM-768 keygen/encapsulate/decapsulate (via `pqcrypto-kyber`), SHAKE256 hashing, view-tag computation, and stealth key/address derivation (XOR with SHAKE256 output, then Keccak256 for Ethereum address). All secret material zeroized. |
-| **specter-stealth** | High-level protocol: `create_stealth_payment(meta_address)` for senders (encapsulate → view tag → derive stealth address) and `scan_announcement` / `scan_with_context` for recipients (decapsulate → view-tag filter → derive stealth keys). Defines `StealthPayment`, `SpecterWallet`. |
+| **specter-stealth** | High-level protocol: `create_stealth_payment(meta_address)` for senders (encapsulate -> view tag -> derive stealth address) and `scan_announcement` / `scan_with_context` for recipients (decapsulate -> view-tag filter -> derive stealth keys). Defines `StealthPayment`, `SpecterWallet`. |
 | **specter-registry** | Announcement storage: in-memory implementation and (optional) file-backed. Used by the API and CLI to publish and list announcements; supports filtering by view tag and time range. |
 | **specter-scanner** | Batch scanning and progress reporting (e.g. for CLI or future indexing). Builds on `specter-stealth` discovery. |
 | **specter-ens** | ENS resolution (content hash / text records) and IPFS upload (e.g. Pinata) for meta-addresses. Used when resolving `alice.eth` or uploading meta-address for ENS. |
-| **specter-api** | REST API (Axum): routes for keys, stealth create/scan, ENS resolve/upload, registry publish/list/stats, health. Runs as the backend the web app calls. |
+| **specter-suins** | SuiNS resolution for Sui blockchain. Same pattern as ENS but for `.sui` names. |
+| **specter-yellow** | Yellow Network integration: private state channels via stealth addresses. Client, channel builder, discovery, and settlement. See [Yellow.md](Yellow.md). |
+| **specter-api** | REST API (Axum): routes for keys, stealth create/scan, ENS/SuiNS resolve, IPFS upload, registry publish/list/stats, Yellow channel operations, health. Runs as the backend the web app calls. |
 | **specter-cli** | CLI (Clap): `generate`, `resolve`, `create`, `scan`, `serve`, `bench`. Same core libraries as the API; useful for scripting and local testing. |
 
-Dependency flow: **specter-core** ← **specter-crypto** ← **specter-stealth**; **specter-registry** and **specter-ens** use core (and crypto/stealth where needed); **specter-api** and **specter-cli** tie them together.
+Dependency flow: **specter-core** <- **specter-crypto** <- **specter-stealth**; **specter-registry** and **specter-ens** use core (and crypto/stealth where needed); **specter-yellow** uses stealth + registry + ens; **specter-api** and **specter-cli** tie them together.
 
 ---
 
@@ -193,7 +223,7 @@ cargo bench -p specter-crypto
 
 ### 1. CLI integration benchmark
 
-Simulates key generation, creating many announcements (mix of “our” payments and random ones), and a full scan. Example with 10k announcements: key generation ~hundreds of µs; scan rate and time per announcement printed at the end. Increase `--count` (e.g. `100000`) for heavier load.
+Simulates key generation, creating many announcements (mix of "our" payments and random ones), and a full scan. Example with 10k announcements: key generation ~hundreds of us; scan rate and time per announcement printed at the end. Increase `--count` (e.g. `100000`) for heavier load.
 
 ### 2. Criterion (crypto-only)
 
@@ -201,22 +231,22 @@ Micro-benchmarks for the hot crypto functions. Example results (release build):
 
 | Operation | Time | Throughput |
 |-----------|------|-------------|
-| Key generation (one Kyber keypair) | ~12.3 µs | ~81k/sec |
-| Encapsulate | ~8.15 µs | ~123k/sec |
-| Decapsulate | ~9.5 µs | ~105k/sec |
+| Key generation (one Kyber keypair) | ~12.3 us | ~81k/sec |
+| Encapsulate | ~8.15 us | ~123k/sec |
+| Decapsulate | ~9.5 us | ~105k/sec |
 | View tag (`compute_view_tag`) | ~306 ns | ~3.27M/sec |
-| Derive stealth address | ~44–47 µs | ~21–23k/sec |
-| Derive stealth keys | ~66–71 µs | ~14–15.5k/sec |
+| Derive stealth address | ~44-47 us | ~21-23k/sec |
+| Derive stealth keys | ~66-71 us | ~14-15.5k/sec |
 
-So a **full scan** over 100k announcements with view-tag filtering does ~400 decapsulations (0.4% of 100k) plus derivations only for matches; end-to-end is typically on the order of **1–2 seconds** for 100k announcements, depending on hardware.
+So a **full scan** over 100k announcements with view-tag filtering does ~400 decapsulations (0.4% of 100k) plus derivations only for matches; end-to-end is typically on the order of **1-2 seconds** for 100k announcements, depending on hardware.
 
 ---
 
 ## Technology stack
 
-- **Backend**: **Rust** — Axum (API), pqcrypto-kyber (ML-KEM-768), sha3 (SHAKE256), alloy/ethers (Ethereum/ENS).
-- **Frontend**: TypeScript, Vite, React, TailwindCSS, wagmi/viem.
-- **Infrastructure**: Ethereum (ENS), IPFS (Pinata), optional Yellow for off-chain privacy.
+- **Backend**: **Rust** -- Axum (API), pqcrypto-kyber (ML-KEM-768), sha3 (SHAKE256), alloy/ethers (Ethereum/ENS).
+- **Frontend**: TypeScript, Vite, React, TailwindCSS, Framer Motion, Radix UI, Dynamic Labs (wallet), Sui dapp-kit.
+- **Infrastructure**: Ethereum (ENS), Sui (SuiNS), IPFS (Pinata), Yellow Network (state channels).
 
 ---
 
@@ -225,28 +255,36 @@ So a **full scan** over 100k announcements with view-tag filtering does ~400 dec
 ```
 SPECTER/
 ├── README.md                 # This file
+├── Yellow.md                 # Yellow Network integration docs
 ├── assets/                   # Logo images
 ├── scripts/
 │   ├── build-and-test.sh     # Build + test Rust workspace
-│   ├── e2e-stealth-flow.sh   # E2E: generate → create → publish → scan → verify
+│   ├── e2e-stealth-flow.sh   # E2E: generate -> create -> publish -> scan -> verify
 │   └── rebuild-backend.sh
 ├── specter/                  # Rust workspace (backend + CLI)
 │   ├── Cargo.toml
-│   ├── README.md             # Crate-level docs and CLI/API reference
-│   ├── SPECTER_API.postman_collection.json
-│   ├── specter-api/          # REST API server
+│   ├── specter-api/          # REST API server (core + Yellow endpoints)
 │   ├── specter-cli/          # CLI (generate, create, scan, serve, bench, resolve)
-│   ├── specter-core/         # Types, errors, constants
-│   ├── specter-crypto/       # ML-KEM, view tags, stealth derivation
+│   ├── specter-core/         # Types, errors, constants, traits
+│   ├── specter-crypto/       # ML-KEM-768, view tags, stealth derivation
 │   ├── specter-ens/          # ENS resolver + IPFS upload
+│   ├── specter-suins/        # SuiNS resolver
+│   ├── specter-yellow/       # Yellow Network integration
 │   ├── specter-registry/     # In-memory (and file) announcement registry
 │   ├── specter-scanner/      # Batch scanning
-│   └── specter-stealth/      # Payment creation + discovery
-└── SPECTER-web/             # Vite + React frontend
+│   ├── specter-stealth/      # Payment creation + discovery
+│   └── examples/
+│       └── yellow_private_trading.rs  # Yellow integration demo
+└── SPECTER-web/              # Vite + React frontend
     ├── package.json
     └── src/
-        ├── lib/api.ts        # API client (base URL from VITE_API_BASE_URL)
-        ├── pages/            # GenerateKeys, SendPayment, ScanPayments, EnsManager, etc.
+        ├── lib/api.ts        # API client (core + Yellow)
+        ├── pages/
+        │   ├── Index.tsx          # Landing page
+        │   ├── GenerateKeys.tsx   # Key generation wizard
+        │   ├── SendPayment.tsx    # Send stealth payment
+        │   ├── ScanPayments.tsx   # Scan for payments
+        │   └── YellowPage.tsx     # Yellow Network dashboard
         └── components/
 ```
 

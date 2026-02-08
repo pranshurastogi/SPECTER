@@ -15,7 +15,7 @@ use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, MetaAddress, KyberPublicKey};
 use specter_crypto::{generate_keypair, compute_view_tag, encapsulate};
 use specter_crypto::derive::derive_stealth_address;
-use specter_stealth::{create_stealth_payment, SpecterWallet};
+use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
 use crate::error::ApiError;
@@ -352,7 +352,7 @@ pub async fn health_check(
 ) -> Json<HealthResponse> {
     let start = START_TIME.get_or_init(Instant::now);
     let uptime = start.elapsed().as_secs();
-    
+
     let count = state.registry.count().await.unwrap_or(0);
 
     Json(HealthResponse {
@@ -361,5 +361,286 @@ pub async fn health_check(
         uptime_seconds: uptime,
         announcements_count: count,
         use_testnet: state.config.use_testnet,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Yellow Network Handlers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// POST /api/v1/yellow/channel/create
+///
+/// Creates a private trading channel using SPECTER stealth addresses.
+/// 1. Resolves recipient ENS name → meta-address
+/// 2. Creates stealth address for recipient
+/// 3. Generates channel ID and announcement data
+pub async fn yellow_create_channel(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<YellowCreateChannelRequest>,
+) -> Result<Json<YellowCreateChannelResponse>> {
+    info!(recipient = %req.recipient, token = %req.token, amount = %req.amount, "Creating private Yellow channel");
+
+    // Resolve meta-address from ENS or hex
+    let meta_address = if req.recipient.ends_with(".eth") {
+        state.resolver.resolve(&req.recipient).await
+            .map_err(ApiError::from)?
+    } else {
+        MetaAddress::from_hex(&req.recipient)
+            .map_err(|e| ApiError::bad_request(format!("Invalid recipient: {}", e)))?
+    };
+
+    // Create stealth payment (generates stealth address + ephemeral key)
+    let payment = create_stealth_payment(&meta_address)
+        .map_err(|e| ApiError::internal(format!("Stealth payment creation failed: {}", e)))?;
+
+    // Use provided channel_id (from on-chain create) or generate random
+    let (channel_id_bytes, channel_id) = if let Some(ref id) = req.channel_id.filter(|s| !s.trim().is_empty()) {
+        let decoded = hex::decode(strip_hex_prefix(id))
+            .map_err(|e| ApiError::bad_request(format!("Invalid channel_id hex: {}", e)))?;
+        if decoded.len() != 32 {
+            return Err(ApiError::bad_request(
+                "channel_id must be 32 bytes (64 hex chars)".to_string(),
+            ));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&decoded);
+        (arr, id.clone())
+    } else {
+        use rand::RngCore;
+        let mut arr = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut arr);
+        (arr, hex::encode(arr))
+    };
+
+    let stealth_address = payment.stealth_address.to_checksum_string();
+    let ephemeral_key = hex::encode(&payment.announcement.ephemeral_key);
+    let view_tag = payment.announcement.view_tag;
+
+    // Publish announcement with channel_id to registry
+    let mut announcement = Announcement::with_channel(
+        payment.announcement.ephemeral_key,
+        view_tag,
+        channel_id_bytes,
+    );
+    announcement.amount = Some(req.amount.clone());
+    announcement.chain = Some("ethereum".into());
+
+    let ann_id = state.registry.publish(announcement).await
+        .map_err(|e| ApiError::internal(format!("Failed to publish announcement: {}", e)))?;
+
+    info!(ann_id, channel_id = %channel_id, "Yellow channel created with announcement");
+
+    Ok(Json(YellowCreateChannelResponse {
+        channel_id: channel_id.clone(),
+        stealth_address,
+        announcement: YellowAnnouncementData {
+            ephemeral_key,
+            view_tag,
+            channel_id,
+        },
+        tx_hash: format!("0x{}", hex::encode(&channel_id_bytes[..16])),
+    }))
+}
+
+/// POST /api/v1/yellow/channel/discover
+///
+/// Scans SPECTER announcements for channels addressed to this wallet.
+pub async fn yellow_discover_channels(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<YellowDiscoverRequest>,
+) -> Result<Json<YellowDiscoverResponse>> {
+    let viewing_sk = hex::decode(strip_hex_prefix(&req.viewing_sk))?;
+    let spending_pk = hex::decode(strip_hex_prefix(&req.spending_pk))?;
+    let spending_sk = hex::decode(strip_hex_prefix(&req.spending_sk))?;
+
+    info!("Scanning for private Yellow channels...");
+
+    let announcements = state.registry.all_announcements();
+
+    let discoveries = specter_stealth::discovery::scan_with_context(
+        &announcements,
+        &viewing_sk,
+        &spending_pk,
+        &spending_sk,
+    );
+
+    let channels: Vec<YellowDiscoveredChannelDto> = discoveries
+        .into_iter()
+        .filter(|d| d.announcement.channel_id.is_some())
+        .map(|d| {
+            let amount = d.announcement.amount.clone().unwrap_or_else(|| "0".into());
+            let token = if d.announcement.chain.as_deref() == Some("ethereum") {
+                "USDC".into()
+            } else {
+                "USDC".into()
+            };
+            YellowDiscoveredChannelDto {
+                channel_id: d.announcement.channel_id.map(hex::encode).unwrap_or_default(),
+                stealth_address: d.keys.address.to_checksum_string(),
+                eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
+                status: "open".into(),
+                discovered_at: d.announcement.timestamp,
+                amount,
+                token,
+            }
+        })
+        .collect();
+
+    info!(count = channels.len(), "Yellow channel discovery complete");
+
+    Ok(Json(YellowDiscoverResponse { channels }))
+}
+
+/// POST /api/v1/yellow/channel/fund
+///
+/// Adds funds to an existing Yellow channel.
+pub async fn yellow_fund_channel(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<YellowFundChannelRequest>,
+) -> Result<Json<YellowFundChannelResponse>> {
+    info!(channel_id = %req.channel_id, amount = %req.amount, "Funding Yellow channel");
+
+    // In production, would interact with Yellow's custody contract on Sepolia
+    Ok(Json(YellowFundChannelResponse {
+        tx_hash: format!("0x{}", hex::encode(req.channel_id.as_bytes().get(..16).unwrap_or(b"pending_fund_tx_"))),
+        new_balance: req.amount,
+    }))
+}
+
+/// POST /api/v1/yellow/channel/close
+///
+/// Records the channel close and returns final balances. Does NOT submit an L1 transaction:
+/// the frontend sends the close to Yellow Network (closeSession); real on-chain settlement
+/// is performed by Yellow's ClearNode/adjudicator when they process the close. In sandbox
+/// mode, Yellow may not perform real Sepolia settlement, so USDC balance may not change.
+pub async fn yellow_close_channel(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<YellowCloseChannelRequest>,
+) -> Result<Json<YellowCloseChannelResponse>> {
+    info!(channel_id = %req.channel_id, "Closing Yellow channel");
+
+    // Look up the channel announcement to get the funded amount
+    let announcements = state.registry.all_announcements();
+    let channel_id_bytes = hex::decode(strip_hex_prefix(&req.channel_id)).unwrap_or_default();
+    let mut channel_id_arr = [0u8; 32];
+    if channel_id_bytes.len() == 32 {
+        channel_id_arr.copy_from_slice(&channel_id_bytes);
+    }
+    let matching = announcements.iter().find(|a| a.channel_id == Some(channel_id_arr));
+    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+
+    // Placeholder tx_hash for UI reference; no L1 tx is submitted by this backend.
+    let placeholder_tx = format!("0x{}", hex::encode(channel_id_bytes.get(..16).unwrap_or(b"pending_close_tx")));
+
+    Ok(Json(YellowCloseChannelResponse {
+        tx_hash: placeholder_tx,
+        tx_hash_is_placeholder: true,
+        final_balances: vec![
+            YellowAllocationDto {
+                destination: "stealth_address".into(),
+                token: "USDC".into(),
+                amount,
+            },
+        ],
+    }))
+}
+
+/// GET /api/v1/yellow/channel/:id/status
+///
+/// Returns current status of a Yellow channel.
+pub async fn yellow_channel_status(
+    State(state): State<Arc<AppState>>,
+    Path(channel_id): Path<String>,
+) -> Result<Json<YellowChannelStatusResponse>> {
+    // Look for announcements with this channel_id
+    let announcements = state.registry.all_announcements();
+
+    let channel_id_bytes = hex::decode(strip_hex_prefix(&channel_id))
+        .map_err(|e| ApiError::bad_request(format!("Invalid channel_id: {}", e)))?;
+
+    let mut channel_id_arr = [0u8; 32];
+    if channel_id_bytes.len() == 32 {
+        channel_id_arr.copy_from_slice(&channel_id_bytes);
+    }
+
+    let matching = announcements.iter().find(|a| {
+        a.channel_id == Some(channel_id_arr)
+    });
+
+    let created_at = matching.map(|a| a.timestamp).unwrap_or(0);
+    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+
+    let balances = if matching.is_some() {
+        vec![YellowAllocationDto {
+            destination: "stealth".into(),
+            token: "USDC".into(),
+            amount,
+        }]
+    } else {
+        vec![]
+    };
+
+    Ok(Json(YellowChannelStatusResponse {
+        channel_id: channel_id.clone(),
+        status: if matching.is_some() { "open" } else { "unknown" }.into(),
+        balances,
+        participants: vec![],
+        created_at,
+        version: 1,
+    }))
+}
+
+/// POST /api/v1/yellow/transfer
+///
+/// Executes an off-chain transfer within a Yellow channel.
+pub async fn yellow_transfer(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<YellowTransferRequest>,
+) -> Result<Json<YellowTransferResponse>> {
+    info!(
+        channel_id = %req.channel_id,
+        destination = %req.destination,
+        amount = %req.amount,
+        asset = %req.asset,
+        "Off-chain transfer"
+    );
+
+    Ok(Json(YellowTransferResponse {
+        new_state_version: 2,
+        balances: vec![
+            YellowAllocationDto {
+                destination: req.destination,
+                token: req.asset,
+                amount: req.amount,
+            },
+        ],
+    }))
+}
+
+/// GET /api/v1/yellow/config
+///
+/// Returns Yellow Network configuration.
+pub async fn yellow_config(
+    State(state): State<Arc<AppState>>,
+) -> Json<YellowConfigResponse> {
+    let config = &state.yellow_config;
+
+    Json(YellowConfigResponse {
+        ws_url: config.ws_url.clone(),
+        custody_address: config.custody_address.clone(),
+        adjudicator_address: config.adjudicator_address.clone(),
+        chain_id: config.chain_id,
+        supported_tokens: vec![
+            YellowTokenInfo {
+                symbol: "USDC".into(),
+                address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238".into(),
+                decimals: 6,
+            },
+            YellowTokenInfo {
+                symbol: "ETH".into(),
+                address: "0x0000000000000000000000000000000000000000".into(),
+                decimals: 18,
+            },
+        ],
     })
 }

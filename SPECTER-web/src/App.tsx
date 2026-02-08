@@ -8,6 +8,8 @@ import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
 import ScanPayments from "./pages/ScanPayments";
+import YellowPage from "./pages/YellowPage";
+import UseCasesPage from "./pages/UseCasesPage";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
@@ -29,6 +31,8 @@ const App = () => (
               <Route path="/setup" element={<GenerateKeys />} />
               <Route path="/send" element={<SendPayment />} />
               <Route path="/scan" element={<ScanPayments />} />
+              <Route path="/yellow" element={<YellowPage />} />
+              <Route path="/usecases" element={<UseCasesPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
