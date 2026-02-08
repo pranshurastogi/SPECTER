@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/SPECTER-logo-with-tagline.png" alt="SPECTER Logo" width="200">
 
-  **Post-quantum stealth address protocol for Ethereum and Sui**
+  **Post quantum stealth address protocol for Ethereum and Sui**
 
   [Live Demo](https://specter-stealth.vercel.app)
 
@@ -23,9 +23,9 @@
 
 ## About
 
-On-chain payments today are fully transparent. Every transfer exposes both the sender and recipient, making wallets easy to track and link to real identities.
+Onchain payments today are fully transparent. Every transfer exposes both the sender and recipient, making wallets easy to track and link to real identities.
 
-SPECTER fixes this. Send to anyone using just their ENS (`.eth`) or SuiNS (`.sui`) name, and SPECTER generates a fresh, one-time stealth address for every payment. The recipient is the only one who can discover and spend from it. To the rest of the world, it looks like funds went to a random address with no connection to anyone.
+SPECTER fixes this. Send to anyone using just their ENS (`.eth`) or SuiNS (`.sui`) name, and SPECTER generates a fresh, one time stealth address for every payment. The recipient is the only one who can discover and spend from it. To the rest of the world, it looks like funds went to a random address with no connection to anyone.
 
 The cryptography underneath uses [**ML-KEM-768**](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf) (NIST FIPS 203), a post-quantum key encapsulation standard. This means payments stay private even against adversaries with access to quantum computers.
 
@@ -153,6 +153,9 @@ SPECTER/
 │       └── components/       # UI components
 └── scripts/                  # Build, test, E2E scripts
 ```
+
+## Research paper for Post Quantum Stealth Address Protocols
+[Post Quantum Stealth Address Protocols](https://arxiv.org/pdf/2501.13733v1)
 
 ---
 
