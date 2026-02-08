@@ -237,6 +237,8 @@ export interface YellowCreateChannelRequest {
   recipient: string;
   token: string;
   amount: string;
+  /** When provided (from on-chain create), used for the announcement instead of a random ID. */
+  channel_id?: string;
 }
 
 export interface YellowAnnouncementData {

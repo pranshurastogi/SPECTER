@@ -65,6 +65,15 @@ import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
 import { chain } from "@/lib/chainConfig";
 import { getYellowClient, setYellowWsUrl } from "@/lib/yellowService";
+import { createOnChainYellowChannel } from "@/lib/nitroliteYellow";
+import {
+  fetchBalancesForTokens,
+  isLowBalance,
+  LOW_BALANCE_THRESHOLD,
+  YELLOW_SANDBOX_FAUCET,
+  SEPOLIA_FAUCET_LINKS,
+  type TokenBalance,
+} from "@/lib/yellowBalances";
 
 const CARD_PIXEL_COLORS = ["#eab30818", "#fbbf2414", "#f59e0b12", "#fcd34d10"];
 
@@ -80,7 +89,7 @@ const stagger = {
   visible: { transition: { staggerChildren: 0.08 } },
 };
 
-/** Real Sepolia tx hashes are 0x + 64 hex chars. Placeholder refs are shorter. */
+/** Real Sepolia transaction hashes are 0x + 64 hex chars. Placeholder refs are shorter. */
 function isRealTxHash(h: string): boolean {
   return /^0x[0-9a-fA-F]{64}$/.test(h);
 }
@@ -320,16 +329,21 @@ function ActivityLog({ events }: { events: ActivityEvent[] }) {
 type CreateStep = 1 | 2 | 3 | 4 | 5;
 
 function CreatePrivateChannel({
+  config,
   onCreated,
   onActivity,
 }: {
+  config: YellowConfigResponse | null;
   onCreated: (ch: LocalChannel) => void;
   onActivity: (event: ActivityEvent) => void;
 }) {
   const { primaryWallet, setShowAuthFlow } = useDynamicContext();
   const [step, setStep] = useState<CreateStep>(1);
   const [recipient, setRecipient] = useState("");
-  const [token] = useState("0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238");
+  const eligibleTokens = config?.supported_tokens ?? [];
+  const [selectedToken, setSelectedToken] = useState<string>(
+    () => eligibleTokens[0]?.address ?? "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+  );
   const [amount, setAmount] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -338,21 +352,59 @@ function CreatePrivateChannel({
   const [resolvedENS, setResolvedENS] = useState<ResolveEnsResponse | null>(null);
   const [resolvedMetaAddress, setResolvedMetaAddress] = useState<string | null>(null);
   const [channelResult, setChannelResult] = useState<YellowCreateChannelResponse | null>(null);
+  const [tokenBalances, setTokenBalances] = useState<Record<string, TokenBalance>>({});
+  const [balancesLoading, setBalancesLoading] = useState(false);
   const evmConnected = !!primaryWallet;
+
+  // Sync selected token when config loads (eligible tokens may change)
+  useEffect(() => {
+    if (eligibleTokens.length && !eligibleTokens.some((t) => t.address === selectedToken)) {
+      setSelectedToken(eligibleTokens[0].address);
+    }
+  }, [config?.supported_tokens, eligibleTokens.length]);
+
+  // Fetch balances for eligible tokens when wallet and config are available
+  useEffect(() => {
+    if (!primaryWallet || !eligibleTokens.length) {
+      setTokenBalances({});
+      return;
+    }
+    let cancelled = false;
+    setBalancesLoading(true);
+    const wallet = primaryWallet as { getWalletClient?(chainId: string): Promise<{ account?: { address: string } } | null> };
+    void wallet
+      .getWalletClient?.(chain.id.toString())
+      .then((wc) => wc?.account?.address)
+      .then(async (address) => {
+        if (!address || cancelled) return;
+        const balances = await fetchBalancesForTokens(
+          eligibleTokens.map((t) => ({ address: t.address, symbol: t.symbol, decimals: t.decimals })),
+          address as `0x${string}`
+        );
+        if (!cancelled) setTokenBalances(balances);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setBalancesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryWallet, config?.supported_tokens, eligibleTokens.length]);
 
   const stepLabels = [
     "Enter Recipient",
-    "Generate Stealth",
-    "Open Channel",
-    "Fund Channel",
-    "Publish",
+    "Create onchain channel",
+    "Register stealth",
+    "Fund app session",
+    "Done",
   ];
 
   // Step 1: Resolve recipient (mirror Send page: ENS or meta-address hex)
   const handleResolve = async () => {
     const name = recipient.trim();
     if (!name) {
-      setResolveError("Enter a recipient ENS name (e.g. bob.eth) or meta-address hex");
+      setResolveError("Enter a recipient ENS name (e.g. bob.eth) or meta address hex");
       toast.error("Enter recipient");
       return;
     }
@@ -399,7 +451,7 @@ function CreatePrivateChannel({
     }
   };
 
-  // Steps 2-5: Create channel through API, then fund via Yellow Network (Sepolia ClearNode)
+  // Steps 2-5: Create onchain channel (Nitrolite), register stealth (API), fund app session (Yellow)
   const handleCreateChannel = async () => {
     const recipientForApi = resolvedMetaAddress ?? recipient.trim();
     if (!recipientForApi) {
@@ -410,36 +462,66 @@ function CreatePrivateChannel({
       toast.error("Connect your wallet first using the Connect button (e.g. in Send or Setup), then try again. Use Sepolia in MetaMask.");
       return;
     }
+    if (!config) {
+      toast.error("Loading Yellow configuration.");
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
 
     try {
       setStep(2);
-      await new Promise((r) => setTimeout(r, 800));
-
-      setStep(3);
-      const result = await api.yellowCreateChannel({
-        recipient: recipientForApi,
-        token,
-        amount: amount || "100",
-      });
-      setChannelResult(result);
-
-      setStep(4);
-      // Fund channel via Yellow Network: create session with [user, stealth] and allocations
       const walletClient = await primaryWallet.getWalletClient(chain.id.toString());
       if (!walletClient?.account) {
         const msg = isEthereumWallet(primaryWallet)
           ? "Switch your wallet to Sepolia network, then try again."
-          : "Connect an Ethereum wallet (Sepolia) to fund the channel.";
+          : "Connect an Ethereum wallet (Sepolia) to create the channel.";
         toast.error(msg);
         setIsLoading(false);
         return;
       }
-      const userAddress = walletClient.account.address;
       const amountNum = parseFloat(amount || "100");
-      const amountSixDecimals = Math.floor(amountNum * 1e6).toString(); // USDC 6 decimals
+      const tokenInfo = eligibleTokens.find((t) => t.address === selectedToken);
+      const decimals = tokenInfo?.decimals ?? 6;
+      const amountWei = BigInt(Math.floor(amountNum * 10 ** decimals));
+
+      // Onchain channel creation via Yellow ClearNode (session key + EIP-712 auth per Yellow Quickstart)
+      let channelId: string | undefined;
+      let txHash: string | undefined;
+      const rpcUrl = import.meta.env.VITE_ETH_RPC_URL || import.meta.env.VITE_ALCHEMY_RPC_SEPOLIA;
+
+      try {
+        const onChain = await createOnChainYellowChannel(
+          {
+            custodyAddress: config.custody_address as `0x${string}`,
+            adjudicatorAddress: config.adjudicator_address as `0x${string}`,
+            chainId: config.chain_id,
+            wsUrl: config.ws_url,
+            rpcUrl: rpcUrl || undefined,
+          },
+          walletClient,
+          amountWei
+        );
+        channelId = onChain.channelId;
+        txHash = onChain.txHash;
+      } catch (onChainError) {
+        console.warn("[Yellow] Onchain create failed, using backend only:", onChainError);
+        // Backend will generate a random channel_id
+      }
+
+      setStep(3);
+      const result = await api.yellowCreateChannel({
+        recipient: recipientForApi,
+        token: selectedToken,
+        amount: amount || "100",
+        channel_id: channelId, // undefined if onchain failed
+      });
+      setChannelResult(result);
+
+      setStep(4);
+      const userAddress = walletClient.account.address;
+      const amountSixDecimals = Math.floor(amountNum * 1e6).toString();
       const yellow = getYellowClient();
       const messageSigner = async (msg: string) =>
         walletClient.signMessage({ message: msg });
@@ -456,23 +538,26 @@ function CreatePrivateChannel({
       setStep(5);
       await new Promise((r) => setTimeout(r, 500));
 
-      toast.success("Private channel created and funded on Yellow Network!");
+      const successMsg = txHash 
+        ? "Private channel created onchain and funded."
+        : "Private channel created (backend only mode).";
+      toast.success(successMsg);
 
       const fundedAmount = amount || "100";
+      const tokenSymbol = tokenInfo?.symbol ?? "USDC";
       const newChannel: LocalChannel = {
         channel_id: result.channel_id,
         stealth_address: result.stealth_address,
         status: "open",
-        token: "USDC",
+        token: tokenSymbol,
         amount: fundedAmount,
         recipient: resolvedENS?.ens_name ?? recipient,
         created_at: Date.now() / 1000,
-        tx_hash: result.tx_hash,
+        tx_hash: txHash || undefined, // may be undefined if onchain failed
         session_id: sessionId,
       };
       onCreated(newChannel);
 
-      // Log creation activity
       onActivity({
         id: createActivityId(),
         type: "channel_created",
@@ -480,8 +565,10 @@ function CreatePrivateChannel({
         channel_id: result.channel_id,
         amount: fundedAmount,
         token: "USDC",
-        details: `Opened channel to ${resolvedENS?.ens_name ?? formatAddress(result.stealth_address)} with ${fundedAmount} USDC`,
-        tx_hash: result.tx_hash,
+        details: txHash 
+          ? `Opened onchain channel to ${resolvedENS?.ens_name ?? formatAddress(result.stealth_address)} with ${fundedAmount} ${tokenSymbol}`
+          : `Created channel to ${resolvedENS?.ens_name ?? formatAddress(result.stealth_address)} (backend only, ${fundedAmount} ${tokenSymbol})`,
+        tx_hash: txHash,
         session_id: sessionId,
         from: userAddress,
         to: result.stealth_address,
@@ -494,8 +581,8 @@ function CreatePrivateChannel({
         timestamp: Date.now(),
         channel_id: result.channel_id,
         amount: fundedAmount,
-        token: "USDC",
-        details: `Funded ${fundedAmount} USDC via Yellow Network session${sessionId ? ` (${sessionId.slice(0, 8)}...)` : ""}`,
+        token: tokenSymbol,
+        details: `Funded ${fundedAmount} ${tokenSymbol} via Yellow Network session${sessionId ? ` (${sessionId.slice(0, 8)}...)` : ""}`,
         session_id: sessionId,
         from: userAddress,
         to: result.stealth_address,
@@ -577,7 +664,7 @@ function CreatePrivateChannel({
                   <Label className="text-sm text-muted-foreground flex items-center gap-1">
                     <TooltipLabel
                       label="Recipient"
-                      tooltip="ENS name (e.g. bob.eth) or paste meta-address hex from Setup. Only the recipient can discover this channel."
+                      tooltip="ENS name (e.g. bob.eth) or paste meta address hex from Setup. Only the recipient can discover this channel."
                     />
                   </Label>
                   <div className="flex gap-2">
@@ -587,7 +674,7 @@ function CreatePrivateChannel({
                         setRecipient(e.target.value);
                         setResolveError(null);
                       }}
-                      placeholder="bob.eth or meta-address hex"
+                      placeholder="bob.eth or meta address hex"
                       className="flex-1 bg-background/50 border-border"
                     />
                     <Button
@@ -637,20 +724,101 @@ function CreatePrivateChannel({
 
                 <div className="space-y-2">
                   <Label className="text-sm text-muted-foreground">
-                    Token
+                    Eligible token
                   </Label>
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/50 border border-border">
-                    <DollarSign className="w-4 h-4 text-green-400" />
-                    <span className="text-sm font-medium">USDC</span>
-                    <span className="text-xs text-muted-foreground font-mono ml-auto">Sepolia</span>
-                  </div>
+                  {eligibleTokens.length === 0 ? (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/50 border border-border text-sm text-muted-foreground">
+                      Loading tokens.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {eligibleTokens.map((t) => {
+                        const key = t.address.toLowerCase();
+                        const tb = tokenBalances[key];
+                        const low = tb ? isLowBalance(tb.formatted, t.decimals, LOW_BALANCE_THRESHOLD) : false;
+                        const isSelected = selectedToken.toLowerCase() === key;
+                        const isSandbox = config?.ws_url?.includes("sandbox");
+                        return (
+                          <div
+                            key={key}
+                            onClick={() => setSelectedToken(t.address)}
+                            className={`flex items-center justify-between gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              isSelected
+                                ? "bg-yellow-500/10 border-yellow-500/30"
+                                : "bg-background/50 border-border hover:border-yellow-500/20"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <DollarSign className="w-4 h-4 text-green-400 shrink-0" />
+                              <span className="text-sm font-medium">{t.symbol}</span>
+                              {balancesLoading ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                              ) : tb ? (
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  Balance: {parseFloat(tb.formatted).toLocaleString(undefined, { maximumFractionDigits: 4 })} {t.symbol}
+                                </span>
+                              ) : null}
+                            </div>
+                            {low && tb && (
+                              <span className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                {isSandbox ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-xs text-yellow-500 hover:text-yellow-400 h-7 px-2"
+                                        onClick={async () => {
+                                          const w = primaryWallet as unknown as { getWalletClient?(c: string): Promise<{ account?: { address: string } } | null> };
+                                          const wc = await w?.getWalletClient?.(chain.id.toString());
+                                          const addr = wc?.account?.address;
+                                          if (!addr) {
+                                            toast.error("Connect wallet first");
+                                            return;
+                                          }
+                                          try {
+                                            const r = await fetch(YELLOW_SANDBOX_FAUCET, {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ userAddress: addr }),
+                                            });
+                                            if (r.ok) toast.success("Test tokens requested. Check your Yellow balance.");
+                                            else toast.error("Faucet request failed. Try again.");
+                                          } catch {
+                                            toast.error("Faucet request failed.");
+                                          }
+                                        }}
+                                      >
+                                        Request test tokens
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Request ytest.usd from Yellow Sandbox faucet</TooltipContent>
+                                  </Tooltip>
+                                ) : (
+                                  <a
+                                    href={SEPOLIA_FAUCET_LINKS[0].url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-yellow-500 hover:text-yellow-400 flex items-center gap-1"
+                                  >
+                                    Get test tokens <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
                   <Label className="text-sm text-muted-foreground flex items-center gap-1">
                     <TooltipLabel
-                      label="Funding amount (USDC)"
-                      tooltip="Amount of USDC to deposit into the channel. Ensure you have sufficient USDC (Sepolia) to fund."
+                      label="Funding amount"
+                      tooltip="Amount to deposit into the channel. Ensure you have sufficient balance (see above)."
                     />
                   </Label>
                   <Input
@@ -661,13 +829,14 @@ function CreatePrivateChannel({
                     min="0"
                     className="bg-background/50 border-border"
                   />
-                  {resolvedMetaAddress && (
+                  {resolvedMetaAddress && eligibleTokens.length > 0 && (
                     <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 p-3 space-y-1">
                       <p className="text-xs font-medium text-yellow-400">
-                        Channel funding: {amount || "100"} USDC
+                        Channel funding: {amount || "100"}{" "}
+                        {eligibleTokens.find((x) => x.address === selectedToken)?.symbol ?? "USDC"}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        This USDC will be locked in a Yellow Network state channel on Sepolia.
+                        Funds will be locked in a Yellow Network state channel on Sepolia.
                       </p>
                     </div>
                   )}
@@ -1048,7 +1217,7 @@ function DiscoverChannels({
               <Input
                 value={viewingSk}
                 onChange={(e) => setViewingSk(e.target.value)}
-                placeholder="Hex-encoded viewing secret key"
+                placeholder="Hex encoded viewing secret key"
                 className="bg-background/50 border-border font-mono text-xs"
                 type="password"
               />
@@ -1060,7 +1229,7 @@ function DiscoverChannels({
               <Input
                 value={spendingPk}
                 onChange={(e) => setSpendingPk(e.target.value)}
-                placeholder="Hex-encoded spending public key"
+                placeholder="Hex encoded spending public key"
                 className="bg-background/50 border-border font-mono text-xs"
               />
             </div>
@@ -1071,7 +1240,7 @@ function DiscoverChannels({
               <Input
                 value={spendingSk}
                 onChange={(e) => setSpendingSk(e.target.value)}
-                placeholder="Hex-encoded spending secret key"
+                placeholder="Hex encoded spending secret key"
                 className="bg-background/50 border-border font-mono text-xs"
                 type="password"
               />
@@ -1434,7 +1603,7 @@ function ChannelCard({
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-[200px]">
-                Send USDC off-chain to another address. Gasless and instant.
+                Send USDC offchain to another address. Gasless and instant.
               </TooltipContent>
             </Tooltip>
             <Tooltip>
@@ -1550,12 +1719,12 @@ function TransferModal({
         channel_id: channel.channel_id,
         amount,
         token: "USDC",
-        details: `Transferred ${amount} USDC off-chain to ${formatAddress(destination)}`,
+        details: `Transferred ${amount} USDC offchain to ${formatAddress(destination)}`,
         from: senderAddress,
         to: destination,
       });
 
-      toast.success(`Transferred ${amount} USDC off-chain!`);
+      toast.success(`Transferred ${amount} USDC offchain.`);
       onClose();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Transfer failed");
@@ -2052,11 +2221,11 @@ function CloseChannelModal({
               </div>
             )}
 
-            {/* No on-chain tx: current flow doesn't create/close real custody channels */}
+            {/* No onchain tx: current flow does not create or close real custody channels */}
             {settlementStep === 4 && txHashIsPlaceholder && (
               <div className="mt-4 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-left">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Close was sent to Yellow Network. In this integration, <strong>no on-chain channel is created or closed</strong> (we don’t call the custody contract to lock or settle USDC), so you won’t see a Sepolia tx or balance change. See Yellow.md → “Why you don’t see on-chain transactions” for details and how to get real settlement.
+                  Close was sent to Yellow Network. In this integration, <strong>no onchain channel is created or closed</strong> (we don’t call the custody contract to lock or settle USDC), so you won’t see a Sepolia transaction or balance change. See Yellow.md → “Why you don’t see onchain transactions” for details and how to get real settlement.
                 </p>
               </div>
             )}
@@ -2444,6 +2613,7 @@ export default function YellowPage() {
 
             <TabsContent value="create" className="mt-0 focus-visible:outline-none focus-visible:ring-0">
               <CreatePrivateChannel
+                config={config}
                 onCreated={(ch) => {
                   setChannels((prev) => [ch, ...prev]);
                   setActiveTab("dashboard");

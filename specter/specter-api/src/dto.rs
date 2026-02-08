@@ -1,7 +1,7 @@
 //! DTOs for API requests and responses.
 
 use serde::{Deserialize, Serialize};
-use specter_core::types::{Announcement, MetaAddress, EthAddress};
+use specter_core::types::Announcement;
 
 /// Response for key generation.
 #[derive(Debug, Serialize)]
@@ -324,6 +324,8 @@ pub struct YellowCreateChannelRequest {
     pub token: String,
     /// Initial funding amount (human-readable)
     pub amount: String,
+    /// Optional: real channel ID from on-chain create (hex). When set, used for the announcement instead of generating a random ID.
+    pub channel_id: Option<String>,
 }
 
 /// Response for private Yellow channel creation.

@@ -15,8 +15,7 @@ use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, MetaAddress, KyberPublicKey};
 use specter_crypto::{generate_keypair, compute_view_tag, encapsulate};
 use specter_crypto::derive::derive_stealth_address;
-use specter_stealth::{create_stealth_payment, SpecterWallet};
-use specter_yellow::types::YellowConfig;
+use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
 use crate::error::ApiError;
@@ -394,11 +393,24 @@ pub async fn yellow_create_channel(
     let payment = create_stealth_payment(&meta_address)
         .map_err(|e| ApiError::internal(format!("Stealth payment creation failed: {}", e)))?;
 
-    // Generate a channel ID (32 bytes random)
-    let mut channel_id_bytes = [0u8; 32];
-    use rand::RngCore;
-    rand::thread_rng().fill_bytes(&mut channel_id_bytes);
-    let channel_id = hex::encode(channel_id_bytes);
+    // Use provided channel_id (from on-chain create) or generate random
+    let (channel_id_bytes, channel_id) = if let Some(ref id) = req.channel_id.filter(|s| !s.trim().is_empty()) {
+        let decoded = hex::decode(strip_hex_prefix(id))
+            .map_err(|e| ApiError::bad_request(format!("Invalid channel_id hex: {}", e)))?;
+        if decoded.len() != 32 {
+            return Err(ApiError::bad_request(
+                "channel_id must be 32 bytes (64 hex chars)".to_string(),
+            ));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&decoded);
+        (arr, id.clone())
+    } else {
+        use rand::RngCore;
+        let mut arr = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut arr);
+        (arr, hex::encode(arr))
+    };
 
     let stealth_address = payment.stealth_address.to_checksum_string();
     let ephemeral_key = hex::encode(&payment.announcement.ephemeral_key);

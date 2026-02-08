@@ -375,38 +375,25 @@ Step 5:  (Optional) Sweep to main wallet
 
 ---
 
-## Why you don't see on-chain transactions
+## On-chain channel creation (current flow)
 
-Even with production WebSocket (`wss://clearnet.yellow.com/ws`), **no Sepolia tx appears** because the current integration does not create or settle real on-chain channels:
+The Yellow section now **creates a real channel on Sepolia**:
 
-1. **No on-chain channel creation**  
-   Yellow’s protocol requires the **Creator** to call the **custody contract’s `create()`** on Sepolia to lock USDC and open a channel. In this app we only:
-   - Create a SPECTER announcement with a **random** `channel_id`
-   - Send `session/create` to the ClearNode (app session)
+1. **Create on-chain**: The app uses the Nitrolite SDK and Yellow ClearNode: connect to ClearNode → auth (if needed) → request CreateChannel params → submit `depositAndCreateChannel` to the custody contract. This locks USDC and creates the channel; you get a real `channelId` and `txHash` on Sepolia.
+2. **Register stealth**: The app calls the SPECTER API with that `channel_id` and recipient; the backend publishes the announcement with the real channel ID.
+3. **Fund app session**: The app creates a Yellow app session (user + stealth address, allocations) so the locked funds are associated with the stealth address for private settlement.
 
-   We **never** call the custody contract, so no channel is opened on-chain and no USDC is locked.
+Closing the channel sends a cooperative close to Yellow with `funds_destination` = stealth address; Yellow’s ClearNode can then settle on-chain so USDC moves to the stealth address.
 
-2. **Funding is off-chain only**  
-   “Fund channel” sends allocations to the ClearNode via `session/create`. The backend `yellow_fund_channel` is a stub and does not move USDC on-chain. So there is no on-chain balance to settle.
+---
 
-3. **Close uses our ID, not Yellow’s**  
-   We send `close_channel` with **our** random `channel_id`. The ClearNode’s session is identified by **their** `sessionId` (from `session_created`). So the close request may not match any session they track, and we never submit a settlement tx to the adjudicator/custody contract ourselves.
-
-4. **Backend never submits L1 tx**  
-   The API’s `yellow_close_channel` only looks up the announcement and returns a placeholder `tx_hash`; it does not call the custody or adjudicator contract.
-
-**To get real on-chain settlement** you would need to:
-
-- Use Yellow’s official SDK (e.g. Nitrolite / Nitro RPC) to **create a channel on-chain** (lock USDC via the custody contract) and to **close** (mutual close or challenge/response so the contract settles).
-- Or implement custody-contract calls in this backend: create channel (lock funds), then on close submit the agreed state so the contract moves USDC to the stealth address.
-
-Until then, the flow is “SPECTER announcement + off-chain session” only; no on-chain channel is created or closed, so no on-chain tx appears.
+**Legacy channels** (created before on-chain create was added) used a random `channel_id` and no custody contract call, so no on-chain tx or settlement. With the **new flow**, channel create is on-chain; **close** settlement still depends on Yellow’s ClearNode processing the close and submitting to the adjudicator.
 
 ---
 
 ## Limitations (current)
 
-- **No on-chain channel**: Channel creation and funding do not call the custody contract; no USDC is locked on Sepolia. Closing does not submit a settlement tx. See [Why you don't see on-chain transactions](#why-you-dont-see-on-chain-transactions) above.
+- **Create is on-chain**: New channels use Nitrolite + ClearNode to create and fund on Sepolia. Close still depends on Yellow’s ClearNode submitting settlement when you send the close request.
 - **Default: production**: Yellow WebSocket defaults to `wss://clearnet.yellow.com/ws`. Set `YELLOW_WS_URL=wss://clearnet-sandbox.yellow.com/ws` for sandbox testing.
 - **In-memory registry**: Announcements are lost on backend restart
 - **Simplified auth**: EIP-712 signing is placeholder (not full production auth)

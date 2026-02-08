@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { Menu, X, ChevronDown } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useApiHealth } from "@/hooks/useApiHealth";
 import { api } from "@/lib/api";
@@ -13,7 +13,6 @@ const navLinks = [
   { path: "/setup", label: "Setup" },
   { path: "/send", label: "Send" },
   { path: "/scan", label: "Scan" },
-  { path: "/yellow", label: "Yellow" },
 ];
 
 const NavLink = ({
@@ -142,6 +141,38 @@ export function Header() {
               {link.label}
             </NavLink>
           ))}
+          {/* Explore Specter: click → Use Cases; hover shows dropdown */}
+          <div className="relative group">
+            <Link
+              to="/usecases"
+              className={`inline-flex items-center gap-1 text-sm whitespace-nowrap transition-colors duration-200 ${
+                location.pathname === "/usecases"
+                  ? "text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Explore Specter
+              <ChevronDown className="h-3.5 w-3.5 opacity-70 group-hover:rotate-180 transition-transform duration-200 ease-out" />
+            </Link>
+            <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50 pointer-events-none group-hover:pointer-events-auto">
+              <div
+                className="rounded-xl border border-border/80 bg-popover/95 backdrop-blur-md text-popover-foreground shadow-xl py-1.5 min-w-[200px]
+                  opacity-0 scale-95 -translate-y-1
+                  group-hover:opacity-100 group-hover:scale-100 group-hover:translate-y-0
+                  transition-[opacity,transform] duration-300 ease-out origin-top"
+              >
+                <Link
+                  to="/usecases"
+                  className="block px-4 py-3 text-sm text-left rounded-lg mx-1.5
+                    text-muted-foreground hover:text-foreground
+                    hover:bg-primary/5
+                    transition-colors duration-200"
+                >
+                  Use cases
+                </Link>
+              </div>
+            </div>
+          </div>
         </nav>
 
         <div className="w-8 flex justify-end shrink-0">
@@ -178,6 +209,17 @@ export function Header() {
               {link.label}
             </Link>
           ))}
+          <Link
+            to="/usecases"
+            onClick={() => setMobileMenuOpen(false)}
+            className={`w-full text-center py-2 transition-colors ${
+              location.pathname === "/usecases"
+                ? "text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Explore Specter
+          </Link>
         </nav>
       </div>
     </header>
