@@ -6,7 +6,7 @@ export function Footer() {
   const socialLinks = [
     {
       icon: <X className="h-5 w-5" />,
-      href: "https://x.com",
+      href: "https://x.com/specter_stealth",
       label: "X (Twitter)",
     },
     {
