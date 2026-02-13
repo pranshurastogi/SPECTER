@@ -1,12 +1,12 @@
 import { Link } from "react-router-dom";
-import { X, Github } from "lucide-react";
+import { X, Github, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Footer() {
   const socialLinks = [
     {
       icon: <X className="h-5 w-5" />,
-      href: "https://x.com/specter_stealth",
+      href: "https://x.com/specter_PQ",
       label: "X (Twitter)",
     },
     {
@@ -20,23 +20,34 @@ export function Footer() {
     <footer className="pb-6 pt-16 lg:pb-8 lg:pt-24">
       <div className="container mx-auto px-4 lg:px-8">
         <div className="md:flex md:items-start md:justify-between">
-          <Link
-            to="/"
-            className="flex items-center gap-x-2"
-            aria-label="SPECTER"
-          >
-            <div className="h-6 w-6 flex items-center justify-center">
-              <img
-                src="/SPECTER-logo.png"
-                alt=""
-                className="size-full scale-125 object-contain"
-                aria-hidden
-              />
-            </div>
-            <span className="font-cursive text-lg sm:text-xl font-medium tracking-wide">
-              SPECTER
-            </span>
-          </Link>
+          <div className="flex flex-col gap-4">
+            <Link
+              to="/"
+              className="flex items-center gap-x-2"
+              aria-label="SPECTER"
+            >
+              <div className="h-6 w-6 flex items-center justify-center">
+                <img
+                  src="/SPECTER-logo.png"
+                  alt=""
+                  className="size-full scale-125 object-contain"
+                  aria-hidden
+                />
+              </div>
+              <span className="font-cursive text-lg sm:text-xl font-medium tracking-wide">
+                SPECTER
+              </span>
+            </Link>
+            <a
+              href="https://specter-38cd5a51.mintlify.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <BookOpen className="h-4 w-4" />
+              <span>Documentation</span>
+            </a>
+          </div>
           <ul className="flex list-none mt-6 md:mt-0 gap-3">
             {socialLinks.map((link, i) => (
               <li key={i}>
