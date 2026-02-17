@@ -36,16 +36,16 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
 
-pub mod kyber;
-pub mod hash;
-pub mod view_tag;
 pub mod derive;
+pub mod hash;
+pub mod kyber;
+pub mod view_tag;
 
 // Re-export main functions at crate root
-pub use kyber::{generate_keypair, encapsulate, decapsulate, KyberCiphertext};
-pub use hash::{shake256, shake256_xof};
-pub use view_tag::compute_view_tag;
 pub use derive::{
-    derive_stealth_keys, derive_eth_address, derive_eth_address_from_seed,
-    derive_sui_address_from_seed, derive_stealth_sui_address,
+    derive_eth_address, derive_eth_address_from_seed, derive_stealth_keys,
+    derive_stealth_sui_address, derive_sui_address_from_seed,
 };
+pub use hash::{shake256, shake256_xof};
+pub use kyber::{decapsulate, encapsulate, generate_keypair, KyberCiphertext};
+pub use view_tag::compute_view_tag;

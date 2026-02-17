@@ -1,0 +1,31 @@
+# Rustfmt configuration for SPECTER project
+# See: https://rust-lang.github.io/rustfmt/
+
+# Indentation
+tab_spaces = 4
+newline_style = "Unix"
+
+# Width
+max_width = 100
+hard_tabs = false
+
+# Imports
+reorder_imports = true
+
+# Formatting
+use_small_heuristics = "Default"
+use_field_init_shorthand = true
+use_try_shorthand = true
+
+# Functions
+fn_params_layout = "Tall"
+
+# Structs and Enums
+struct_variant_width = 100
+
+# Control flow
+match_arm_leading_pipes = "Never"
+
+# Misc
+remove_nested_parens = true
+edition = "2021"

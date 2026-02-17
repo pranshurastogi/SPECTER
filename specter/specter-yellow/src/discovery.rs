@@ -7,10 +7,10 @@ use tracing::{debug, info};
 use specter_core::error::{Result, SpecterError};
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::Announcement;
-use specter_stealth::SpecterWallet;
 use specter_crypto::derive::StealthKeys;
+use specter_stealth::SpecterWallet;
 
-use crate::types::{DiscoveredChannel, PrivateChannelInfo, ChannelStatus};
+use crate::types::{ChannelStatus, DiscoveredChannel, PrivateChannelInfo};
 
 /// Channel discovery service.
 ///
@@ -38,11 +38,11 @@ impl<'a> ChannelDiscovery<'a> {
 
         // In production, we'd filter by view tag first for efficiency
         // For now, iterate all and check channel_id presence
-        
+
         // Get all announcements (would be optimized in production)
         for tag in 0..=255u8 {
             let announcements = registry.get_by_view_tag(tag).await?;
-            
+
             for ann in announcements {
                 if let Some(result) = self.try_discover_channel(&ann)? {
                     discovered.push(result);
@@ -50,10 +50,7 @@ impl<'a> ChannelDiscovery<'a> {
             }
         }
 
-        info!(
-            found = discovered.len(),
-            "Channel discovery complete"
-        );
+        info!(found = discovered.len(), "Channel discovery complete");
 
         Ok(discovered)
     }
@@ -66,9 +63,9 @@ impl<'a> ChannelDiscovery<'a> {
         to: u64,
     ) -> Result<Vec<DiscoveredChannel>> {
         let announcements = registry.get_by_time_range(from, to).await?;
-        
+
         let mut discovered = Vec::new();
-        
+
         for ann in announcements {
             if let Some(result) = self.try_discover_channel(&ann)? {
                 discovered.push(result);
@@ -114,7 +111,10 @@ impl<'a> ChannelDiscovery<'a> {
             return Ok(false);
         }
 
-        Ok(self.wallet.try_discover(&ann.ephemeral_key, ann.view_tag)?.is_some())
+        Ok(self
+            .wallet
+            .try_discover(&ann.ephemeral_key, ann.view_tag)?
+            .is_some())
     }
 }
 

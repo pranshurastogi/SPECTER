@@ -4,7 +4,7 @@
 //! Suitable for single-node deployments where durability is needed.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -84,7 +84,10 @@ impl FileRegistry {
     #[instrument(skip(self))]
     async fn load(&self) -> Result<()> {
         let mut file = fs::File::open(&self.path).await.map_err(|e| {
-            SpecterError::IoError(std::io::Error::new(e.kind(), format!("Failed to open registry file: {}", e)))
+            SpecterError::IoError(std::io::Error::new(
+                e.kind(),
+                format!("Failed to open registry file: {}", e),
+            ))
         })?;
 
         let mut contents = Vec::new();
@@ -278,8 +281,14 @@ mod tests {
         // Create and populate
         {
             let registry = FileRegistry::new(&path).await.unwrap();
-            registry.publish(make_test_announcement(0x01)).await.unwrap();
-            registry.publish(make_test_announcement(0x02)).await.unwrap();
+            registry
+                .publish(make_test_announcement(0x01))
+                .await
+                .unwrap();
+            registry
+                .publish(make_test_announcement(0x02))
+                .await
+                .unwrap();
             registry.save().await.unwrap();
         }
 
@@ -304,7 +313,10 @@ mod tests {
         let registry = FileRegistry::new(&path).await.unwrap();
         assert!(!registry.is_dirty());
 
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
         assert!(registry.is_dirty());
 
         registry.save().await.unwrap();
@@ -321,12 +333,21 @@ mod tests {
         let registry = FileRegistry::with_auto_save(&path, 2).await.unwrap();
 
         // First two writes - no save
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
-        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
         assert!(!path.exists() || registry.is_dirty());
 
         // Third write triggers auto-save
-        registry.publish(make_test_announcement(0x03)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x03))
+            .await
+            .unwrap();
 
         // Load in new instance to verify
         let registry2 = FileRegistry::new(&path).await.unwrap();
@@ -339,7 +360,10 @@ mod tests {
         let path = dir.path().join("registry.bin");
 
         let registry = FileRegistry::new(&path).await.unwrap();
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
 
         // Flush should save
         registry.flush().await.unwrap();
@@ -353,9 +377,18 @@ mod tests {
         let path = dir.path().join("registry.bin");
 
         let registry = FileRegistry::new(&path).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x00)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x00))
+            .await
+            .unwrap();
 
         let matching = registry.get_by_view_tag(0x42).await.unwrap();
         assert_eq!(matching.len(), 2);
@@ -367,7 +400,10 @@ mod tests {
         let path = dir.path().join("registry.bin");
 
         let registry = FileRegistry::new(&path).await.unwrap();
-        let id = registry.publish(make_test_announcement(0x42)).await.unwrap();
+        let id = registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
 
         let ann = registry.get_by_id(id).await.unwrap().unwrap();
         assert_eq!(ann.view_tag, 0x42);
@@ -379,8 +415,14 @@ mod tests {
         let path = dir.path().join("registry.bin");
 
         let registry = FileRegistry::new(&path).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
 
         let stats = registry.stats();
         assert_eq!(stats.total_count, 2);
@@ -406,7 +448,10 @@ mod tests {
         let temp_path = path.with_extension("tmp");
 
         let registry = FileRegistry::new(&path).await.unwrap();
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
         registry.save().await.unwrap();
 
         // Temp file should not exist after save

@@ -106,7 +106,8 @@ impl EnsClient {
             Some(r) => r,
             None => return Ok(None),
         };
-        let raw = hex::decode(result_hex.strip_prefix("0x").unwrap_or(&result_hex)).unwrap_or_default();
+        let raw =
+            hex::decode(result_hex.strip_prefix("0x").unwrap_or(&result_hex)).unwrap_or_default();
         if raw.len() < 64 {
             return Ok(None);
         }
@@ -148,7 +149,11 @@ impl EnsClient {
             None => return Ok(None),
         };
 
-        let data = format!("0x59d1d43c{}{}", hex::encode(&node), self.encode_string_abi(key)); // text(bytes32,string)
+        let data = format!(
+            "0x59d1d43c{}{}",
+            hex::encode(&node),
+            self.encode_string_abi(key)
+        ); // text(bytes32,string)
         let result_hex = match self.eth_call(&resolver_addr, &data).await? {
             Some(r) => r,
             None => return Ok(None),
@@ -169,7 +174,8 @@ impl EnsClient {
             Some(r) => r,
             None => return Ok(None),
         };
-        let bytes = hex::decode(result_hex.strip_prefix("0x").unwrap_or(&result_hex)).unwrap_or_default();
+        let bytes =
+            hex::decode(result_hex.strip_prefix("0x").unwrap_or(&result_hex)).unwrap_or_default();
         if bytes.len() < 32 {
             return Ok(None);
         }
@@ -203,7 +209,10 @@ impl EnsClient {
         if json.get("error").is_some() {
             return Ok(None);
         }
-        Ok(json.get("result").and_then(|v| v.as_str()).map(String::from))
+        Ok(json
+            .get("result")
+            .and_then(|v| v.as_str())
+            .map(String::from))
     }
 
     /// Normalizes an ENS name (lowercase, validate format).
@@ -212,7 +221,9 @@ impl EnsClient {
 
         // Basic validation
         if normalized.is_empty() {
-            return Err(SpecterError::ValidationError("ENS name cannot be empty".into()));
+            return Err(SpecterError::ValidationError(
+                "ENS name cannot be empty".into(),
+            ));
         }
 
         if !normalized.ends_with(".eth") && !normalized.contains('.') {
@@ -248,7 +259,7 @@ impl EnsClient {
 
     /// Computes the namehash for an ENS name.
     fn compute_namehash(&self, name: &str) -> [u8; 32] {
-        use sha3::{Keccak256, Digest};
+        use sha3::{Digest, Keccak256};
 
         let mut node = [0u8; 32];
 
@@ -258,11 +269,11 @@ impl EnsClient {
             }
 
             let label_hash = Keccak256::digest(label.as_bytes());
-            
+
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(&node);
             combined[32..].copy_from_slice(&label_hash);
-            
+
             node = Keccak256::digest(&combined).into();
         }
 
@@ -272,13 +283,13 @@ impl EnsClient {
     /// Decodes a text response from ABI encoding.
     fn decode_text_response(&self, hex_data: &str) -> Result<Option<String>> {
         let data = hex_data.strip_prefix("0x").unwrap_or(hex_data);
-        
+
         if data.is_empty() || data == "0" || data.len() < 128 {
             return Ok(None);
         }
 
         let bytes = hex::decode(data).map_err(|e| SpecterError::HexError(e))?;
-        
+
         if bytes.len() < 64 {
             return Ok(None);
         }
@@ -286,7 +297,7 @@ impl EnsClient {
         // Parse ABI-encoded string
         // Skip offset (32 bytes), read length (32 bytes), then data
         let length = u64::from_be_bytes(bytes[56..64].try_into().unwrap_or_default()) as usize;
-        
+
         if length == 0 || bytes.len() < 64 + length {
             return Ok(None);
         }
@@ -309,37 +320,31 @@ mod tests {
     #[test]
     fn test_normalize_name() {
         let client = EnsClient::new("https://example.com");
-        
-        assert_eq!(
-            client.normalize_name("Alice.eth").unwrap(),
-            "alice.eth"
-        );
-        
-        assert_eq!(
-            client.normalize_name("  BOB.ETH  ").unwrap(),
-            "bob.eth"
-        );
-        
+
+        assert_eq!(client.normalize_name("Alice.eth").unwrap(), "alice.eth");
+
+        assert_eq!(client.normalize_name("  BOB.ETH  ").unwrap(), "bob.eth");
+
         assert!(client.normalize_name("").is_err());
     }
 
     #[test]
     fn test_compute_namehash() {
         let client = EnsClient::new("https://example.com");
-        
+
         // Known namehash for "eth"
         let namehash = client.compute_namehash("eth");
-        let expected = hex::decode(
-            "93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae"
-        ).unwrap();
-        
+        let expected =
+            hex::decode("93cdeb708b7545dc668eb9280176169d1c33cfd8ed6f04690a0bcc88a93fc4ae")
+                .unwrap();
+
         assert_eq!(namehash.as_slice(), expected.as_slice());
     }
 
     #[test]
     fn test_decode_empty_response() {
         let client = EnsClient::new("https://example.com");
-        
+
         assert!(client.decode_text_response("0x").unwrap().is_none());
         assert!(client.decode_text_response("").unwrap().is_none());
     }

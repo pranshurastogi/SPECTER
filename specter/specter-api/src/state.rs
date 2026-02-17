@@ -1,7 +1,7 @@
 //! App state: registry, ENS resolver, SuiNS resolver, config.
 
+use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::MemoryRegistry;
-use specter_ens::{SpecterResolver, ResolverConfig};
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
 use specter_yellow::types::YellowConfig;
 
@@ -45,7 +45,11 @@ impl ApiConfig {
         if std::env::var("PINATA_GATEWAY_URL").is_err() {
             if let Ok(exe) = std::env::current_exe() {
                 // exe is e.g. .../specter/target/debug/specter -> parent 3 times = .../specter
-                if let Some(crate_root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                if let Some(crate_root) = exe
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.parent())
+                {
                     let env_path = crate_root.join(".env");
                     let _ = dotenvy::from_path(env_path);
                 }
@@ -58,11 +62,9 @@ impl ApiConfig {
 
         // When use_testnet=true, use Sepolia RPC only (ETH_RPC_URL_SEPOLIA or default)
         let rpc_url = if use_testnet {
-            std::env::var("ETH_RPC_URL_SEPOLIA")
-                .unwrap_or_else(|_| DEFAULT_ETH_SEPOLIA_RPC.into())
+            std::env::var("ETH_RPC_URL_SEPOLIA").unwrap_or_else(|_| DEFAULT_ETH_SEPOLIA_RPC.into())
         } else {
-            std::env::var("ETH_RPC_URL")
-                .unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into())
+            std::env::var("ETH_RPC_URL").unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into())
         };
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {

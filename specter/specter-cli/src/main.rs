@@ -2,8 +2,8 @@
 //!
 //! Command-line interface for the SPECTER post-quantum stealth address protocol.
 
-use std::path::PathBuf;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -11,13 +11,13 @@ use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use specter_core::types::{MetaAddress, KyberPublicKey, Announcement};
+use specter_api::{ApiConfig, ApiServer};
 use specter_core::traits::AnnouncementRegistry;
-use specter_crypto::{generate_keypair, compute_view_tag};
-use specter_stealth::create_stealth_payment;
+use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
+use specter_crypto::{compute_view_tag, generate_keypair};
+use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::MemoryRegistry;
-use specter_ens::{SpecterResolver, ResolverConfig};
-use specter_api::{ApiServer, ApiConfig};
+use specter_stealth::create_stealth_payment;
 
 /// SPECTER - Post-Quantum Stealth Address Protocol
 #[derive(Parser)]
@@ -144,7 +144,10 @@ async fn cmd_generate(output: Option<PathBuf>) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&keys_json)?);
     }
 
-    println!("\n{}", "⚠️  IMPORTANT: Keep your secret keys safe!".red().bold());
+    println!(
+        "\n{}",
+        "⚠️  IMPORTANT: Keep your secret keys safe!".red().bold()
+    );
     println!("   spending_sk and viewing_sk must never be shared.");
 
     Ok(())
@@ -166,13 +169,23 @@ async fn cmd_resolve(name: &str, rpc_url: Option<String>) -> Result<()> {
     }
     let resolver = SpecterResolver::with_config(config);
 
-    let meta = resolver.resolve(name).await
+    let meta = resolver
+        .resolve(name)
+        .await
         .context("Failed to resolve ENS name")?;
 
     println!("\n{}", "✅ Resolved meta-address:".green().bold());
     println!("   {} {}", "Version:".dimmed(), meta.version);
-    println!("   {} {}...", "Spending PK:".dimmed(), &meta.spending_pk.to_hex()[..32]);
-    println!("   {} {}...", "Viewing PK:".dimmed(), &meta.viewing_pk.to_hex()[..32]);
+    println!(
+        "   {} {}...",
+        "Spending PK:".dimmed(),
+        &meta.spending_pk.to_hex()[..32]
+    );
+    println!(
+        "   {} {}...",
+        "Viewing PK:".dimmed(),
+        &meta.viewing_pk.to_hex()[..32]
+    );
     println!("\n   {} {}", "Full hex:".dimmed(), &meta.to_hex()[..64]);
 
     Ok(())
@@ -180,7 +193,11 @@ async fn cmd_resolve(name: &str, rpc_url: Option<String>) -> Result<()> {
 
 /// Create stealth payment address
 async fn cmd_create(recipient: &str, rpc_url: Option<String>) -> Result<()> {
-    println!("{} {}", "💸 Creating stealth payment to:".cyan().bold(), recipient);
+    println!(
+        "{} {}",
+        "💸 Creating stealth payment to:".cyan().bold(),
+        recipient
+    );
 
     let meta = if recipient.ends_with(".eth") {
         // Resolve ENS
@@ -196,22 +213,38 @@ async fn cmd_create(recipient: &str, rpc_url: Option<String>) -> Result<()> {
             config = config.with_pinata_jwt(jwt);
         }
         let resolver = SpecterResolver::with_config(config);
-        resolver.resolve(recipient).await
+        resolver
+            .resolve(recipient)
+            .await
             .context("Failed to resolve ENS name")?
     } else {
         // Parse as hex
-        MetaAddress::from_hex(recipient)
-            .context("Invalid meta-address hex")?
+        MetaAddress::from_hex(recipient).context("Invalid meta-address hex")?
     };
 
-    let payment = create_stealth_payment(&meta)
-        .context("Failed to create stealth payment")?;
+    let payment = create_stealth_payment(&meta).context("Failed to create stealth payment")?;
 
     println!("\n{}", "✅ Stealth payment created:".green().bold());
-    println!("   {} {}", "ETH Address:".yellow(), payment.stealth_address.to_checksum_string());
-    println!("   {} {}", "Sui Address:".yellow(), payment.stealth_sui_address.to_hex_string());
-    println!("   {} {}", "View tag:".dimmed(), payment.announcement.view_tag);
-    println!("   {} {}...", "Ephemeral key:".dimmed(), hex::encode(&payment.announcement.ephemeral_key[..16]));
+    println!(
+        "   {} {}",
+        "ETH Address:".yellow(),
+        payment.stealth_address.to_checksum_string()
+    );
+    println!(
+        "   {} {}",
+        "Sui Address:".yellow(),
+        payment.stealth_sui_address.to_hex_string()
+    );
+    println!(
+        "   {} {}",
+        "View tag:".dimmed(),
+        payment.announcement.view_tag
+    );
+    println!(
+        "   {} {}...",
+        "Ephemeral key:".dimmed(),
+        hex::encode(&payment.announcement.ephemeral_key[..16])
+    );
 
     println!("\n{}", "📋 Announcement (JSON):".yellow().bold());
     let ann_json = serde_json::json!({
@@ -234,23 +267,30 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
 
     // Load keys
     let keys_json: serde_json::Value = serde_json::from_reader(
-        std::fs::File::open(keys_path).context("Failed to open keys file")?
+        std::fs::File::open(keys_path).context("Failed to open keys file")?,
     )?;
 
     let viewing_sk = hex::decode(
-        keys_json["viewing_sk"].as_str().context("Missing viewing_sk")?
+        keys_json["viewing_sk"]
+            .as_str()
+            .context("Missing viewing_sk")?,
     )?;
     let spending_pk = hex::decode(
-        keys_json["spending_pk"].as_str().context("Missing spending_pk")?
+        keys_json["spending_pk"]
+            .as_str()
+            .context("Missing spending_pk")?,
     )?;
     let spending_sk = hex::decode(
-        keys_json["spending_sk"].as_str().context("Missing spending_sk")?
+        keys_json["spending_sk"]
+            .as_str()
+            .context("Missing spending_sk")?,
     )?;
 
     // Load announcements
     let announcements = if let Some(path) = registry_path {
         println!("   Loading registry from: {}", path.display());
-        let registry = specter_registry::FileRegistry::new(path).await
+        let registry = specter_registry::FileRegistry::new(path)
+            .await
             .context("Failed to load registry file")?;
         registry.memory().all_announcements()
     } else {
@@ -262,7 +302,10 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
     let count = announcements.len() as u64;
 
     if count == 0 {
-        println!("\n{}", "⚠️  Registry is empty. No announcements to scan.".yellow());
+        println!(
+            "\n{}",
+            "⚠️  Registry is empty. No announcements to scan.".yellow()
+        );
         return Ok(());
     }
 
@@ -288,7 +331,11 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
     } else {
         println!("\n{} {} payment(s) found:", "✅".green(), discoveries.len());
         for (idx, keys) in &discoveries {
-            println!("   {} {}", "Address:".green(), keys.address.to_checksum_string());
+            println!(
+                "   {} {}",
+                "Address:".green(),
+                keys.address.to_checksum_string()
+            );
             println!("      Announcement #{}", idx); // Todo: Use actual ID if available
         }
     }
@@ -300,12 +347,17 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
 async fn cmd_serve(port: u16, bind: &str) -> Result<()> {
     println!("{}", "🚀 Starting SPECTER API server...".cyan().bold());
     println!("   {} http://{}:{}", "Listening on:".green(), bind, port);
-    println!("   {} http://{}:{}/health", "Health check:".dimmed(), bind, port);
+    println!(
+        "   {} http://{}:{}/health",
+        "Health check:".dimmed(),
+        bind,
+        port
+    );
     println!("\n   Press Ctrl+C to stop.\n");
 
     let config = ApiConfig::from_env();
     let server = ApiServer::new(config);
-    
+
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     server.run(addr).await?;
 
@@ -314,7 +366,11 @@ async fn cmd_serve(port: u16, bind: &str) -> Result<()> {
 
 /// Run benchmarks
 async fn cmd_bench(count: usize) -> Result<()> {
-    println!("{} {} announcements", "📊 Benchmarking with".cyan().bold(), count);
+    println!(
+        "{} {} announcements",
+        "📊 Benchmarking with".cyan().bold(),
+        count
+    );
 
     // Generate keys
     println!("\n{}", "1. Generating keys...".dimmed());
@@ -372,18 +428,26 @@ async fn cmd_bench(count: usize) -> Result<()> {
     let scan_time = start.elapsed();
 
     let rate = count as f64 / scan_time.as_secs_f64();
-    
+
     println!("   ✓ Scanned {} announcements: {:?}", count, scan_time);
     println!("   ✓ Found {} payments", discoveries.len());
     println!("\n{}", "📈 Results:".green().bold());
     println!("   Scan rate: {:.0} announcements/sec", rate);
-    println!("   Time per announcement: {:.2}µs", scan_time.as_micros() as f64 / count as f64);
+    println!(
+        "   Time per announcement: {:.2}µs",
+        scan_time.as_micros() as f64 / count as f64
+    );
 
     let expected_discoveries = count / 100;
     if discoveries.len() == expected_discoveries {
         println!("   {} All expected payments found!", "✅".green());
     } else {
-        println!("   {} Expected {}, found {}", "❌".red(), expected_discoveries, discoveries.len());
+        println!(
+            "   {} Expected {}, found {}",
+            "❌".red(),
+            expected_discoveries,
+            discoveries.len()
+        );
     }
 
     Ok(())

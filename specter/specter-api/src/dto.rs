@@ -199,7 +199,8 @@ impl TryFrom<AnnouncementDto> for Announcement {
 
     fn try_from(dto: AnnouncementDto) -> Result<Self, Self::Error> {
         let ephemeral_key = hex::decode(&dto.ephemeral_key)?;
-        let channel_id = dto.channel_id
+        let channel_id = dto
+            .channel_id
             .map(|s| {
                 let bytes = hex::decode(&s)?;
                 let mut arr = [0u8; 32];
@@ -208,7 +209,7 @@ impl TryFrom<AnnouncementDto> for Announcement {
                     Ok(arr)
                 } else {
                     Err(specter_core::error::SpecterError::ValidationError(
-                        "channel_id must be 32 bytes".into()
+                        "channel_id must be 32 bytes".into(),
                     ))
                 }
             })

@@ -80,7 +80,11 @@ impl MetaAddressCache {
 
     /// Caches a meta-address with the default TTL.
     pub fn set(&self, key: &str, meta_address: MetaAddress) {
-        self.set_with_ttl(key, meta_address, Duration::from_secs(self.config.default_ttl_seconds));
+        self.set_with_ttl(
+            key,
+            meta_address,
+            Duration::from_secs(self.config.default_ttl_seconds),
+        );
     }
 
     /// Caches a meta-address with a custom TTL.
@@ -101,11 +105,14 @@ impl MetaAddressCache {
             }
         }
 
-        entries.insert(normalized, CacheEntry {
-            meta_address,
-            inserted_at: Instant::now(),
-            ttl,
-        });
+        entries.insert(
+            normalized,
+            CacheEntry {
+                meta_address,
+                inserted_at: Instant::now(),
+                ttl,
+            },
+        );
     }
 
     /// Removes a cached entry.

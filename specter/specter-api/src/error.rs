@@ -43,7 +43,11 @@ impl ApiError {
 
     /// Validation error.
     pub fn validation(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::UNPROCESSABLE_ENTITY, message, "VALIDATION_ERROR")
+        Self::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            message,
+            "VALIDATION_ERROR",
+        )
     }
 }
 
@@ -75,35 +79,30 @@ impl IntoResponse for ApiError {
 impl From<SpecterError> for ApiError {
     fn from(err: SpecterError) -> Self {
         match &err {
-            SpecterError::ValidationError(_) => {
-                ApiError::validation(err.to_string())
-            }
+            SpecterError::ValidationError(_) => ApiError::validation(err.to_string()),
             SpecterError::InvalidMetaAddress(_)
             | SpecterError::InvalidStealthAddress(_)
-            | SpecterError::InvalidAnnouncement(_) => {
-                ApiError::bad_request(err.to_string())
-            }
+            | SpecterError::InvalidAnnouncement(_) => ApiError::bad_request(err.to_string()),
             SpecterError::EnsNameNotFound(_) => {
                 ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "ENS_NAME_NOT_FOUND")
             }
             SpecterError::NoSpecterRecord(_) => {
                 ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "NO_SPECTER_RECORD")
             }
-            SpecterError::SuinsNameNotFound(_) => {
-                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "SUINS_NAME_NOT_FOUND")
-            }
-            SpecterError::NoSuinsSpecterRecord(_) => {
-                ApiError::new(StatusCode::NOT_FOUND, err.to_string(), "NO_SUINS_SPECTER_RECORD")
-            }
-            SpecterError::AnnouncementNotFound(_) => {
-                ApiError::not_found(err.to_string())
-            }
+            SpecterError::SuinsNameNotFound(_) => ApiError::new(
+                StatusCode::NOT_FOUND,
+                err.to_string(),
+                "SUINS_NAME_NOT_FOUND",
+            ),
+            SpecterError::NoSuinsSpecterRecord(_) => ApiError::new(
+                StatusCode::NOT_FOUND,
+                err.to_string(),
+                "NO_SUINS_SPECTER_RECORD",
+            ),
+            SpecterError::AnnouncementNotFound(_) => ApiError::not_found(err.to_string()),
             SpecterError::EnsResolutionFailed { .. }
-            | SpecterError::SuinsResolutionFailed { .. } => {
-                ApiError::bad_request(err.to_string())
-            }
-            SpecterError::IpfsDownloadFailed { .. }
-            | SpecterError::IpfsTimeout { .. } => {
+            | SpecterError::SuinsResolutionFailed { .. } => ApiError::bad_request(err.to_string()),
+            SpecterError::IpfsDownloadFailed { .. } | SpecterError::IpfsTimeout { .. } => {
                 ApiError::new(StatusCode::BAD_GATEWAY, err.to_string(), "IPFS_ERROR")
             }
             SpecterError::HexError(_) => {

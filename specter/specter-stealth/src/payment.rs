@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{Announcement, EthAddress, MetaAddress, SuiAddress};
-use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
 use specter_crypto::derive::{
     derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys,
     derive_stealth_sui_address,
 };
+use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
 
 /// Stealth payment: address to send to and announcement to publish.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,14 +42,10 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
 
     let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
     let view_tag = compute_view_tag(&shared_secret);
-    let stealth_address = derive_stealth_address(
-        meta_address.spending_pk.as_bytes(),
-        &shared_secret,
-    )?;
-    let stealth_sui_address = derive_stealth_sui_address(
-        meta_address.spending_pk.as_bytes(),
-        &shared_secret,
-    )?;
+    let stealth_address =
+        derive_stealth_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+    let stealth_sui_address =
+        derive_stealth_sui_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
     let announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
 
     Ok(StealthPayment {
@@ -115,22 +111,18 @@ impl StealthPaymentBuilder {
     }
 
     pub fn build(self) -> Result<StealthPayment> {
-        let meta_address = self
-            .meta_address
-            .ok_or_else(|| SpecterError::ValidationError("recipient meta-address is required".into()))?;
+        let meta_address = self.meta_address.ok_or_else(|| {
+            SpecterError::ValidationError("recipient meta-address is required".into())
+        })?;
 
         meta_address.validate()?;
 
         let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
         let view_tag = compute_view_tag(&shared_secret);
-        let stealth_address = derive_stealth_address(
-            meta_address.spending_pk.as_bytes(),
-            &shared_secret,
-        )?;
-        let stealth_sui_address = derive_stealth_sui_address(
-            meta_address.spending_pk.as_bytes(),
-            &shared_secret,
-        )?;
+        let stealth_address =
+            derive_stealth_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+        let stealth_sui_address =
+            derive_stealth_sui_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
         let announcement = if let Some(channel_id) = self.channel_id {
             Announcement::with_channel(ciphertext.into_bytes(), view_tag, channel_id)
         } else {
@@ -199,7 +191,10 @@ mod tests {
         let payment2 = create_stealth_payment(&meta).unwrap();
 
         assert_ne!(payment1.stealth_address, payment2.stealth_address);
-        assert_ne!(payment1.announcement.ephemeral_key, payment2.announcement.ephemeral_key);
+        assert_ne!(
+            payment1.announcement.ephemeral_key,
+            payment2.announcement.ephemeral_key
+        );
     }
 
     #[test]
@@ -251,9 +246,7 @@ mod tests {
 
     #[test]
     fn test_payment_builder_missing_recipient() {
-        let result = StealthPaymentBuilder::new()
-            .amount("1.0")
-            .build();
+        let result = StealthPaymentBuilder::new().amount("1.0").build();
 
         assert!(result.is_err());
     }
@@ -291,7 +284,8 @@ mod tests {
             "scan-derived address must match create stealth_address"
         );
 
-        let addr_from_pk = derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
+        let addr_from_pk =
+            derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
         assert_eq!(
             keys.address.as_bytes(),
             addr_from_pk.as_bytes(),

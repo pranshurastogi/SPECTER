@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::MetaAddress;
-use specter_ens::{SpecterResolver, ResolverConfig};
+use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_stealth::{create_stealth_payment, SpecterWallet};
 
 use crate::types::*;

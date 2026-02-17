@@ -25,9 +25,9 @@
 
 use zeroize::Zeroize;
 
-use k256::ecdsa::SigningKey;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
+use k256::ecdsa::SigningKey;
 use specter_core::constants::{
     DOMAIN_ETH_KEY, DOMAIN_STEALTH_PK, DOMAIN_STEALTH_SK, ETH_ADDRESS_SIZE, KYBER_PUBLIC_KEY_SIZE,
     KYBER_SECRET_KEY_SIZE, SUI_ADDRESS_SIZE,
@@ -162,9 +162,9 @@ fn derive_eth_key_seed(shared_secret: &[u8], spending_pk: &[u8]) -> Result<[u8; 
 /// Derives a Sui address from a secp256k1 private key (32 bytes).
 /// Sui uses blake2b-256(scheme_flag || compressed_pubkey) where scheme_flag is 0x01 for secp256k1.
 pub fn derive_sui_address_from_seed(seed: &[u8; 32]) -> Result<SuiAddress> {
-    let signing_key = SigningKey::from_slice(seed).map_err(|_| SpecterError::InvalidStealthAddress(
-        "invalid secp256k1 key from seed".to_string(),
-    ))?;
+    let signing_key = SigningKey::from_slice(seed).map_err(|_| {
+        SpecterError::InvalidStealthAddress("invalid secp256k1 key from seed".to_string())
+    })?;
     let verifying_key = signing_key.verifying_key();
     let encoded = verifying_key.to_encoded_point(true); // compressed (33 bytes)
     let compressed = encoded.as_bytes();
@@ -174,7 +174,8 @@ pub fn derive_sui_address_from_seed(seed: &[u8; 32]) -> Result<SuiAddress> {
     hasher.update(&[SUI_SCHEME_SECP256K1]);
     hasher.update(compressed);
     let mut address_bytes = [0u8; SUI_ADDRESS_SIZE];
-    hasher.finalize_variable(&mut address_bytes)
+    hasher
+        .finalize_variable(&mut address_bytes)
         .map_err(|_| SpecterError::InvalidStealthAddress("Blake2b finalize failed".into()))?;
     Ok(SuiAddress::from_array(address_bytes))
 }
@@ -182,9 +183,9 @@ pub fn derive_sui_address_from_seed(seed: &[u8; 32]) -> Result<SuiAddress> {
 /// Derives an Ethereum address from a secp256k1 private key (32 bytes).
 /// This matches how MetaMask/wallets derive address from private key.
 pub fn derive_eth_address_from_seed(seed: &[u8; 32]) -> Result<EthAddress> {
-    let signing_key = SigningKey::from_slice(seed).map_err(|_| SpecterError::InvalidStealthAddress(
-        "invalid secp256k1 key from seed".to_string(),
-    ))?;
+    let signing_key = SigningKey::from_slice(seed).map_err(|_| {
+        SpecterError::InvalidStealthAddress("invalid secp256k1 key from seed".to_string())
+    })?;
     let verifying_key = signing_key.verifying_key();
     let encoded = verifying_key.to_encoded_point(false);
     // Skip the 0x04 prefix - Ethereum only hashes the 64-byte public key (x, y)
@@ -232,9 +233,8 @@ pub fn derive_stealth_keys(
     let seed = derive_eth_key_seed(shared_secret, spending_pk)?;
     let address = derive_eth_address_from_seed(&seed)?;
     let sui_address = derive_sui_address_from_seed(&seed)?;
-    let signing_key = SigningKey::from_slice(&seed).map_err(|_| SpecterError::InvalidStealthAddress(
-        "invalid secp256k1 key".to_string(),
-    ))?;
+    let signing_key = SigningKey::from_slice(&seed)
+        .map_err(|_| SpecterError::InvalidStealthAddress("invalid secp256k1 key".to_string()))?;
     let verifying_key = signing_key.verifying_key();
     let public_key = verifying_key.to_encoded_point(false).as_bytes().to_vec();
     let private_key = StealthPrivateKey::from_bytes(seed.to_vec());
@@ -274,11 +274,7 @@ pub fn verify_stealth_address(
     expected_address: &EthAddress,
 ) -> Result<bool> {
     let derived = derive_stealth_address(spending_pk, shared_secret)?;
-    Ok(subtle::ConstantTimeEq::ct_eq(
-        derived.as_bytes(),
-        expected_address.as_bytes(),
-    )
-    .into())
+    Ok(subtle::ConstantTimeEq::ct_eq(derived.as_bytes(), expected_address.as_bytes()).into())
 }
 
 #[cfg(test)]
@@ -365,10 +361,12 @@ mod tests {
         assert_eq!(keys.address.as_bytes().len(), ETH_ADDRESS_SIZE);
         assert_eq!(keys.sui_address.as_bytes().len(), SUI_ADDRESS_SIZE);
         // eth_private_key must derive to the same address (wallet compatibility)
-        let addr_from_pk = derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
+        let addr_from_pk =
+            derive_eth_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
         assert_eq!(keys.address.as_bytes(), addr_from_pk.as_bytes());
         // sui_address must derive from same seed
-        let sui_from_seed = derive_sui_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
+        let sui_from_seed =
+            derive_sui_address_from_seed(&keys.private_key.to_eth_private_key()).unwrap();
         assert_eq!(keys.sui_address.as_bytes(), sui_from_seed.as_bytes());
     }
 
@@ -408,7 +406,11 @@ mod tests {
 
         // Apply the same operation to recover original
         let factor = shake256(DOMAIN_STEALTH_PK, &shared_secret, KYBER_PUBLIC_KEY_SIZE);
-        let recovered: Vec<u8> = stealth.iter().zip(factor.iter()).map(|(a, b)| a ^ b).collect();
+        let recovered: Vec<u8> = stealth
+            .iter()
+            .zip(factor.iter())
+            .map(|(a, b)| a ^ b)
+            .collect();
 
         assert_eq!(original, recovered);
     }
@@ -423,7 +425,7 @@ mod tests {
             let _stealth_sk = derive_stealth_private_key(&spending_sk, &shared_secret).unwrap();
             // Key is zeroized when _stealth_sk goes out of scope
         }
-        
+
         // Can't directly verify zeroization, but the Drop impl ensures it
     }
 

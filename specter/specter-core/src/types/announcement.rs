@@ -109,17 +109,17 @@ impl Announcement {
     pub fn to_bytes(&self) -> Vec<u8> {
         let has_channel = self.channel_id.is_some();
         let size = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE + 8 + 1 + if has_channel { 32 } else { 0 };
-        
+
         let mut bytes = Vec::with_capacity(size);
         bytes.extend_from_slice(&self.ephemeral_key);
         bytes.push(self.view_tag);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
         bytes.push(if has_channel { 1 } else { 0 });
-        
+
         if let Some(channel_id) = &self.channel_id {
             bytes.extend_from_slice(channel_id);
         }
-        
+
         bytes
     }
 
@@ -136,7 +136,7 @@ impl Announcement {
 
         let ephemeral_key = bytes[0..KYBER_CIPHERTEXT_SIZE].to_vec();
         let view_tag = bytes[KYBER_CIPHERTEXT_SIZE];
-        
+
         let timestamp_start = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE;
         let timestamp = u64::from_le_bytes(
             bytes[timestamp_start..timestamp_start + 8]
@@ -388,7 +388,7 @@ mod tests {
     fn test_announcement_with_channel() {
         let channel_id = [0xCC; 32];
         let ann = Announcement::with_channel(make_valid_ephemeral_key(), 0x42, channel_id);
-        
+
         let bytes = ann.to_bytes();
         let ann2 = Announcement::from_bytes(&bytes).unwrap();
 
@@ -424,11 +424,11 @@ mod tests {
     #[test]
     fn test_announcement_stats() {
         let mut stats = AnnouncementStats::new();
-        
+
         stats.add(&Announcement::new(make_valid_ephemeral_key(), 0x42));
         stats.add(&Announcement::new(make_valid_ephemeral_key(), 0x42));
         stats.add(&Announcement::new(make_valid_ephemeral_key(), 0x00));
-        
+
         assert_eq!(stats.total_count, 3);
         assert_eq!(stats.view_tag_distribution[0x42], 2);
         assert_eq!(stats.view_tag_distribution[0x00], 1);

@@ -46,7 +46,11 @@ use crate::hash::shake256;
 /// let announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
 /// ```
 pub fn compute_view_tag(shared_secret: &[u8]) -> u8 {
-    let hash = shake256(DOMAIN_VIEW_TAG, shared_secret, SHAKE256_VIEW_TAG_OUTPUT_SIZE);
+    let hash = shake256(
+        DOMAIN_VIEW_TAG,
+        shared_secret,
+        SHAKE256_VIEW_TAG_OUTPUT_SIZE,
+    );
     hash[0]
 }
 
@@ -146,7 +150,7 @@ mod tests {
         let secret = [42u8; 32];
         let tag1 = compute_view_tag(&secret);
         let tag2 = compute_view_tag(&secret);
-        
+
         assert_eq!(tag1, tag2);
     }
 
@@ -154,10 +158,10 @@ mod tests {
     fn test_view_tag_different_secrets() {
         let secret1 = [1u8; 32];
         let secret2 = [2u8; 32];
-        
+
         let tag1 = compute_view_tag(&secret1);
         let tag2 = compute_view_tag(&secret2);
-        
+
         // Different secrets should usually produce different tags
         // (1/256 chance of collision)
         // We just verify both are valid u8 values
@@ -169,7 +173,7 @@ mod tests {
     fn test_view_tag_bytes() {
         let secret = [0xAB; 32];
         let bytes = compute_view_tag_bytes(&secret, 4);
-        
+
         assert_eq!(bytes.len(), 4);
         assert_eq!(bytes[0], compute_view_tag(&secret));
     }
@@ -179,7 +183,7 @@ mod tests {
         let secret = [99u8; 32];
         let correct_tag = compute_view_tag(&secret);
         let wrong_tag = correct_tag.wrapping_add(1);
-        
+
         assert!(verify_view_tag(&secret, correct_tag));
         assert!(!verify_view_tag(&secret, wrong_tag));
     }
@@ -189,34 +193,38 @@ mod tests {
         // Generate many random secrets and check view tag distribution
         let mut rng = rand::thread_rng();
         let mut stats = ViewTagStats::new();
-        
+
         for _ in 0..10000 {
             let secret: [u8; 32] = rng.gen();
             let tag = compute_view_tag(&secret);
             stats.add(tag);
         }
-        
+
         // Chi-squared test for uniformity
         // With 255 degrees of freedom, critical value at p=0.001 is ~310
         // A good hash should produce chi-squared well below this
         let chi_sq = stats.chi_squared();
-        assert!(chi_sq < 500.0, "View tags are not uniformly distributed: χ² = {}", chi_sq);
+        assert!(
+            chi_sq < 500.0,
+            "View tags are not uniformly distributed: χ² = {}",
+            chi_sq
+        );
     }
 
     #[test]
     fn test_view_tag_stats() {
         let mut stats = ViewTagStats::new();
-        
+
         stats.add(0);
         stats.add(0);
         stats.add(1);
         stats.add(255);
-        
+
         assert_eq!(stats.total, 4);
         assert_eq!(stats.distribution[0], 2);
         assert_eq!(stats.distribution[1], 1);
         assert_eq!(stats.distribution[255], 1);
-        
+
         let (most_common, count) = stats.most_common().unwrap();
         assert_eq!(most_common, 0);
         assert_eq!(count, 2);
@@ -227,11 +235,11 @@ mod tests {
         // With 1-byte view tags, we expect ~99.6% filtering efficiency
         // That means for 100,000 announcements with uniformly distributed tags,
         // we should only need to fully process ~391 per view tag (100000/256)
-        
+
         let total_announcements = 100_000u64;
         let expected_per_tag = total_announcements as f64 / 256.0;
         let efficiency = 1.0 - (expected_per_tag / total_announcements as f64);
-        
+
         assert!((efficiency - 0.996).abs() < 0.001);
     }
 }
