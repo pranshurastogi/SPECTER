@@ -17,6 +17,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
+      working-directory: specter
       run: cargo build --verbose
     - name: Run tests
+      working-directory: specter
       run: cargo test --verbose
