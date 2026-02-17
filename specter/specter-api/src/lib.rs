@@ -3,15 +3,15 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
 
-mod routes;
-mod handlers;
-mod state;
 mod dto;
 mod error;
+mod handlers;
+mod routes;
+mod state;
 
-pub use routes::create_router;
-pub use state::{AppState, ApiConfig};
 pub use error::ApiError;
+pub use routes::create_router;
+pub use state::{ApiConfig, AppState};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -50,9 +50,9 @@ impl ApiServer {
     pub async fn run(self, addr: impl Into<SocketAddr>) -> std::io::Result<()> {
         let addr = addr.into();
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        
+
         info!("SPECTER API server listening on {}", addr);
-        
+
         axum::serve(listener, self.router()).await
     }
 }

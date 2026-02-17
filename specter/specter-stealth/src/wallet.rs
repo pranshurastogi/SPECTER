@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
 
 use specter_core::error::{Result, SpecterError};
-use specter_core::types::{KeyPair, MetaAddress, SpecterKeys, KyberPublicKey};
-use specter_crypto::{generate_keypair, decapsulate, compute_view_tag};
+use specter_core::types::{KeyPair, KyberPublicKey, MetaAddress, SpecterKeys};
 use specter_crypto::derive::{derive_stealth_keys, StealthKeys};
+use specter_crypto::{compute_view_tag, decapsulate, generate_keypair};
 
 /// Configuration for wallet creation.
 #[derive(Clone, Debug, Default)]
@@ -75,10 +75,8 @@ impl SpecterWallet {
     ///
     /// * `keys` - The complete SPECTER key set
     pub fn from_keys(keys: SpecterKeys) -> Result<Self> {
-        let meta_address = MetaAddress::new(
-            keys.spending.public.clone(),
-            keys.viewing.public.clone(),
-        );
+        let meta_address =
+            MetaAddress::new(keys.spending.public.clone(), keys.viewing.public.clone());
 
         Ok(Self {
             keys,
@@ -212,7 +210,7 @@ mod tests {
     #[test]
     fn test_wallet_generation() {
         let wallet = SpecterWallet::generate().unwrap();
-        
+
         // Meta-address should be valid
         assert!(wallet.meta_address().validate().is_ok());
     }
@@ -223,7 +221,7 @@ mod tests {
             description: Some("Test wallet".into()),
             avatar: Some("ipfs://test".into()),
         };
-        
+
         let wallet = SpecterWallet::generate_with_config(config).unwrap();
         assert!(wallet.meta_address().validate().is_ok());
     }
@@ -231,15 +229,17 @@ mod tests {
     #[test]
     fn test_wallet_try_discover_match() {
         let wallet = SpecterWallet::generate().unwrap();
-        
+
         // Simulate sender creating a payment (sender encapsulates to VIEWING key)
         let (ciphertext, shared_secret) = encapsulate(wallet.viewing_public_key()).unwrap();
         let view_tag = compute_view_tag(&shared_secret);
-        
+
         // Wallet should discover this
-        let result = wallet.try_discover(ciphertext.as_bytes(), view_tag).unwrap();
+        let result = wallet
+            .try_discover(ciphertext.as_bytes(), view_tag)
+            .unwrap();
         assert!(result.is_some());
-        
+
         let stealth_keys = result.unwrap();
         assert!(!stealth_keys.address.is_zero());
     }
@@ -247,13 +247,15 @@ mod tests {
     #[test]
     fn test_wallet_try_discover_wrong_tag() {
         let wallet = SpecterWallet::generate().unwrap();
-        
+
         let (ciphertext, shared_secret) = encapsulate(wallet.viewing_public_key()).unwrap();
         let view_tag = compute_view_tag(&shared_secret);
         let wrong_tag = view_tag.wrapping_add(1);
-        
+
         // Should return None for wrong view tag
-        let result = wallet.try_discover(ciphertext.as_bytes(), wrong_tag).unwrap();
+        let result = wallet
+            .try_discover(ciphertext.as_bytes(), wrong_tag)
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -261,13 +263,15 @@ mod tests {
     fn test_wallet_try_discover_wrong_key() {
         let wallet1 = SpecterWallet::generate().unwrap();
         let wallet2 = SpecterWallet::generate().unwrap();
-        
+
         // Payment for wallet1 (encapsulate to wallet1's viewing key)
         let (ciphertext, shared_secret) = encapsulate(wallet1.viewing_public_key()).unwrap();
         let view_tag = compute_view_tag(&shared_secret);
-        
+
         // Wallet2 tries to discover - should fail (different shared secret)
-        let result = wallet2.try_discover(ciphertext.as_bytes(), view_tag).unwrap();
+        let result = wallet2
+            .try_discover(ciphertext.as_bytes(), view_tag)
+            .unwrap();
         // Note: This will return None because the view tag won't match
         // (decapsulation with wrong key produces random shared secret)
         assert!(result.is_none());
@@ -277,7 +281,7 @@ mod tests {
     fn test_viewing_key_export() {
         let wallet = SpecterWallet::generate().unwrap();
         let export = wallet.export_viewing_key();
-        
+
         assert!(!export.viewing_public_key.is_empty());
         assert!(!export.spending_public_key.is_empty());
     }

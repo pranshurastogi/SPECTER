@@ -139,14 +139,14 @@ impl ScanProgress {
     pub fn update(&mut self, scanned: u64, discoveries: u64, elapsed_ms: u64) {
         self.scanned = scanned;
         self.discoveries = discoveries;
-        
+
         if elapsed_ms > 0 {
             self.rate = (scanned as f64 / elapsed_ms as f64) * 1000.0;
         }
-        
+
         if self.total > 0 {
             self.percent = (scanned as f64 / self.total as f64) * 100.0;
-            
+
             if self.rate > 0.0 {
                 let remaining = self.total.saturating_sub(scanned);
                 self.eta_seconds = Some(remaining as f64 / self.rate);
@@ -246,7 +246,8 @@ impl Scanner {
         &self,
         registry: &dyn AnnouncementRegistry,
     ) -> Result<Vec<DiscoveredPayment>> {
-        self.scan_with_config(registry, ScannerConfig::default()).await
+        self.scan_with_config(registry, ScannerConfig::default())
+            .await
     }
 
     /// Scans with custom configuration.
@@ -270,8 +271,12 @@ impl Scanner {
         for view_tag in view_tags {
             // Get announcements for this view tag
             let announcements = registry.get_by_view_tag(view_tag).await?;
-            
-            debug!(view_tag, count = announcements.len(), "Scanning view tag bucket");
+
+            debug!(
+                view_tag,
+                count = announcements.len(),
+                "Scanning view tag bucket"
+            );
 
             for announcement in announcements {
                 // Apply time filter
@@ -384,7 +389,11 @@ impl Scanner {
 
                 // Update progress every 100 announcements
                 if scanned % 100 == 0 {
-                    progress.update(scanned, discoveries.len() as u64, start.elapsed().as_millis() as u64);
+                    progress.update(
+                        scanned,
+                        discoveries.len() as u64,
+                        start.elapsed().as_millis() as u64,
+                    );
                     progress_callback(progress.clone());
                 }
 
@@ -395,7 +404,11 @@ impl Scanner {
         }
 
         // Final progress update
-        progress.update(scanned, discoveries.len() as u64, start.elapsed().as_millis() as u64);
+        progress.update(
+            scanned,
+            discoveries.len() as u64,
+            start.elapsed().as_millis() as u64,
+        );
         progress_callback(progress);
 
         Ok(discoveries)
@@ -583,7 +596,10 @@ mod tests {
         registry.publish(ann).await.unwrap();
 
         for _ in 0..10 {
-            registry.publish(create_random_announcement()).await.unwrap();
+            registry
+                .publish(create_random_announcement())
+                .await
+                .unwrap();
         }
 
         scanner.scan_all(&registry).await.unwrap();
@@ -611,11 +627,14 @@ mod tests {
         });
 
         let config = ScannerConfig::new();
-        scanner.scan_with_progress(&registry, config, callback).await.unwrap();
+        scanner
+            .scan_with_progress(&registry, config, callback)
+            .await
+            .unwrap();
 
         let updates = progress_updates.read();
         assert!(!updates.is_empty());
-        
+
         // Last update should show 100%
         let last = updates.last().unwrap();
         assert!(last.percent >= 99.0);
@@ -653,13 +672,13 @@ mod tests {
     #[test]
     fn test_scan_progress_eta() {
         let mut progress = ScanProgress::new(1000);
-        
+
         // Simulate 500 scanned in 1000ms (500/s rate)
         progress.update(500, 2, 1000);
-        
+
         assert!((progress.percent - 50.0).abs() < 0.1);
         assert!((progress.rate - 500.0).abs() < 1.0);
-        
+
         // ETA should be ~1 second for remaining 500
         assert!(progress.eta_seconds.is_some());
         assert!((progress.eta_seconds.unwrap() - 1.0).abs() < 0.1);

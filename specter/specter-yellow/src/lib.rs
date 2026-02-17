@@ -52,14 +52,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
 
-pub mod client;
 pub mod channel;
-pub mod types;
+pub mod client;
 pub mod discovery;
 pub mod settlement;
+pub mod types;
 
-pub use client::YellowClient;
 pub use channel::{PrivateChannel, PrivateChannelBuilder};
-pub use types::*;
+pub use client::YellowClient;
 pub use discovery::ChannelDiscovery;
 pub use settlement::PrivateSettlement;
+pub use types::*;

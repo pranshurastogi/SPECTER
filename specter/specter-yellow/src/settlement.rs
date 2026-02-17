@@ -2,12 +2,12 @@
 //!
 //! Handles the final settlement of channels where funds go to stealth addresses.
 
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use specter_core::error::{Result, SpecterError};
 
-use crate::types::{DiscoveredChannel, SettlementResult, Allocation};
 use crate::client::YellowClient;
+use crate::types::{Allocation, DiscoveredChannel, SettlementResult};
 
 /// Private settlement handler.
 ///
@@ -182,7 +182,7 @@ mod tests {
     fn test_settlement_creation() {
         let channel = make_test_channel();
         let settlement = PrivateSettlement::new(channel);
-        
+
         assert_eq!(settlement.stealth_private_key_hex().len(), 64);
     }
 
@@ -190,7 +190,7 @@ mod tests {
     fn test_batch_settlement() {
         let channels = vec![make_test_channel(), make_test_channel()];
         let batch = BatchSettlement::new(channels);
-        
+
         assert_eq!(batch.count(), 2);
     }
 }

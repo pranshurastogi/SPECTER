@@ -14,7 +14,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // CRYPTOGRAPHIC ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-    
     /// Error in Kyber key generation.
     #[error("Key generation failed: {0}")]
     KeyGenerationError(String),
@@ -42,7 +41,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // STEALTH ADDRESS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// Invalid meta-address format or content.
     #[error("Invalid meta-address: {0}")]
     InvalidMetaAddress(String),
@@ -62,7 +60,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // REGISTRY ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// Invalid announcement format.
     #[error("Invalid announcement: {0}")]
     InvalidAnnouncement(String),
@@ -82,7 +79,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // ENS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// ENS name not found.
     #[error("ENS name not found: {0}")]
     EnsNameNotFound(String),
@@ -102,7 +98,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // SUINS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// SuiNS name not found.
     #[error("SuiNS name not found: {0}")]
     SuinsNameNotFound(String),
@@ -118,7 +113,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // IPFS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// IPFS upload failed.
     #[error("IPFS upload failed: {0}")]
     IpfsUploadFailed(String),
@@ -138,7 +132,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // SERIALIZATION ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// JSON serialization/deserialization error.
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
@@ -158,7 +151,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // NETWORK ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// HTTP request failed.
     #[error("HTTP request failed: {0}")]
     HttpError(String),
@@ -174,7 +166,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // STORAGE ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// File I/O error.
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
@@ -190,7 +181,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // VALIDATION ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// Input validation failed.
     #[error("Validation error: {0}")]
     ValidationError(String),
@@ -202,7 +192,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // INTERNAL ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// Internal invariant violation (should never happen).
     #[error("Internal error: {0}")]
     InternalError(String),
@@ -214,7 +203,6 @@ pub enum SpecterError {
     // ═══════════════════════════════════════════════════════════════════════════
     // YELLOW NETWORK ERRORS
     // ═══════════════════════════════════════════════════════════════════════════
-
     /// Yellow Network error.
     #[error("Yellow Network error: {0}")]
     YellowError(String),
@@ -285,7 +273,8 @@ mod tests {
 
     #[test]
     fn test_json_error_conversion() {
-        let json_result: std::result::Result<serde_json::Value, _> = serde_json::from_str("invalid");
+        let json_result: std::result::Result<serde_json::Value, _> =
+            serde_json::from_str("invalid");
         let specter_result: Result<serde_json::Value> = json_result.map_err(SpecterError::from);
         assert!(matches!(specter_result, Err(SpecterError::JsonError(_))));
     }

@@ -7,10 +7,10 @@
 //! - [`StealthAddress`]: One-time address for a specific payment
 //! - [`Announcement`]: Published ephemeral key + view tag
 
-mod keys;
 mod address;
 mod announcement;
+mod keys;
 
-pub use keys::*;
 pub use address::*;
 pub use announcement::*;
+pub use keys::*;

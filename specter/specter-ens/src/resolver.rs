@@ -66,11 +66,7 @@ impl SpecterResolver {
         let ens = EnsClient::with_config(config.ens.clone());
         let ipfs = IpfsClient::with_config(config.ipfs.clone());
 
-        Self {
-            ens,
-            ipfs,
-            config,
-        }
+        Self { ens, ipfs, config }
     }
 
     /// Resolves an ENS name to a meta-address.
@@ -197,7 +193,6 @@ impl SpecterResolver {
     }
 }
 
-
 /// Result of a resolution with metadata.
 #[derive(Clone, Debug)]
 pub struct ResolveResult {
@@ -224,7 +219,7 @@ mod tests {
     #[test]
     fn test_parse_cid_ipfs_prefix() {
         let resolver = test_resolver();
-        
+
         let cid = resolver.parse_cid("ipfs://QmTest123").unwrap();
         assert_eq!(cid, "QmTest123");
     }
@@ -232,7 +227,7 @@ mod tests {
     #[test]
     fn test_parse_cid_path_prefix() {
         let resolver = test_resolver();
-        
+
         let cid = resolver.parse_cid("/ipfs/QmTest123").unwrap();
         assert_eq!(cid, "QmTest123");
     }
@@ -240,26 +235,30 @@ mod tests {
     #[test]
     fn test_parse_cid_raw() {
         let resolver = test_resolver();
-        
-        let cid = resolver.parse_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").unwrap();
+
+        let cid = resolver
+            .parse_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+            .unwrap();
         assert!(cid.starts_with("Qm"));
     }
 
     #[test]
     fn test_parse_cid_v1() {
         let resolver = test_resolver();
-        
-        let cid = resolver.parse_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap();
+
+        let cid = resolver
+            .parse_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi")
+            .unwrap();
         assert!(cid.starts_with("bafy"));
     }
 
     #[test]
     fn test_format_text_record() {
         let resolver = test_resolver();
-        
+
         let record = resolver.format_text_record("QmTest123");
         assert_eq!(record, "ipfs://QmTest123");
-        
+
         // Should not double-prefix
         let record2 = resolver.format_text_record("ipfs://QmTest123");
         assert_eq!(record2, "ipfs://QmTest123");

@@ -194,7 +194,7 @@ mod tests {
             DOMAIN_ETH_ADDRESS,
             DOMAIN_ETH_KEY,
         ];
-        
+
         for (i, a) in domains.iter().enumerate() {
             for (j, b) in domains.iter().enumerate() {
                 if i != j {

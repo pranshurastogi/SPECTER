@@ -187,7 +187,11 @@ impl AnnouncementRegistry for MemoryRegistry {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         announcement.id = id;
 
-        debug!(id, view_tag = announcement.view_tag, "Publishing announcement");
+        debug!(
+            id,
+            view_tag = announcement.view_tag,
+            "Publishing announcement"
+        );
 
         // Update view tag index
         self.view_tag_index
@@ -228,7 +232,11 @@ impl AnnouncementRegistry for MemoryRegistry {
             }
         }
 
-        debug!(view_tag, count = announcements.len(), "Retrieved by view tag");
+        debug!(
+            view_tag,
+            count = announcements.len(),
+            "Retrieved by view tag"
+        );
         Ok(announcements)
     }
 
@@ -248,7 +256,12 @@ impl AnnouncementRegistry for MemoryRegistry {
         // Sort by timestamp
         announcements.sort_by_key(|a| a.timestamp);
 
-        debug!(start, end, count = announcements.len(), "Retrieved by time range");
+        debug!(
+            start,
+            end,
+            count = announcements.len(),
+            "Retrieved by time range"
+        );
         Ok(announcements)
     }
 
@@ -296,9 +309,18 @@ mod tests {
         let registry = MemoryRegistry::new();
 
         // Publish announcements with different view tags
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x00)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x00))
+            .await
+            .unwrap();
 
         // Query by view tag
         let matching = registry.get_by_view_tag(0x42).await.unwrap();
@@ -343,10 +365,16 @@ mod tests {
 
         assert_eq!(registry.count().await.unwrap(), 0);
 
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
         assert_eq!(registry.count().await.unwrap(), 1);
 
-        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
         assert_eq!(registry.count().await.unwrap(), 2);
     }
 
@@ -354,9 +382,18 @@ mod tests {
     async fn test_stats() {
         let registry = MemoryRegistry::new();
 
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
-        registry.publish(make_test_announcement(0x00)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x00))
+            .await
+            .unwrap();
 
         let stats = registry.stats();
         assert_eq!(stats.total_count, 3);
@@ -368,8 +405,14 @@ mod tests {
     async fn test_clear() {
         let registry = MemoryRegistry::new();
 
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
-        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
 
         assert_eq!(registry.len(), 2);
 
@@ -382,8 +425,14 @@ mod tests {
     #[tokio::test]
     async fn test_import_export() {
         let registry1 = MemoryRegistry::new();
-        registry1.publish(make_test_announcement(0x01)).await.unwrap();
-        registry1.publish(make_test_announcement(0x02)).await.unwrap();
+        registry1
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        registry1
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
 
         // Export
         let announcements = registry1.all_announcements();
@@ -445,9 +494,18 @@ mod tests {
     async fn test_ids_are_sequential() {
         let registry = MemoryRegistry::new();
 
-        let id1 = registry.publish(make_test_announcement(0x01)).await.unwrap();
-        let id2 = registry.publish(make_test_announcement(0x02)).await.unwrap();
-        let id3 = registry.publish(make_test_announcement(0x03)).await.unwrap();
+        let id1 = registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        let id2 = registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
+        let id3 = registry
+            .publish(make_test_announcement(0x03))
+            .await
+            .unwrap();
 
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);

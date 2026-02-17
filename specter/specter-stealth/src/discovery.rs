@@ -2,8 +2,8 @@
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{Announcement, EthAddress};
-use specter_crypto::{decapsulate, compute_view_tag, KyberCiphertext};
-use specter_crypto::derive::{derive_stealth_keys, derive_stealth_address, StealthKeys};
+use specter_crypto::derive::{derive_stealth_address, derive_stealth_keys, StealthKeys};
+use specter_crypto::{compute_view_tag, decapsulate, KyberCiphertext};
 
 /// Result of scanning a single announcement.
 #[derive(Debug)]
@@ -84,11 +84,11 @@ impl ScanStats {
         if self.total_scanned == 0 {
             0.0
         } else {
-            ((self.total_scanned - self.view_tag_matches) as f64 / self.total_scanned as f64) * 100.0
+            ((self.total_scanned - self.view_tag_matches) as f64 / self.total_scanned as f64)
+                * 100.0
         }
     }
 }
-
 
 /// Decapsulate with viewing_sk; if view tag matches, derive stealth keys.
 pub fn scan_announcement(
@@ -191,7 +191,7 @@ pub fn verify_address_from_announcement(
 mod tests {
     use super::*;
     use specter_core::types::KyberPublicKey;
-    use specter_crypto::{generate_keypair, encapsulate};
+    use specter_crypto::{encapsulate, generate_keypair};
 
     fn create_test_keys() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
         let spending = generate_keypair();
@@ -237,7 +237,8 @@ mod tests {
         let ann2 = create_announcement_for(generate_keypair().public.as_bytes());
         let ann3 = create_announcement_for(&viewing_pk);
         let announcements = vec![ann1, ann2, ann3];
-        let discoveries = scan_announcements(&announcements, &viewing_sk, &spending_pk, &spending_sk);
+        let discoveries =
+            scan_announcements(&announcements, &viewing_sk, &spending_pk, &spending_sk);
         assert_eq!(discoveries.len(), 2);
     }
 }

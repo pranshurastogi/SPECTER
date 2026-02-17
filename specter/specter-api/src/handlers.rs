@@ -12,9 +12,9 @@ use axum::{
 use tracing::{debug, info};
 
 use specter_core::traits::AnnouncementRegistry;
-use specter_core::types::{Announcement, MetaAddress, KyberPublicKey};
-use specter_crypto::{generate_keypair, compute_view_tag, encapsulate};
+use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
 use specter_crypto::derive::derive_stealth_address;
+use specter_crypto::{compute_view_tag, encapsulate, generate_keypair};
 use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
@@ -101,13 +101,19 @@ pub async fn scan_payments(
     let announcements = if let Some(tags) = &req.view_tags {
         let mut all = Vec::new();
         for tag in tags {
-            let matching = state.registry.get_by_view_tag(*tag).await
+            let matching = state
+                .registry
+                .get_by_view_tag(*tag)
+                .await
                 .map_err(|e| ApiError::internal(e.to_string()))?;
             all.extend(matching);
         }
         all
     } else if let (Some(from), Some(to)) = (req.from_timestamp, req.to_timestamp) {
-        state.registry.get_by_time_range(from, to).await
+        state
+            .registry
+            .get_by_time_range(from, to)
+            .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else {
         state.registry.all_announcements()
@@ -170,7 +176,10 @@ pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> Result<Json<ResolveEnsResponse>> {
-    let result = state.resolver.resolve_full(&name).await
+    let result = state
+        .resolver
+        .resolve_full(&name)
+        .await
         .map_err(ApiError::from)?;
 
     let response = ResolveEnsResponse {
@@ -198,7 +207,10 @@ pub async fn resolve_suins(
         state.suins_resolver.clear_cache();
     }
 
-    let result = state.suins_resolver.resolve_full(&name).await
+    let result = state
+        .suins_resolver
+        .resolve_full(&name)
+        .await
         .map_err(ApiError::from)?;
 
     let response = ResolveSuinsResponse {
@@ -224,7 +236,10 @@ pub async fn upload_ipfs(
     let meta = MetaAddress::from_hex(&req.meta_address)
         .map_err(|e| ApiError::bad_request(format!("Invalid meta_address: {}", e)))?;
 
-    let cid = state.resolver.upload(&meta, req.name.as_deref()).await
+    let cid = state
+        .resolver
+        .upload(&meta, req.name.as_deref())
+        .await
         .map_err(|e| ApiError::internal(format!("IPFS upload failed: {}", e)))?;
 
     let text_record = state.resolver.format_text_record(&cid);
@@ -237,13 +252,13 @@ pub async fn ipfs_get(
     State(state): State<Arc<AppState>>,
     Path(cid): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let data = state.resolver.download_raw(&cid).await
+    let data = state
+        .resolver
+        .download_raw(&cid)
+        .await
         .map_err(|e| ApiError::internal(format!("IPFS retrieve failed: {}", e)))?;
 
-    Ok((
-        [(header::CONTENT_TYPE, "application/octet-stream")],
-        data,
-    ))
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], data))
 }
 
 /// POST /api/v1/registry/announcements
@@ -252,8 +267,9 @@ pub async fn publish_announcement(
     Json(req): Json<PublishAnnouncementRequest>,
 ) -> Result<Json<PublishAnnouncementResponse>> {
     let ephemeral_key = hex::decode(&req.ephemeral_key)?;
-    
-    let channel_id = req.channel_id
+
+    let channel_id = req
+        .channel_id
         .map(|s| {
             let bytes = hex::decode(&s)?;
             let mut arr = [0u8; 32];
@@ -268,7 +284,9 @@ pub async fn publish_announcement(
 
     let tx_hash = req.tx_hash.trim();
     if tx_hash.is_empty() {
-        return Err(ApiError::bad_request("tx_hash is required and cannot be empty"));
+        return Err(ApiError::bad_request(
+            "tx_hash is required and cannot be empty",
+        ));
     }
 
     let mut announcement = if let Some(ch_id) = channel_id {
@@ -280,7 +298,10 @@ pub async fn publish_announcement(
     announcement.amount = req.amount.filter(|s| !s.trim().is_empty());
     announcement.chain = req.chain.filter(|s| !s.trim().is_empty());
 
-    let id = state.registry.publish(announcement).await
+    let id = state
+        .registry
+        .publish(announcement)
+        .await
         .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
 
     info!(id, view_tag = req.view_tag, "Published announcement");
@@ -294,10 +315,16 @@ pub async fn list_announcements(
     Query(params): Query<ListAnnouncementsQuery>,
 ) -> Result<Json<ListAnnouncementsResponse>> {
     let announcements = if let Some(tag) = params.view_tag {
-        state.registry.get_by_view_tag(tag).await
+        state
+            .registry
+            .get_by_view_tag(tag)
+            .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else if let (Some(from), Some(to)) = (params.from_timestamp, params.to_timestamp) {
-        state.registry.get_by_time_range(from, to).await
+        state
+            .registry
+            .get_by_time_range(from, to)
+            .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else {
         state.registry.all_announcements()
@@ -307,7 +334,7 @@ pub async fn list_announcements(
 
     let offset = params.offset.unwrap_or(0) as usize;
     let limit = params.limit.unwrap_or(100) as usize;
-    
+
     let paginated: Vec<AnnouncementDto> = announcements
         .into_iter()
         .skip(offset)
@@ -347,9 +374,7 @@ pub async fn get_registry_stats(
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// GET /health
-pub async fn health_check(
-    State(state): State<Arc<AppState>>,
-) -> Json<HealthResponse> {
+pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let start = START_TIME.get_or_init(Instant::now);
     let uptime = start.elapsed().as_secs();
 
@@ -382,7 +407,10 @@ pub async fn yellow_create_channel(
 
     // Resolve meta-address from ENS or hex
     let meta_address = if req.recipient.ends_with(".eth") {
-        state.resolver.resolve(&req.recipient).await
+        state
+            .resolver
+            .resolve(&req.recipient)
+            .await
             .map_err(ApiError::from)?
     } else {
         MetaAddress::from_hex(&req.recipient)
@@ -394,23 +422,24 @@ pub async fn yellow_create_channel(
         .map_err(|e| ApiError::internal(format!("Stealth payment creation failed: {}", e)))?;
 
     // Use provided channel_id (from on-chain create) or generate random
-    let (channel_id_bytes, channel_id) = if let Some(ref id) = req.channel_id.filter(|s| !s.trim().is_empty()) {
-        let decoded = hex::decode(strip_hex_prefix(id))
-            .map_err(|e| ApiError::bad_request(format!("Invalid channel_id hex: {}", e)))?;
-        if decoded.len() != 32 {
-            return Err(ApiError::bad_request(
-                "channel_id must be 32 bytes (64 hex chars)".to_string(),
-            ));
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&decoded);
-        (arr, id.clone())
-    } else {
-        use rand::RngCore;
-        let mut arr = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut arr);
-        (arr, hex::encode(arr))
-    };
+    let (channel_id_bytes, channel_id) =
+        if let Some(ref id) = req.channel_id.filter(|s| !s.trim().is_empty()) {
+            let decoded = hex::decode(strip_hex_prefix(id))
+                .map_err(|e| ApiError::bad_request(format!("Invalid channel_id hex: {}", e)))?;
+            if decoded.len() != 32 {
+                return Err(ApiError::bad_request(
+                    "channel_id must be 32 bytes (64 hex chars)".to_string(),
+                ));
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&decoded);
+            (arr, id.clone())
+        } else {
+            use rand::RngCore;
+            let mut arr = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut arr);
+            (arr, hex::encode(arr))
+        };
 
     let stealth_address = payment.stealth_address.to_checksum_string();
     let ephemeral_key = hex::encode(&payment.announcement.ephemeral_key);
@@ -425,7 +454,10 @@ pub async fn yellow_create_channel(
     announcement.amount = Some(req.amount.clone());
     announcement.chain = Some("ethereum".into());
 
-    let ann_id = state.registry.publish(announcement).await
+    let ann_id = state
+        .registry
+        .publish(announcement)
+        .await
         .map_err(|e| ApiError::internal(format!("Failed to publish announcement: {}", e)))?;
 
     info!(ann_id, channel_id = %channel_id, "Yellow channel created with announcement");
@@ -475,7 +507,11 @@ pub async fn yellow_discover_channels(
                 "USDC".into()
             };
             YellowDiscoveredChannelDto {
-                channel_id: d.announcement.channel_id.map(hex::encode).unwrap_or_default(),
+                channel_id: d
+                    .announcement
+                    .channel_id
+                    .map(hex::encode)
+                    .unwrap_or_default(),
                 stealth_address: d.keys.address.to_checksum_string(),
                 eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
                 status: "open".into(),
@@ -502,7 +538,15 @@ pub async fn yellow_fund_channel(
 
     // In production, would interact with Yellow's custody contract on Sepolia
     Ok(Json(YellowFundChannelResponse {
-        tx_hash: format!("0x{}", hex::encode(req.channel_id.as_bytes().get(..16).unwrap_or(b"pending_fund_tx_"))),
+        tx_hash: format!(
+            "0x{}",
+            hex::encode(
+                req.channel_id
+                    .as_bytes()
+                    .get(..16)
+                    .unwrap_or(b"pending_fund_tx_")
+            )
+        ),
         new_balance: req.amount,
     }))
 }
@@ -526,22 +570,27 @@ pub async fn yellow_close_channel(
     if channel_id_bytes.len() == 32 {
         channel_id_arr.copy_from_slice(&channel_id_bytes);
     }
-    let matching = announcements.iter().find(|a| a.channel_id == Some(channel_id_arr));
-    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+    let matching = announcements
+        .iter()
+        .find(|a| a.channel_id == Some(channel_id_arr));
+    let amount = matching
+        .and_then(|a| a.amount.clone())
+        .unwrap_or_else(|| "0".into());
 
     // Placeholder tx_hash for UI reference; no L1 tx is submitted by this backend.
-    let placeholder_tx = format!("0x{}", hex::encode(channel_id_bytes.get(..16).unwrap_or(b"pending_close_tx")));
+    let placeholder_tx = format!(
+        "0x{}",
+        hex::encode(channel_id_bytes.get(..16).unwrap_or(b"pending_close_tx"))
+    );
 
     Ok(Json(YellowCloseChannelResponse {
         tx_hash: placeholder_tx,
         tx_hash_is_placeholder: true,
-        final_balances: vec![
-            YellowAllocationDto {
-                destination: "stealth_address".into(),
-                token: "USDC".into(),
-                amount,
-            },
-        ],
+        final_balances: vec![YellowAllocationDto {
+            destination: "stealth_address".into(),
+            token: "USDC".into(),
+            amount,
+        }],
     }))
 }
 
@@ -563,12 +612,14 @@ pub async fn yellow_channel_status(
         channel_id_arr.copy_from_slice(&channel_id_bytes);
     }
 
-    let matching = announcements.iter().find(|a| {
-        a.channel_id == Some(channel_id_arr)
-    });
+    let matching = announcements
+        .iter()
+        .find(|a| a.channel_id == Some(channel_id_arr));
 
     let created_at = matching.map(|a| a.timestamp).unwrap_or(0);
-    let amount = matching.and_then(|a| a.amount.clone()).unwrap_or_else(|| "0".into());
+    let amount = matching
+        .and_then(|a| a.amount.clone())
+        .unwrap_or_else(|| "0".into());
 
     let balances = if matching.is_some() {
         vec![YellowAllocationDto {
@@ -582,7 +633,12 @@ pub async fn yellow_channel_status(
 
     Ok(Json(YellowChannelStatusResponse {
         channel_id: channel_id.clone(),
-        status: if matching.is_some() { "open" } else { "unknown" }.into(),
+        status: if matching.is_some() {
+            "open"
+        } else {
+            "unknown"
+        }
+        .into(),
         balances,
         participants: vec![],
         created_at,
@@ -607,22 +663,18 @@ pub async fn yellow_transfer(
 
     Ok(Json(YellowTransferResponse {
         new_state_version: 2,
-        balances: vec![
-            YellowAllocationDto {
-                destination: req.destination,
-                token: req.asset,
-                amount: req.amount,
-            },
-        ],
+        balances: vec![YellowAllocationDto {
+            destination: req.destination,
+            token: req.asset,
+            amount: req.amount,
+        }],
     }))
 }
 
 /// GET /api/v1/yellow/config
 ///
 /// Returns Yellow Network configuration.
-pub async fn yellow_config(
-    State(state): State<Arc<AppState>>,
-) -> Json<YellowConfigResponse> {
+pub async fn yellow_config(State(state): State<Arc<AppState>>) -> Json<YellowConfigResponse> {
     let config = &state.yellow_config;
 
     Json(YellowConfigResponse {

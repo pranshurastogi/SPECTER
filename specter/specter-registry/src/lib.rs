@@ -25,11 +25,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
 
-mod memory;
 mod file;
+mod memory;
 
-pub use memory::MemoryRegistry;
 pub use file::FileRegistry;
+pub use memory::MemoryRegistry;
 
 // Re-export the trait from core
 pub use specter_core::traits::AnnouncementRegistry as Registry;

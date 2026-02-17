@@ -110,7 +110,10 @@ impl IpfsClient {
     /// Uses https://uploads.pinata.cloud/v3/files with JWT Bearer auth.
     #[instrument(skip(self, data))]
     pub async fn upload(&self, data: &[u8], name: Option<&str>) -> Result<String> {
-        let jwt = self.config.pinata_jwt.as_ref()
+        let jwt = self
+            .config
+            .pinata_jwt
+            .as_ref()
             .ok_or_else(|| SpecterError::ConfigError("Pinata JWT not configured".into()))?;
 
         let file_part = reqwest::multipart::Part::bytes(data.to_vec())
@@ -252,7 +255,10 @@ impl IpfsClient {
 
     #[instrument(skip(self))]
     pub async fn pin(&self, cid: &str) -> Result<()> {
-        let jwt = self.config.pinata_jwt.as_ref()
+        let jwt = self
+            .config
+            .pinata_jwt
+            .as_ref()
             .ok_or_else(|| SpecterError::ConfigError("Pinata JWT not configured".into()))?;
 
         self.validate_cid(cid)?;
@@ -271,7 +277,10 @@ impl IpfsClient {
 
         if !response.status().is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(SpecterError::IpfsUploadFailed(format!("Pin failed: {}", text)));
+            return Err(SpecterError::IpfsUploadFailed(format!(
+                "Pin failed: {}",
+                text
+            )));
         }
 
         debug!(cid, "Pinned to Pinata");
@@ -280,7 +289,10 @@ impl IpfsClient {
 
     #[instrument(skip(self))]
     pub async fn unpin(&self, cid: &str) -> Result<()> {
-        let jwt = self.config.pinata_jwt.as_ref()
+        let jwt = self
+            .config
+            .pinata_jwt
+            .as_ref()
             .ok_or_else(|| SpecterError::ConfigError("Pinata JWT not configured".into()))?;
 
         self.validate_cid(cid)?;
@@ -326,7 +338,9 @@ mod tests {
     #[test]
     fn test_validate_cid_v0() {
         let client = IpfsClient::with_config(test_config());
-        assert!(client.validate_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG").is_ok());
+        assert!(client
+            .validate_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG")
+            .is_ok());
         assert!(client.validate_cid("QmInvalid").is_err());
     }
 

@@ -29,9 +29,9 @@ categories = ["cryptography", "blockchain"]
 # ═══════════════════════════════════════════════════════════════════════════════
 # POST-QUANTUM CRYPTOGRAPHY
 # ═══════════════════════════════════════════════════════════════════════════════
-# Using pqcrypto-kyber - bindings to reference C implementation (most battle-tested)
-pqcrypto-kyber = "0.8"
-pqcrypto-traits = "0.3"
+# Using ml-kem from RustCrypto - pure Rust implementation of FIPS 203 (ML-KEM standard)
+# Compiles to WASM natively and implements the finalized standard
+ml-kem = { version = "0.2", features = ["zeroize"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CRYPTOGRAPHIC PRIMITIVES

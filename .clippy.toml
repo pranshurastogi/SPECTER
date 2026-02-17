@@ -1,0 +1,237 @@
+# Clippy configuration for SPECTER project
+# See: https://rust-lang.github.io/rust-clippy/
+
+# Performance
+avoid-breaking-exported-api = false
+
+# Correctness
+disallowed-types = []
+disallowed-methods = []
+
+# Style - naming conventions are enforced by rustc
+# Variables: snake_case
+# Functions: snake_case
+# Structs: PascalCase
+# Enums: PascalCase
+# Constants: SCREAMING_SNAKE_CASE
+# Modules: snake_case
+
+# Security and correctness checks for crypto code
+arithmetic-side-effects = true
+as-conversions = true
+cast-lossless = true
+cast-possible-truncation = true
+cast-possible-wrap = true
+cast-precision-loss = true
+cast-sign-loss = true
+checked-conversions = true
+float-arithmetic = true
+float-cmp = true
+identity-op = true
+implicit-saturating-sub = true
+integer-arithmetic = true
+integer-division = true
+large-assignments = { threshold = 1024 }
+large-const-arrays = { threshold = 1024 }
+large-difference = { threshold = 100 }
+large-enum-variant = { threshold = 200 }
+large-stack-arrays = { threshold = 1024 }
+large-types-passed-by-value = { threshold = 200 }
+modulo-arithmetic = true
+panic = true
+panic-in-result-fn = true
+ptr-as-ptr = true
+ptr-eq = true
+ptr-offset-with-cast = true
+ptr-to-int-cast = true
+redundant-clone = true
+redundant-closure-call = true
+redundant-closure-for-method-calls = true
+redundant-pattern = true
+redundant-slicing = true
+redundant-type-annotations = true
+same-name-method = true
+self-assignment = true
+shadow-reuse = true
+shadow-same = true
+shadow-unrelated = true
+single-char-lifetime-names = true
+single-char-pattern-names = true
+single-element-loop = true
+single-match-else = true
+str-to-string = true
+string-add = true
+string-add-assign = true
+string-literal-as-str = true
+string-slice = true
+string-to-string = true
+todo = true
+too-many-arguments = { max-args = 7 }
+too-many-lines = { max-lines = 2000 }
+transmute-float-to-int = true
+transmute-int-to-bool = true
+transmute-int-to-char = true
+transmute-int-to-float = true
+transmute-ptr-to-ptr = true
+transmute-ptr-to-ref = true
+transmute-undefined-repr = true
+transmutes-expressible-as-ptr-casts = true
+transmuting-null = true
+trivial-casts = true
+trivial-numeric-casts = true
+type-complexity = { threshold = 300 }
+unnecessary-box-returns = true
+unnecessary-box-deref = true
+unnecessary-cast = true
+unnecessary-lazy-evaluations = true
+unnecessary-operation = true
+unnecessary-self-imports = true
+unnecessary-sort-unstable = true
+unnecessary-to-owned = true
+unnecessary-unwrap = true
+unneeded-field-pattern = true
+unneeded-wildcard-pattern = true
+unreachable = true
+unreachable-code = true
+unreachable-pub = true
+unseparated-literal-suffix = true
+unused-allocation = true
+unused-assignments = true
+unused-attributes = true
+unused-braces = true
+unused-comparisons = true
+unused-doc-comments = true
+unused-enum-ignore = true
+unused-extern-crates = true
+unused-features = true
+unused-import-braces = true
+unused-labels = true
+unused-macros = true
+unused-must-use = true
+unused-peekable = true
+unused-qualifications = true
+unused-rounding = true
+unused-self = true
+unused-tuple-struct-fields = true
+unused-unit = true
+unused-variables = true
+used-underscore-binding = true
+useless-let-if-seq = true
+useless-transmute = true
+useless-vec = true
+verbose-bit-mask = true
+wildcard-imports = true
+zero-prefixed-literal = true
+
+# Pedantic lints for crypto code quality
+cognitive-complexity = { threshold = 30 }
+cyclomatic-complexity = { threshold = 20 }
+doc-markdown = true
+empty-line-after-outer-doc = true
+explicit-counter-loops = true
+explicit-deref-methods = true
+explicit-iter-loop = true
+explicit-into-iter-usage = true
+implicit-clone = true
+implicit-hash = true
+indexing-slicing = true
+inefficient-to-string = true
+items-after-statements = true
+let-unit-value = true
+lossy-float-literal = true
+map-unwrap-or = true
+match-on-vec-items = true
+match-same-arms = true
+match-wildcard-for-single-variants = true
+maybe-infinite-iter = true
+mem-forget = true
+min-ident-chars = { min-chars = 2 }
+missing-const-for-fn = true
+missing-errors-doc = true
+missing-panics-doc = true
+missing-spin-loop = true
+mod-module-files = true
+module-inception = true
+must-use-candidate = true
+must-use-unit = true
+mutex-atomic = true
+mutex-integer = true
+naive-bytecount = true
+needless-borrow = true
+needless-collect = true
+needless-continue = true
+needless-doctest-main = true
+needless-for-each = true
+needless-late-init = true
+needless-lifetimes = true
+needless-pass-by-value = true
+needless-question-mark = true
+needless-range-loop = true
+needless-return = true
+needless-split-whitespace = true
+needless-string-instances = true
+needless-update = true
+neg-multiply = true
+nested-match-arm = true
+never-loop = true
+no-effect = true
+non-ascii-idents = true
+non-ascii-literal = true
+non-default-macro-uses = true
+non-exhaustive-omitted-patterns = true
+non-minimal-cfg = true
+non-send-fields-in-send-ty = true
+nonstandard-macro-braces = true
+octal-escapes = true
+op-ref = true
+option-as-ref-deref = true
+option-env-unwrap = true
+option-if-let-else = true
+option-option = true
+or-fun-call = true
+path-buf-push-overwrite = true
+pattern-type-mismatch = true
+precedence = true
+print-stdout = true
+print-with-newline = true
+pub-use = true
+question-mark-used = true
+range-minus-one = true
+range-plus-one = true
+range-step-by-zero = true
+range-zip-with-len = true
+ref-bind-to-reference = true
+ref-option = true
+ref-pattern = true
+regex = true
+repeat-once = true
+same-name-method = true
+search-is-some = true
+semicolon-if-nothing-returned = true
+skip-while-next = true
+slow-vector-initialization = true
+stable-features = true
+suboptimal-flops = true
+suspicious-arithmetic = true
+suspicious-assignment = true
+suspicious-else-formatting = true
+suspicious-map = true
+suspicious-op-assign = true
+suspicious-splitn = true
+suspicious-unary-op = true
+suspicious-xor-used-as-pow = true
+temporary-assignment = true
+toplevel-ref-arg = true
+type-repetition-in-bounds = true
+unclear-operation-precedence = true
+unconditional-recursion = true
+unimplemented = true
+uninit-assumed-init = true
+uninit-vec = true
+unnecessary-enum-identifier-all = true
+unnecessary-filter-map = true
+unnecessary-find-map = true
+unnecessary-fold = true
+unnecessary-join = true
+unsound-ignore-transmute = true
+verbose-identifiers = true

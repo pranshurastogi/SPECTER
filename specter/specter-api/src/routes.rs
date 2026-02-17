@@ -37,10 +37,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::StatusCode;
-    use axum::body::{Body, to_bytes};
-    use tower::ServiceExt;
     use crate::state::ApiConfig;
+    use axum::body::{to_bytes, Body};
+    use axum::http::StatusCode;
+    use tower::ServiceExt;
 
     fn test_app() -> Router {
         let state = Arc::new(AppState::new(ApiConfig::default()));
@@ -75,7 +75,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_keys() {
         let app = test_app();
-        
+
         let response = app
             .oneshot(
                 axum::http::Request::builder()
@@ -93,7 +93,7 @@ mod tests {
     #[tokio::test]
     async fn test_registry_stats() {
         let app = test_app();
-        
+
         let response = app
             .oneshot(
                 axum::http::Request::builder()
