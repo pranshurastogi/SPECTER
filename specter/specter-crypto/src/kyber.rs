@@ -199,7 +199,10 @@ pub fn generate_keypair() -> KeyPair {
     let (dk, ek) = MlKem768::generate(&mut rng);
 
     // Convert to byte arrays
+<<<<<<< HEAD
     // These expect calls are safe because ml-kem guarantees fixed sizes
+=======
+>>>>>>> f3b32c2 (ml-kem added and replaced by pqcrypto)
     let public = KyberPublicKey::from_array(
         ek.as_bytes()
             .try_into()
@@ -245,6 +248,7 @@ pub fn generate_keypair() -> KeyPair {
 /// # Security
 ///
 /// The shared secret is only computable by:
+<<<<<<< HEAD
 /// - This function (sender) - via encapsulation
 /// - The holder of the corresponding secret key (recipient) - via decapsulation
 ///
@@ -278,6 +282,25 @@ pub fn encapsulate(
         .encapsulate(&mut rng)
         .map_err(|e| SpecterError::EncapsulationError(format!("Encapsulation failed: {:?}", e)))?;
 
+=======
+/// - This function (sender)
+/// - The holder of the corresponding secret key (recipient)
+pub fn encapsulate(public_key: &KyberPublicKey) -> Result<(KyberCiphertext, [u8; KYBER_SHARED_SECRET_SIZE])> {
+    // Convert public key bytes to the encoded form using the Encoded type alias
+    type EkType = <MlKem768 as KemCore>::EncapsulationKey;
+    
+    let ek_array = Encoded::<EkType>::try_from(public_key.as_bytes())
+        .map_err(|_| SpecterError::EncapsulationError("Invalid public key size".to_string()))?;
+    
+    // Create encapsulation key from the encoded bytes
+    let ek = EkType::from_bytes(&ek_array);
+
+    // Perform encapsulation
+    let mut rng = rand::thread_rng();
+    let (ct, ss) = ek.encapsulate(&mut rng)
+        .map_err(|e| SpecterError::EncapsulationError(format!("Encapsulation failed: {:?}", e)))?;
+
+>>>>>>> f3b32c2 (ml-kem added and replaced by pqcrypto)
     // Extract ciphertext - ct is a Ciphertext (Array), convert to bytes
     let ciphertext = KyberCiphertext::from_bytes(&ct[..])?;
 
@@ -343,6 +366,7 @@ pub fn decapsulate(
 
     // Convert secret key bytes to the encoded form using the Encoded type alias
     type DkType = <MlKem768 as KemCore>::DecapsulationKey;
+<<<<<<< HEAD
 
     let dk_array = Encoded::<DkType>::try_from(secret_key.as_bytes())
         .map_err(|_| SpecterError::DecapsulationError("Invalid secret key size".to_string()))?;
@@ -355,6 +379,19 @@ pub fn decapsulate(
         .decapsulate(&ct)
         .map_err(|e| SpecterError::DecapsulationError(format!("Decapsulation failed: {:?}", e)))?;
 
+=======
+    
+    let dk_array = Encoded::<DkType>::try_from(secret_key.as_bytes())
+        .map_err(|_| SpecterError::DecapsulationError("Invalid secret key size".to_string()))?;
+    
+    // Create decapsulation key from the encoded bytes
+    let dk = DkType::from_bytes(&dk_array);
+
+    // Perform decapsulation
+    let ss = dk.decapsulate(&ct)
+        .map_err(|e| SpecterError::DecapsulationError(format!("Decapsulation failed: {:?}", e)))?;
+
+>>>>>>> f3b32c2 (ml-kem added and replaced by pqcrypto)
     // Extract shared secret - ss is a SharedSecret (Array), convert to bytes
     let mut shared_secret = [0u8; KYBER_SHARED_SECRET_SIZE];
     shared_secret.copy_from_slice(&ss[..]);
