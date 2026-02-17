@@ -105,7 +105,7 @@ Recipient scans announcements using their viewing key. View tags filter out ~99.
 The protocol deals with key generation, encapsulation, stealth derivation, and scanning. These are security-critical operations where memory safety, constant-time execution, and performance matter. Rust enforces all of this at compile time. Secret keys are zeroized on drop. A single implementation is shared across the API server and CLI, so there's one place to audit.
 
 - **Axum** for the REST API server
-- **pqcrypto-kyber** for ML-KEM-768 key encapsulation
+- **ml-kem** (RustCrypto) for ML-KEM-768 key encapsulation (FIPS 203 compliant, pure Rust, WASM-compatible)
 - **sha3** for SHAKE256 hashing and view tag computation
 - **k256** for secp256k1 Ethereum address derivation from stealth keys
 - **blake2** for BLAKE2b-256 hashing used in Sui address generation

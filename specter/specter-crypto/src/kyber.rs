@@ -1,20 +1,34 @@
 //! ML-KEM-768 (Kyber) key encapsulation mechanism.
 //!
-//! This module wraps the `pqcrypto-kyber` crate to provide a clean interface
-//! for SPECTER's cryptographic operations.
+//! This module uses the `ml-kem` crate from RustCrypto to provide ML-KEM-768
+//! key encapsulation for SPECTER's post-quantum stealth address protocol.
+//!
+//! ## Implementation
+//!
+//! - **Pure Rust**: No C dependencies, compiles to WASM natively
+//! - **FIPS 203 compliant**: Implements the finalized ML-KEM standard
+//! - **Production ready**: Maintained by RustCrypto with constant-time operations
 //!
 //! ## Security Level
 //!
 //! ML-KEM-768 provides approximately 192 bits of classical security and
 //! 128+ bits of quantum security, equivalent to AES-192.
 //!
+//! ## Key Sizes
+//!
+//! - Public key (encapsulation key): 1184 bytes
+//! - Secret key (decapsulation key): 2400 bytes
+//! - Ciphertext: 1088 bytes
+//! - Shared secret: 32 bytes
+//!
 //! ## References
 //!
 //! - NIST FIPS 203: ML-KEM specification
-//! - pqcrypto-kyber: https://crates.io/crates/pqcrypto-kyber
+//! - ml-kem: https://crates.io/crates/ml-kem
+//! - RustCrypto KEMs: https://github.com/RustCrypto/KEMs
 
-use pqcrypto_kyber::kyber768;
-use pqcrypto_traits::kem::{Ciphertext, PublicKey, SecretKey, SharedSecret};
+use ml_kem::{MlKem768, KemCore, EncodedSizeUser, Encoded};
+use ml_kem::kem::{Encapsulate, Decapsulate};
 
 #[allow(unused_imports)]
 use specter_core::constants::{
@@ -104,18 +118,20 @@ impl std::fmt::Debug for KyberCiphertext {
 /// println!("Public key size: {} bytes", keypair.public.as_bytes().len());
 /// ```
 pub fn generate_keypair() -> KeyPair {
-    let (pk, sk) = kyber768::keypair();
+    let mut rng = rand::thread_rng();
+    let (dk, ek) = MlKem768::generate(&mut rng);
 
+    // Convert to byte arrays
     let public = KyberPublicKey::from_array(
-        pk.as_bytes()
+        ek.as_bytes()
             .try_into()
-            .expect("Kyber768 public key should be 1184 bytes"),
+            .expect("MlKem768 encapsulation key should be 1184 bytes"),
     );
 
     let secret = KyberSecretKey::from_array(
-        sk.as_bytes()
+        dk.as_bytes()
             .try_into()
-            .expect("Kyber768 secret key should be 2400 bytes"),
+            .expect("MlKem768 decapsulation key should be 2400 bytes"),
     );
 
     KeyPair::new(public, secret)
@@ -145,19 +161,26 @@ pub fn generate_keypair() -> KeyPair {
 /// - This function (sender)
 /// - The holder of the corresponding secret key (recipient)
 pub fn encapsulate(public_key: &KyberPublicKey) -> Result<(KyberCiphertext, [u8; KYBER_SHARED_SECRET_SIZE])> {
-    // Convert our public key type to pqcrypto's type
-    let pk = kyber768::PublicKey::from_bytes(public_key.as_bytes())
-        .map_err(|e| SpecterError::EncapsulationError(format!("Invalid public key: {:?}", e)))?;
+    // Convert public key bytes to the encoded form using the Encoded type alias
+    type EkType = <MlKem768 as KemCore>::EncapsulationKey;
+    
+    let ek_array = Encoded::<EkType>::try_from(public_key.as_bytes())
+        .map_err(|_| SpecterError::EncapsulationError("Invalid public key size".to_string()))?;
+    
+    // Create encapsulation key from the encoded bytes
+    let ek = EkType::from_bytes(&ek_array);
 
     // Perform encapsulation
-    let (ss, ct) = kyber768::encapsulate(&pk);
+    let mut rng = rand::thread_rng();
+    let (ct, ss) = ek.encapsulate(&mut rng)
+        .map_err(|e| SpecterError::EncapsulationError(format!("Encapsulation failed: {:?}", e)))?;
 
-    // Extract shared secret
+    // Extract ciphertext - ct is a Ciphertext (Array), convert to bytes
+    let ciphertext = KyberCiphertext::from_bytes(&ct[..])?;
+
+    // Extract shared secret - ss is a SharedSecret (Array), convert to bytes
     let mut shared_secret = [0u8; KYBER_SHARED_SECRET_SIZE];
-    shared_secret.copy_from_slice(ss.as_bytes());
-
-    // Wrap ciphertext
-    let ciphertext = KyberCiphertext::from_bytes(ct.as_bytes())?;
+    shared_secret.copy_from_slice(&ss[..]);
 
     Ok((ciphertext, shared_secret))
 }
@@ -188,19 +211,26 @@ pub fn decapsulate(
     ciphertext: &KyberCiphertext,
     secret_key: &KyberSecretKey,
 ) -> Result<[u8; KYBER_SHARED_SECRET_SIZE]> {
-    // Convert to pqcrypto types
-    let ct = kyber768::Ciphertext::from_bytes(ciphertext.as_bytes())
+    // Convert ciphertext bytes to ml-kem Ciphertext type (Array)
+    let ct = ml_kem::Ciphertext::<MlKem768>::try_from(ciphertext.as_bytes())
         .map_err(|e| SpecterError::DecapsulationError(format!("Invalid ciphertext: {:?}", e)))?;
 
-    let sk = kyber768::SecretKey::from_bytes(secret_key.as_bytes())
-        .map_err(|e| SpecterError::DecapsulationError(format!("Invalid secret key: {:?}", e)))?;
+    // Convert secret key bytes to the encoded form using the Encoded type alias
+    type DkType = <MlKem768 as KemCore>::DecapsulationKey;
+    
+    let dk_array = Encoded::<DkType>::try_from(secret_key.as_bytes())
+        .map_err(|_| SpecterError::DecapsulationError("Invalid secret key size".to_string()))?;
+    
+    // Create decapsulation key from the encoded bytes
+    let dk = DkType::from_bytes(&dk_array);
 
     // Perform decapsulation
-    let ss = kyber768::decapsulate(&ct, &sk);
+    let ss = dk.decapsulate(&ct)
+        .map_err(|e| SpecterError::DecapsulationError(format!("Decapsulation failed: {:?}", e)))?;
 
-    // Extract shared secret
+    // Extract shared secret - ss is a SharedSecret (Array), convert to bytes
     let mut shared_secret = [0u8; KYBER_SHARED_SECRET_SIZE];
-    shared_secret.copy_from_slice(ss.as_bytes());
+    shared_secret.copy_from_slice(&ss[..]);
 
     Ok(shared_secret)
 }

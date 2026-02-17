@@ -26,7 +26,6 @@
 use zeroize::Zeroize;
 
 use k256::ecdsa::SigningKey;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use specter_core::constants::{
