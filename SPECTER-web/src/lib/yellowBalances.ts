@@ -96,11 +96,8 @@ export function isLowBalance(
   return num < threshold;
 }
 
-/** Faucet URL for Yellow Sandbox (requestTokens). */
-export const YELLOW_SANDBOX_FAUCET = "https://clearnet-sandbox.yellow.com/faucet/requestTokens";
+/** Faucet URL for ytest.usd tokens. */
+export const YTEST_USD_FAUCET = "https://ytest-faucet.vercel.app/";
 
-/** Sepolia faucets (for test tokens). */
-export const SEPOLIA_FAUCET_LINKS = [
-  { name: "Alchemy Sepolia", url: "https://www.alchemy.com/faucets/ethereum-sepolia" },
-  { name: "QuickNode", url: "https://faucet.quicknode.com/ethereum/sepolia" },
-];
+/** Sepolia ETH faucet. */
+export const SEPOLIA_ETH_FAUCET = "https://faucets.chain.link/sepolia";
