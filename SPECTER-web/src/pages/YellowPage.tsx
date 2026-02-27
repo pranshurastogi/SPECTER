@@ -98,7 +98,7 @@ const TIMELINE_STEPS = [
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function YellowPage() {
-  const { primaryWallet } = useDynamicContext();
+  const { primaryWallet, setShowAuthFlow } = useDynamicContext();
 
   // Testnet / Mainnet toggle
   const [isTestnet, setIsTestnet] = useState(true);
@@ -215,7 +215,7 @@ export default function YellowPage() {
         setYtestTokenAddress(chainAsset.token);
       }
     }
-  }, []);
+  }, [isTestnet]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -307,7 +307,8 @@ export default function YellowPage() {
     try {
       const amount = parseUnits(resizeAmount, 6);
       const result = await client.resizeChannel(resizeChannelId as `0x${string}`, amount);
-      toast.success(`Channel resized! tx: ${result.txHash.slice(0, 10)}...`);
+      const txDisplay = result.txHash ? result.txHash.slice(0, 10) : "submitted";
+      toast.success(`Channel resized! tx: ${txDisplay}...`);
       setCurrentStep(Math.max(currentStep, 5));
       await client.getChannels();
       await client.getLedgerBalances();
@@ -354,12 +355,29 @@ export default function YellowPage() {
     setIsClosing(true);
     try {
       const result = await client.closeChannel(closeChannelId as `0x${string}`);
-      toast.success(`Channel closed! tx: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 7));
-      await client.getChannels();
-      await client.getLedgerBalances();
+      setCloseChannelId("");
+      // Refresh data
+      try {
+        await client.getChannels();
+        await client.getLedgerBalances();
+      } catch {
+        // Non-fatal: data will refresh on next poll
+      }
+      toast.success(
+        result.txHash
+          ? `Channel closed on-chain! TX: ${result.txHash}`
+          : "Channel close submitted!"
+      );
     } catch (err: any) {
-      toast.error(err?.message ?? "Close failed");
+      const msg = err?.message ?? "Close failed";
+      if (msg.includes("invalid signature")) {
+        toast.error(
+          "Close failed: invalid signature. This channel may belong to a different session. Try reconnecting."
+        );
+      } else {
+        toast.error(`Close failed: ${msg}`);
+      }
     } finally {
       setIsClosing(false);
     }
@@ -410,7 +428,7 @@ export default function YellowPage() {
   }, []);
 
   const isConnected = connectionStatus === YellowConnectionStatus.Connected;
-  const openChannels = channels.filter((c) => c.status === "open");
+  const openChannels = channels.filter((c) => c.status === "open" && c.channelId);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -582,9 +600,15 @@ export default function YellowPage() {
                       </Badge>
                     </div>
                   ) : (
-                    <span className="text-zinc-400 text-sm">
-                      Connect your wallet using the button above
-                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10"
+                      onClick={() => setShowAuthFlow(true)}
+                    >
+                      <Wallet className="w-4 h-4 mr-2" />
+                      Connect Wallet
+                    </Button>
                   )}
                 </div>
               </div>
@@ -735,7 +759,7 @@ export default function YellowPage() {
                     </p>
                   ) : (
                     <div className="space-y-2">
-                      {channels.map((ch) => (
+                      {channels.filter((ch) => ch.channelId).map((ch) => (
                         <div
                           key={ch.channelId}
                           className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50"
@@ -743,9 +767,9 @@ export default function YellowPage() {
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className="font-mono text-xs text-zinc-300">
-                                {ch.channelId.slice(0, 10)}...{ch.channelId.slice(-6)}
+                                {ch.channelId?.slice(0, 10)}...{ch.channelId?.slice(-6)}
                               </span>
-                              <CopyButton text={ch.channelId} />
+                              <CopyButton text={ch.channelId ?? ""} />
                             </div>
                             <Badge
                               variant="outline"
@@ -757,14 +781,14 @@ export default function YellowPage() {
                                     : "border-amber-500/50 text-amber-400"
                               }
                             >
-                              {ch.status}
+                              {ch.status ?? "unknown"}
                             </Badge>
                           </div>
                           <div className="flex items-center gap-4 mt-2 text-xs text-zinc-400">
-                            <span>Amount: {ch.amount}</span>
-                            <span>Token: {formatAddress(ch.token)}</span>
-                            <span>Chain: {ch.chainId}</span>
-                            <span>v{ch.version}</span>
+                            <span>Amount: {ch.amount ?? "—"}</span>
+                            <span>Token: {ch.token ? formatAddress(ch.token) : "—"}</span>
+                            <span>Chain: {ch.chainId ?? "—"}</span>
+                            <span>v{ch.version ?? 0}</span>
                           </div>
                         </div>
                       ))}
@@ -918,11 +942,38 @@ export default function YellowPage() {
                       <option value="">Select a channel...</option>
                       {openChannels.map((ch) => (
                         <option key={ch.channelId} value={ch.channelId}>
-                          {ch.channelId.slice(0, 10)}...{ch.channelId.slice(-6)} ({ch.status})
+                          {ch.channelId.slice(0, 10)}...{ch.channelId.slice(-6)} | {ch.amount} ({ch.status})
                         </option>
                       ))}
                     </select>
                   </div>
+                  {closeChannelId && (
+                    <div className="bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/50 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-400">Channel ID</span>
+                        <div className="flex items-center gap-1">
+                          <span className="font-mono text-zinc-300">{formatAddress(closeChannelId)}</span>
+                          <CopyButton text={closeChannelId} />
+                        </div>
+                      </div>
+                      {(() => {
+                        const ch = channels.find((c) => c.channelId === closeChannelId);
+                        if (!ch) return null;
+                        return (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-400">Amount</span>
+                              <span className="text-zinc-300">{ch.amount}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-zinc-400">Token</span>
+                              <span className="font-mono text-zinc-300">{ch.token ? formatAddress(ch.token) : "—"}</span>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                   <Button
                     onClick={handleCloseChannel}
                     disabled={isClosing || !closeChannelId}
@@ -932,7 +983,7 @@ export default function YellowPage() {
                     {isClosing ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Closing...
+                        Closing Channel...
                       </>
                     ) : (
                       <>
@@ -996,6 +1047,17 @@ export default function YellowPage() {
                 <span className="text-sm font-semibold text-zinc-300">
                   Live Log ({logs.length})
                 </span>
+                {logs.length > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLogs([]);
+                    }}
+                    className="text-xs text-zinc-500 hover:text-zinc-300 ml-2 px-2 py-0.5 rounded border border-zinc-700 hover:border-zinc-500 transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
               {logExpanded ? (
                 <ChevronUp className="w-4 h-4 text-zinc-400" />
@@ -1013,29 +1075,52 @@ export default function YellowPage() {
                   className="overflow-hidden"
                 >
                   <div className="px-4 pb-4">
-                    <div className="bg-black/50 rounded-lg border border-zinc-800 p-3 max-h-64 overflow-y-auto font-mono text-xs space-y-1">
+                    <div className="bg-black/50 rounded-lg border border-zinc-800 p-3 max-h-80 overflow-y-auto font-mono text-xs space-y-1">
                       {logs.length === 0 ? (
                         <p className="text-zinc-600">No log entries yet. Connect to start.</p>
                       ) : (
-                        logs.map((entry) => (
-                          <div key={entry.id} className="flex gap-2">
-                            <span className="text-zinc-600 shrink-0">
-                              {new Date(entry.timestamp).toLocaleTimeString()}
-                            </span>
-                            <span
-                              className={
-                                entry.level === "error"
-                                  ? "text-red-400"
-                                  : entry.level === "warn"
-                                    ? "text-amber-400"
-                                    : "text-green-400"
-                              }
-                            >
-                              [{entry.level.toUpperCase()}]
-                            </span>
-                            <span className="text-zinc-300">{entry.message}</span>
-                          </div>
-                        ))
+                        logs.map((entry) => {
+                          // Extract TX hashes from log messages and make them clickable
+                          const txMatch = entry.message?.match(/TX:\s*(0x[a-fA-F0-9]{64})/);
+                          const hasError = entry.level === "error";
+                          return (
+                            <div key={entry.id} className={`flex gap-2 ${hasError ? "bg-red-500/5 rounded px-1 -mx-1" : ""}`}>
+                              <span className="text-zinc-600 shrink-0">
+                                {new Date(entry.timestamp).toLocaleTimeString()}
+                              </span>
+                              <span
+                                className={`shrink-0 ${
+                                  hasError
+                                    ? "text-red-400"
+                                    : entry.level === "warn"
+                                      ? "text-amber-400"
+                                      : "text-green-400"
+                                }`}
+                              >
+                                [{entry.level.toUpperCase()}]
+                              </span>
+                              <span className="text-zinc-300 break-all">
+                                {txMatch ? (
+                                  <>
+                                    {entry.message.split(txMatch[0])[0]}
+                                    <a
+                                      href={`https://sepolia.etherscan.io/tx/${txMatch[1]}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                                    >
+                                      {txMatch[1].slice(0, 10)}...{txMatch[1].slice(-8)}
+                                    </a>
+                                    <CopyButton text={txMatch[1]} />
+                                    {entry.message.split(txMatch[0]).slice(1).join(txMatch[0])}
+                                  </>
+                                ) : (
+                                  entry.message
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })
                       )}
                       <div ref={logEndRef} />
                     </div>

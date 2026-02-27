@@ -864,9 +864,11 @@ export class YellowClient {
     };
 
     const result = await this.nitroliteClient.resizeChannel(resizeParams);
-    this.log("info", `Channel resized! tx: ${result.txHash}`);
+    // resizeChannel may return a Hash string or an object with txHash
+    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+    this.log("info", `Channel resized! tx: ${txHash}`);
 
-    return { txHash: result.txHash };
+    return { txHash };
   }
 
   // ── Transfer (off-chain) ─────────────────────────────────────────────────
@@ -907,30 +909,62 @@ export class YellowClient {
     this.sendWS(closeMsg);
     const raw = await responsePromise;
 
-    this.log("info", "Received close params, submitting on-chain...");
+    this.log("info", "Received close params from server, submitting on-chain...");
 
-    const closeRes = parseCloseChannelResponse(raw);
-    const pr = closeRes.params;
+    // Parse manually to handle snake_case fields from the server
+    // Server sends: { channel_id, state: { intent, version, state_data, allocations }, server_signature }
+    const parsed = JSON.parse(raw);
+    const resParams = parsed?.res?.[2];
 
+    // Support both snake_case (server) and camelCase (SDK parser) field names
+    const closedChannelId: Hex = resParams?.channel_id ?? resParams?.channelId ?? channelId;
+    const serverSig: Hex = resParams?.server_signature ?? resParams?.serverSignature;
+    const stateObj = resParams?.state;
+
+    if (!stateObj || !serverSig) {
+      // Fallback: try SDK parser
+      this.log("warn", "Manual parse incomplete, trying SDK parser...");
+      const closeRes = parseCloseChannelResponse(raw);
+      const pr = closeRes.params;
+      const finalState: FinalState = {
+        channelId: pr.channelId,
+        intent: pr.state.intent as StateIntent,
+        version: BigInt(pr.state.version),
+        data: pr.state.stateData,
+        allocations: pr.state.allocations.map((a) => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount),
+        })),
+        serverSignature: pr.serverSignature,
+      };
+      const result = await this.nitroliteClient.closeChannel({ finalState, stateData: finalState.data } as any);
+      const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+      this.log("info", `Channel ${closedChannelId.slice(0, 10)}... closed on-chain | TX: ${txHash}`);
+      return { txHash };
+    }
+
+    // Build final state from snake_case server response
+    const stateData: Hex = stateObj.state_data ?? stateObj.stateData;
     const finalState: FinalState = {
-      channelId: pr.channelId,
-      intent: pr.state.intent as StateIntent,
-      version: BigInt(pr.state.version),
-      data: pr.state.stateData,
-      allocations: pr.state.allocations.map((a) => ({
+      channelId: closedChannelId,
+      intent: stateObj.intent as StateIntent,
+      version: BigInt(stateObj.version),
+      data: stateData,
+      allocations: (stateObj.allocations ?? []).map((a: any) => ({
         destination: a.destination,
         token: a.token,
         amount: BigInt(a.amount),
       })),
-      serverSignature: pr.serverSignature,
+      serverSignature: serverSig,
     };
 
-    const closeParams: CloseChannelParams = {
-      finalState,
-    };
+    this.log("info", `Close state: channel=${closedChannelId.slice(0, 10)}... v${stateObj.version}, ${(stateObj.allocations ?? []).length} allocations`);
 
-    const txHash = await this.nitroliteClient.closeChannel(closeParams);
-    this.log("info", `Channel closed! tx: ${txHash}`);
+    // Pass stateData separately as the working reference implementation does
+    const result = await this.nitroliteClient.closeChannel({ finalState, stateData } as any);
+    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+    this.log("info", `Channel ${closedChannelId.slice(0, 10)}... closed on-chain | TX: ${txHash}`);
 
     return { txHash };
   }
@@ -942,7 +976,8 @@ export class YellowClient {
 
     this.log("info", `Withdrawing ${amount} of ${token.slice(0, 10)}... from custody`);
 
-    const txHash = await this.nitroliteClient.withdrawal(token, amount);
+    const result = await this.nitroliteClient.withdrawal(token, amount);
+    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
     this.log("info", `Withdrawal complete! tx: ${txHash}`);
 
     return { txHash };
