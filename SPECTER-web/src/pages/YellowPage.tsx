@@ -162,6 +162,8 @@ export default function YellowPage() {
   const [isClosing, setIsClosing] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSyncingYellow, setIsSyncingYellow] = useState(false);
+  const [resizeError, setResizeError] = useState<string | null>(null);
 
   // Log panel
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -202,6 +204,39 @@ export default function YellowPage() {
     const interval = setInterval(fetchWalletBalances, 30000);
     return () => clearInterval(interval);
   }, [fetchWalletBalances]);
+
+  // ── Unified sync helpers (channels + ledger + wallet) ──────────────────────
+
+  const syncYellowOnce = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      await client.getLedgerBalances();
+      await client.getChannels();
+      fetchWalletBalances();
+    } catch {
+      // Errors are already surfaced via events/logs; keep this silent here.
+    }
+  }, [fetchWalletBalances]);
+
+  const pollYellowAfterTx = useCallback(
+    async (retries = 3, intervalMs = 5000) => {
+      const client = clientRef.current;
+      if (!client) return;
+      setIsSyncingYellow(true);
+      try {
+        for (let i = 0; i < retries; i++) {
+          await syncYellowOnce();
+          if (i < retries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, intervalMs));
+          }
+        }
+      } finally {
+        setIsSyncingYellow(false);
+      }
+    },
+    [syncYellowOnce]
+  );
 
   // ── Event handler ──────────────────────────────────────────────────────────
 
@@ -287,13 +322,8 @@ export default function YellowPage() {
       setYellowAddress(client.getConnectedAddress());
       setCurrentStep(3);
 
-      // Load initial data
-      try {
-        await client.getLedgerBalances();
-        await client.getChannels();
-      } catch {
-        // Non-fatal
-      }
+      // Load initial data (may take a few seconds while the server warms up)
+      await syncYellowOnce();
 
       toast.success("✓ Connected to Yellow Network!");
     } catch (err: any) {
@@ -328,15 +358,13 @@ export default function YellowPage() {
     if (!client) return;
     setIsRefreshing(true);
     try {
-      await client.getLedgerBalances();
-      await client.getChannels();
-      fetchWalletBalances();
+      await syncYellowOnce();
     } catch (err: any) {
       toast.error(`Refresh failed: ${err?.message ?? "Unknown error"}`);
     } finally {
       setIsRefreshing(false);
     }
-  }, [fetchWalletBalances]);
+  }, [syncYellowOnce]);
 
   // ── Create Channel ──────────────────────────────────────────────────────────
 
@@ -363,8 +391,8 @@ export default function YellowPage() {
       toast.success(`Channel created! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 4));
       setActiveTab("channels");
-      await client.getChannels();
-      await client.getLedgerBalances();
+      // Give the chain + clearnode a few seconds to index the new channel.
+      void pollYellowAfterTx();
     } catch (err: any) {
       const msg = err?.message ?? "Channel creation failed";
       if (msg.toLowerCase().includes("already exists")) {
@@ -388,6 +416,7 @@ export default function YellowPage() {
       return;
     }
 
+    setResizeError(null);
     setIsResizing(true);
     try {
       const amount = parseUnits(resizeAmount, 6);
@@ -397,14 +426,34 @@ export default function YellowPage() {
       toast.success(`Channel funded! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 5));
       setActiveTab("channels");
-      await client.getChannels();
-      await client.getLedgerBalances();
+      void pollYellowAfterTx();
     } catch (err: any) {
-      toast.error(`Resize failed: ${err?.message ?? "Unknown error"}`, { duration: 6000 });
+      const msg = (err?.message ?? "").toLowerCase();
+      const fullMessage = err?.message ?? "Unknown error";
+      setResizeError(fullMessage);
+
+      if (msg.includes("resize already ongoing")) {
+        toast.error(
+          "A resize for this channel is already in progress. Wait for the previous transaction to confirm, or close the channel from the Close tab.",
+          { duration: 8000 }
+        );
+        void pollYellowAfterTx(2, 4000);
+      } else if (msg.includes("insufficient") || msg.includes("balance")) {
+        toast.error(
+          "Not enough ytest.usd in your Unified Balance. Get more from the faucet, then try again.",
+          { duration: 6000 }
+        );
+      } else if (msg.includes("user rejected") || msg.includes("denied")) {
+        toast.error("Transaction was rejected in your wallet.");
+      } else if (msg.includes("timeout")) {
+        toast.error("Request timed out. Check your connection and try again, or use the Close tab if the channel is stuck.");
+      } else {
+        toast.error(`Fund failed: ${fullMessage}`, { duration: 8000 });
+      }
     } finally {
       setIsResizing(false);
     }
-  }, [resizeChannelId, resizeAmount, currentStep, addTx]);
+  }, [resizeChannelId, resizeAmount, currentStep, addTx, pollYellowAfterTx]);
 
   // ── Transfer ────────────────────────────────────────────────────────────────
 
@@ -457,7 +506,8 @@ export default function YellowPage() {
       setCloseChannelId("");
       toast.success(`Channel closed on-chain! TX: ${result.txHash.slice(0, 10)}...`);
       setActiveTab("channels");
-      try { await client.getChannels(); await client.getLedgerBalances(); } catch { }
+      // Poll so the channel status + Unified Balance/custody reflect the close when the tx confirms.
+      void pollYellowAfterTx();
     } catch (err: any) {
       const msg = (err?.message ?? "Close failed").toLowerCase();
       if (msg.includes("invalid signature") || msg.includes("unauthorized") || msg.includes("unauthorised")) {
@@ -498,8 +548,8 @@ export default function YellowPage() {
       addTx("Withdraw", result.txHash);
       toast.success(`Withdrawn! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(8);
-      await client.getLedgerBalances();
-      fetchWalletBalances();
+      // After withdrawal, sync Unified Balance + wallet balances.
+      void pollYellowAfterTx();
     } catch (err: any) {
       toast.error(`Withdrawal failed: ${err?.message ?? "Unknown error"}`, { duration: 6000 });
     } finally {
@@ -557,7 +607,10 @@ export default function YellowPage() {
   }, []);
 
   const isConnected = connectionStatus === YellowConnectionStatus.Connected;
-  const openChannels = channels.filter((c) => c.status === "open" && c.channelId);
+  // Treat any non-closed channel as \"active\" so states like \"resizing\" still appear
+  const openChannels = channels.filter(
+    (c) => c.channelId && c.status.toLowerCase() !== "closed"
+  );
   const needsETH = ethBalance !== null && isLowBalance(ethBalance.formatted, 18, 0.005);
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -811,6 +864,12 @@ export default function YellowPage() {
           <motion.div variants={fadeIn} initial="hidden" animate="visible">
             <Card className="bg-zinc-900/50 border-zinc-800 p-6">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                {isSyncingYellow && (
+                  <div className="flex items-center gap-2 mb-2 text-xs text-zinc-500">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Syncing with Yellow… balances and channels will update automatically.</span>
+                  </div>
+                )}
                 <TabsList className="bg-zinc-800/50 border border-zinc-700/50 mb-4 flex-wrap h-auto gap-1">
                   <TabsTrigger value="channels">My Channels ({openChannels.length} open)</TabsTrigger>
                   <TabsTrigger value="create">Create</TabsTrigger>
@@ -928,6 +987,21 @@ export default function YellowPage() {
                     <p>Allocates ytest.usd from your <strong className="text-zinc-200">Unified Balance</strong> into the channel.</p>
                     <p>Requires Sepolia ETH for gas. Make sure you have ytest.usd in your Unified Balance first.</p>
                   </div>
+                  {resizeError && (
+                    <div className="flex items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm">
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-red-300">Fund failed</p>
+                        <p className="text-red-200/90 mt-1 break-words">{resizeError}</p>
+                        <p className="text-xs text-zinc-500 mt-2">
+                          If it says &quot;resize already ongoing&quot;, wait for the last resize tx to confirm or close this channel from the Close tab.
+                        </p>
+                        <Button type="button" variant="ghost" size="sm" className="mt-2 text-red-300 hover:text-red-200" onClick={() => setResizeError(null)}>
+                          Dismiss
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   {openChannels.length === 0 && (
                     <div className="text-amber-400 text-xs bg-amber-500/10 rounded p-2">
                       No open channels. <button className="underline" onClick={() => setActiveTab("create")}>Create one first.</button>
@@ -935,7 +1009,7 @@ export default function YellowPage() {
                   )}
                   <div>
                     <Label className="text-zinc-300">Channel</Label>
-                    <select value={resizeChannelId} onChange={(e) => setResizeChannelId(e.target.value)}
+                    <select value={resizeChannelId} onChange={(e) => { setResizeChannelId(e.target.value); setResizeError(null); }}
                       className="w-full bg-zinc-800 border border-zinc-700 rounded-md p-2 text-sm mt-1 text-white">
                       <option value="">Select a channel…</option>
                       {openChannels.map((ch) => (
@@ -947,7 +1021,7 @@ export default function YellowPage() {
                   </div>
                   <div>
                     <Label className="text-zinc-300">Allocate Amount (ytest.usd)</Label>
-                    <Input type="number" value={resizeAmount} onChange={(e) => setResizeAmount(e.target.value)}
+                    <Input type="number" value={resizeAmount} onChange={(e) => { setResizeAmount(e.target.value); setResizeError(null); }}
                       placeholder="10" className="bg-zinc-800 border-zinc-700 mt-1" />
                   </div>
                   <Button onClick={handleResizeChannel} disabled={isResizing || !resizeChannelId || !resizeAmount}

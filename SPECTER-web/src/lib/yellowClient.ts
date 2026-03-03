@@ -627,6 +627,15 @@ export class YellowClient {
             break;
           }
 
+          case RPCMethod.ChannelUpdate: {
+            // Single channel state changed (\"cu\"). Refetch full list so UI reflects latest status.
+            this.log("info", "Channel update (cu) received — refreshing channels...");
+            this.getChannels().catch((e) => {
+              this.log("warn", `Failed to refresh channels after update: ${e}`);
+            });
+            break;
+          }
+
           case RPCMethod.TransferNotification: {
             const txs = parsed?.res?.[2]?.transactions;
             if (Array.isArray(txs) && txs.length > 0) {
