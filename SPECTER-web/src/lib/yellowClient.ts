@@ -20,6 +20,7 @@ import {
   createAuthVerifyMessageFromChallenge,
   createEIP712AuthMessageSigner,
   createECDSAMessageSigner,
+  createAuthRequestMessage,
   createCreateChannelMessage,
   createResizeChannelMessage,
   createCloseChannelMessage,
@@ -50,6 +51,7 @@ import {
   type RPCChannelUpdateWithWallet,
   type RPCAsset,
   type StateIntent,
+  type AuthRequestParams,
 } from "@erc7824/nitrolite";
 import { publicClient } from "./viemClient";
 import { chain } from "./chainConfig";
@@ -69,35 +71,6 @@ const CUSTODY_ADDRESS: Address = "0x019B65A265EB3363822f2752141b3dF16131b262";
 const ADJUDICATOR_ADDRESS: Address = "0x7c7ccbc98469190849BCC6c926307794fDfB11F2";
 const APPLICATION_NAME = "yellow_demo";
 const AUTH_SCOPE = "console";
-
-/** Build auth_request JSON manually for full control over serialization. */
-function buildAuthRequestJSON(params: {
-  address: string;
-  session_key: string;
-  application: string;
-  expires_at: number;
-  scope: string;
-  allowances: { asset: string; amount: string }[];
-}): string {
-  const requestId = Math.floor(Date.now() + Math.random() * 10000);
-  const timestamp = Date.now();
-  return JSON.stringify({
-    req: [
-      requestId,
-      "auth_request",
-      {
-        address: params.address,
-        session_key: params.session_key,
-        application: params.application,
-        expires_at: params.expires_at,
-        scope: params.scope,
-        allowances: params.allowances,
-      },
-      timestamp,
-    ],
-    sig: [],
-  });
-}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -160,6 +133,26 @@ export enum YellowConnectionStatus {
 
 type EventCallback = (event: YellowEvent) => void;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Map a raw server channel object to ChannelInfo.
+ * The server sends snake_case; the SDK parser converts to camelCase.
+ * We handle both to be safe.
+ */
+function mapChannel(ch: any): ChannelInfo {
+  return {
+    channelId: (ch.channelId ?? ch.channel_id) as Hex,
+    participant: ch.participant as Address,
+    status: ch.status,
+    token: ch.token as Address,
+    amount: String(ch.amount ?? 0),
+    chainId: ch.chainId ?? ch.chain_id,
+    version: ch.version,
+    wallet: ch.wallet as Address | undefined,
+  };
+}
+
 // ── YellowClient ─────────────────────────────────────────────────────────────
 
 export class YellowClient {
@@ -168,6 +161,7 @@ export class YellowClient {
   private sessionAddress: Address | null = null;
   private nitroliteClient: NitroliteClient | null = null;
   private walletClient: WalletClient<Transport, Chain, ParseAccount<Account>> | null = null;
+  private connectedAddress: Address | null = null;
   private listeners: EventCallback[] = [];
   private status: YellowConnectionStatus = YellowConnectionStatus.Disconnected;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -223,10 +217,31 @@ export class YellowClient {
     return this.assets;
   }
 
+  /** Returns the main wallet address that authenticated with Yellow. */
+  getConnectedAddress(): Address | null {
+    return this.connectedAddress;
+  }
+
   /** Find the supported token address for a given chain ID (e.g. Sepolia). */
   getTokenForChain(chainId: number): Address | null {
     const asset = this.assets.find((a) => a.chainId === chainId);
     return asset?.token ?? null;
+  }
+
+  /**
+   * Filter channels so only those belonging to the connected wallet are returned.
+   * The clearnode sandbox returns ALL channels from ALL wallets; we must filter client-side.
+   */
+  private filterChannelsByWallet(channels: ChannelInfo[]): ChannelInfo[] {
+    if (!this.connectedAddress) return channels;
+    const addr = this.connectedAddress.toLowerCase();
+    return channels.filter((ch) => {
+      const wallet = ch.wallet?.toLowerCase();
+      const participant = ch.participant?.toLowerCase();
+      if (wallet) return wallet === addr;
+      if (participant) return participant === addr;
+      return true;
+    });
   }
 
   // ── Config fetch (one-shot WS) ──────────────────────────────────────────
@@ -241,7 +256,6 @@ export class YellowClient {
 
       ws.onopen = async () => {
         try {
-          // Use a dummy signer for get_config (no auth needed)
           const dummyKey = generatePrivateKey();
           const dummySigner = createECDSAMessageSigner(dummyKey);
           const msg = await createGetConfigMessage(dummySigner);
@@ -296,15 +310,17 @@ export class YellowClient {
     walletClient: WalletClient<Transport, Chain, ParseAccount<Account>>
   ): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.log("warn", "Already connected");
-      return;
+      this.log("warn", "Already connected — disconnecting first");
+      this.disconnect();
     }
 
     this.walletClient = walletClient;
     const account = walletClient.account;
-    if (!account) throw new Error("Wallet has no account");
+    if (!account) throw new Error("Wallet has no account — ensure wallet is connected");
 
+    this.connectedAddress = account.address;
     this.setStatus(YellowConnectionStatus.Connecting);
+    this.log("info", `Connecting for wallet: ${account.address}`);
     this.log("info", "Generating session key...");
 
     // Generate ephemeral session key
@@ -314,12 +330,13 @@ export class YellowClient {
     this.sessionAddress = sessionAccount.address;
 
     this.log("info", `Session key: ${sessionAccount.address}`);
+    this.log("info", `Wallet: ${account.address}`);
 
     // EIP-712 auth params
     const expiresAtSec = Math.floor(Date.now() / 1000) + 3600;
     const authAllowances = [{ asset: "ytest.usd", amount: "1000000000" }];
 
-    this.log("info", `Auth: addr=${account.address}, session=${sessionAccount.address}, app=${APPLICATION_NAME}, scope=${AUTH_SCOPE}`);
+    this.log("info", `Auth params: app=${APPLICATION_NAME} scope=${AUTH_SCOPE} expires=${expiresAtSec}`);
 
     const partialAuthMessage: PartialEIP712AuthMessage = {
       scope: AUTH_SCOPE,
@@ -357,32 +374,34 @@ export class YellowClient {
 
       const timeout = setTimeout(() => {
         this.setStatus(YellowConnectionStatus.Error);
-        this.log("error", "Connection timeout (30s)");
+        this.log("error", "Connection timeout (30s) — check network and try again");
         ws.close();
-        reject(new Error("Yellow connection timeout"));
+        reject(new Error("Yellow connection timeout after 30s"));
       }, 30000);
 
       ws.onopen = async () => {
         try {
           this.setStatus(YellowConnectionStatus.Authenticating);
-          this.log("info", "WebSocket connected, sending auth request...");
+          this.log("info", "WebSocket connected — sending auth_request...");
 
-          // Build auth request manually for full control over serialization
-          const authMsg = buildAuthRequestJSON({
+          // Build auth_request using SDK (correct serialisation, BigInt→Number)
+          const authReqParams: AuthRequestParams = {
             address: account.address,
-            session_key: sessionAccount.address,
             application: APPLICATION_NAME,
-            expires_at: expiresAtSec,
-            scope: AUTH_SCOPE,
+            session_key: sessionAccount.address,
             allowances: authAllowances,
-          });
+            expires_at: BigInt(expiresAtSec),
+            scope: AUTH_SCOPE,
+          };
+          const authMsg = await createAuthRequestMessage(authReqParams);
 
-          this.log("info", `Auth msg: ${authMsg.slice(0, 250)}`);
+          // Log the FULL message for debugging
+          this.log("info", `auth_request: ${authMsg}`);
           ws.send(authMsg);
         } catch (err) {
           clearTimeout(timeout);
           this.setStatus(YellowConnectionStatus.Error);
-          this.log("error", `Auth request failed: ${err}`);
+          this.log("error", `Failed to build/send auth_request: ${err}`);
           ws.close();
           reject(err);
         }
@@ -394,23 +413,21 @@ export class YellowClient {
           const parsed = JSON.parse(raw);
           const method = parsed?.res?.[1];
 
-          this.log("info", `WS recv method=${method}`);
+          this.log("info", `WS ← method=${method}`);
 
-          // Capture assets broadcast (server sends supported tokens on connect)
+          // Assets broadcast (welcome message from server)
           if (method === RPCMethod.Assets) {
             try {
-              // Parse manually: parseAssetsResponse crashes on broadcasts (missing sig/4th element)
               const rawAssets = parsed?.res?.[2]?.assets;
               if (Array.isArray(rawAssets)) {
-                // Server uses snake_case (chain_id), normalize to camelCase
                 this.assets = rawAssets.map((a: any) => ({
                   token: a.token,
                   chainId: a.chain_id ?? a.chainId,
                   symbol: a.symbol,
                   decimals: a.decimals,
                 }));
-                this.log("info", `Received ${this.assets.length} supported assets: ${this.assets.map(a => `${a.symbol}@${a.chainId}=${a.token}`).join(", ")}`);
-                // Emit config event with assets (create config if needed)
+                const assetList = this.assets.map(a => `${a.symbol}@${a.chainId}=${a.token}`).join(", ");
+                this.log("info", `Assets: ${this.assets.length} — ${assetList}`);
                 if (!this.config) {
                   this.config = { brokerAddress: "0x" as Address, networks: [], assets: this.assets };
                 } else {
@@ -424,7 +441,7 @@ export class YellowClient {
             return;
           }
 
-          // Ignore other server broadcasts during auth
+          // Ignore keepalive and push broadcasts during auth
           if (
             method === RPCMethod.Pong ||
             method === RPCMethod.ChannelsUpdate ||
@@ -436,21 +453,29 @@ export class YellowClient {
           // Auth challenge → sign with main wallet (EIP-712)
           if (method === RPCMethod.AuthChallenge) {
             this.setStatus(YellowConnectionStatus.WaitingForSignature);
-            this.log("info", "Auth challenge received, please sign in wallet...");
+            this.log("info", "✋ Auth challenge received — please sign in your wallet...");
             try {
               const challengeRes = parseAuthChallengeResponse(raw);
+              const challenge = challengeRes.params.challengeMessage;
+              this.log("info", `Challenge: ${challenge}`);
               const verifyMsg = await createAuthVerifyMessageFromChallenge(
                 eip712AuthSigner,
-                challengeRes.params.challengeMessage
+                challenge
               );
               ws.send(verifyMsg);
-              this.log("info", "Auth signature sent, verifying...");
+              this.log("info", "Signature sent — waiting for server confirmation...");
             } catch (signErr) {
               clearTimeout(timeout);
               this.setStatus(YellowConnectionStatus.Error);
-              this.log("error", `Failed to sign auth challenge: ${signErr}`);
+              const msg = String(signErr);
+              if (msg.toLowerCase().includes("user rejected") || msg.toLowerCase().includes("denied")) {
+                this.log("error", "Wallet signature rejected by user");
+                reject(new Error("User rejected the signature request"));
+              } else {
+                this.log("error", `Failed to sign auth challenge: ${signErr}`);
+                reject(new Error("Auth signature failed — see log for details"));
+              }
               ws.close();
-              reject(new Error("Auth signature rejected"));
               return;
             }
             return;
@@ -462,41 +487,50 @@ export class YellowClient {
             if (params?.success) {
               clearTimeout(timeout);
               this.setStatus(YellowConnectionStatus.Connected);
-              this.log("info", "Authenticated successfully!");
+              this.log("info", `✓ Authenticated! session_key=${params.session_key ?? this.sessionAddress}`);
               this.startPing();
               this.setupMessageHandler();
               resolve();
             } else {
               clearTimeout(timeout);
               this.setStatus(YellowConnectionStatus.Error);
-              this.log("error", "Authentication rejected by server");
+              const reason = params?.message ?? params?.error ?? "unknown reason";
+              this.log("error", `Authentication rejected: ${reason}`);
               ws.close();
-              reject(new Error("Authentication failed"));
+              reject(new Error(`Authentication failed: ${reason}`));
             }
             return;
           }
 
-          // Error during auth
+          // Server error during auth
           if (method === RPCMethod.Error) {
             const errParams = parsed?.res?.[2];
-            const errMsg = errParams?.error ?? errParams?.message ?? "Unknown error";
+            const errMsg = errParams?.error ?? errParams?.message ?? "Unknown server error";
             clearTimeout(timeout);
             this.setStatus(YellowConnectionStatus.Error);
-            this.log("error", `Server error: ${errMsg} | full: ${JSON.stringify(errParams).slice(0, 200)}`);
+            this.log("error", `Server error during auth: ${errMsg} | full=${JSON.stringify(errParams)}`);
             ws.close();
-            reject(new Error(errMsg));
+            // Give user a helpful message
+            if (errMsg.toLowerCase().includes("parse")) {
+              reject(new Error(
+                `Server rejected auth parameters ("${errMsg}"). ` +
+                "Try disconnecting and reconnecting — there may be an existing active session."
+              ));
+            } else {
+              reject(new Error(errMsg));
+            }
             return;
           }
         } catch (err) {
-          this.log("warn", `Unexpected message during auth: ${raw.slice(0, 100)}`);
+          this.log("warn", `Unexpected message during auth: ${raw.slice(0, 100)} — ${err}`);
         }
       };
 
       ws.onerror = () => {
         clearTimeout(timeout);
         this.setStatus(YellowConnectionStatus.Error);
-        this.log("error", "WebSocket connection error");
-        reject(new Error("WebSocket error"));
+        this.log("error", "WebSocket connection error — check network");
+        reject(new Error("WebSocket connection failed"));
       };
 
       ws.onclose = () => {
@@ -522,53 +556,51 @@ export class YellowClient {
 
         switch (method) {
           case RPCMethod.GetLedgerBalances: {
-            const res = parseGetLedgerBalancesResponse(raw);
-            const balances: LedgerBalance[] = (res.params.ledgerBalances ?? []).map(
-              (b: RPCBalance) => ({
-                asset: b.asset,
-                amount: b.amount,
-              })
-            );
-            this.emit({ type: "balances", timestamp: Date.now(), balances });
-            this.log("info", `Ledger balances: ${balances.map((b) => `${b.asset}: ${b.amount}`).join(", ") || "none"}`);
+            try {
+              const res = parseGetLedgerBalancesResponse(raw);
+              const balances: LedgerBalance[] = (res.params.ledgerBalances ?? []).map(
+                (b: RPCBalance) => ({
+                  asset: b.asset,
+                  amount: b.amount,
+                })
+              );
+              this.emit({ type: "balances", timestamp: Date.now(), balances });
+              this.log("info", `Ledger balances: ${balances.map((b) => `${b.asset}=${b.amount}`).join(", ") || "none"}`);
+            } catch (e) {
+              this.log("warn", `Failed to parse ledger balances: ${e}`);
+            }
             break;
           }
 
           case RPCMethod.GetChannels: {
-            const res = parseGetChannelsResponse(raw);
-            const channels: ChannelInfo[] = (res.params.channels ?? []).map(
-              (ch: RPCChannelUpdateWithWallet) => ({
-                channelId: ch.channelId,
-                participant: ch.participant,
-                status: ch.status,
-                token: ch.token,
-                amount: String(ch.amount),
-                chainId: ch.chainId,
-                version: ch.version,
-                wallet: ch.wallet,
-              })
-            );
-            this.emit({ type: "channels", timestamp: Date.now(), channels });
-            this.log("info", `Channels: ${channels.length} found`);
+            try {
+              // Try SDK parser first (handles snake_case → camelCase via Zod transforms)
+              let allChannels: ChannelInfo[];
+              try {
+                const res = parseGetChannelsResponse(raw);
+                allChannels = (res.params.channels ?? []).map(mapChannel);
+              } catch {
+                // Fallback: parse raw JSON directly with snake_case support
+                const rawChannels = parsed?.res?.[2]?.channels ?? [];
+                allChannels = rawChannels.map(mapChannel);
+              }
+              const channels = this.filterChannelsByWallet(allChannels);
+              this.emit({ type: "channels", timestamp: Date.now(), channels });
+              this.log("info", `Channels: ${channels.length} yours / ${allChannels.length} total on server`);
+            } catch (e) {
+              this.log("warn", `Failed to parse channels response: ${e}`);
+            }
             break;
           }
 
           case RPCMethod.ChannelsUpdate: {
-            // Server push of channel updates
-            const chans = parsed?.res?.[2]?.channels;
-            if (Array.isArray(chans)) {
-              const channels: ChannelInfo[] = chans.map((ch: RPCChannelUpdateWithWallet) => ({
-                channelId: ch.channelId,
-                participant: ch.participant,
-                status: ch.status,
-                token: ch.token,
-                amount: String(ch.amount),
-                chainId: ch.chainId,
-                version: ch.version,
-                wallet: ch.wallet,
-              }));
+            // Server push (method = 'channels')
+            const rawChans = parsed?.res?.[2]?.channels;
+            if (Array.isArray(rawChans)) {
+              const allChannels: ChannelInfo[] = rawChans.map(mapChannel);
+              const channels = this.filterChannelsByWallet(allChannels);
               this.emit({ type: "channels", timestamp: Date.now(), channels });
-              this.log("info", `Channel update: ${channels.length} channels`);
+              this.log("info", `Channel push: ${channels.length} yours / ${allChannels.length} total`);
             }
             break;
           }
@@ -581,41 +613,29 @@ export class YellowClient {
                 amount: b.amount,
               }));
               this.emit({ type: "balances", timestamp: Date.now(), balances });
-              this.log("info", `Balance update: ${balances.map((b) => `${b.asset}: ${b.amount}`).join(", ")}`);
+              this.log("info", `Balance update: ${balances.map((b) => `${b.asset}=${b.amount}`).join(", ")}`);
             }
             break;
           }
 
-          case RPCMethod.CreateChannel: {
-            this.log("info", "CreateChannel response received");
-            break;
-          }
-
-          case RPCMethod.ResizeChannel: {
-            this.log("info", "ResizeChannel response received");
-            break;
-          }
-
-          case RPCMethod.CloseChannel: {
-            this.log("info", "CloseChannel response received");
-            break;
-          }
-
+          case RPCMethod.CreateChannel:
+          case RPCMethod.ResizeChannel:
+          case RPCMethod.CloseChannel:
           case RPCMethod.Transfer: {
-            this.log("info", "Transfer response received");
+            // Handled by waitForResponse in each operation method
+            this.log("info", `${method} response received`);
             break;
           }
 
           case RPCMethod.TransferNotification: {
             const txs = parsed?.res?.[2]?.transactions;
             if (Array.isArray(txs) && txs.length > 0) {
-              this.log("info", `Transfer notification: ${txs.length} transaction(s)`);
+              this.log("info", `Transfer notification: ${txs.length} tx(s)`);
             }
             break;
           }
 
           case RPCMethod.Pong: {
-            // Expected keepalive response
             break;
           }
 
@@ -627,7 +647,7 @@ export class YellowClient {
           }
 
           default: {
-            this.log("info", `Message: ${method ?? "unknown"}`);
+            if (method) this.log("info", `Unhandled message: ${method}`);
             break;
           }
         }
@@ -664,7 +684,7 @@ export class YellowClient {
 
   private sendWS(message: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Not connected to Yellow Network");
+      throw new Error("Not connected to Yellow Network — please reconnect");
     }
     this.ws.send(message);
   }
@@ -677,7 +697,7 @@ export class YellowClient {
       }
       const timeout = setTimeout(() => {
         this.ws?.removeEventListener("message", handler);
-        reject(new Error(`Timeout waiting for ${method} response`));
+        reject(new Error(`Timeout waiting for ${method} response after ${timeoutMs / 1000}s`));
       }, timeoutMs);
 
       const handler = (event: MessageEvent) => {
@@ -692,7 +712,7 @@ export class YellowClient {
           } else if (resMethod === RPCMethod.Error) {
             clearTimeout(timeout);
             this.ws?.removeEventListener("message", handler);
-            const errMsg = parsed?.res?.[2]?.error ?? "Server error";
+            const errMsg = parsed?.res?.[2]?.error ?? parsed?.res?.[2]?.message ?? "Server error";
             reject(new Error(errMsg));
           }
         } catch {
@@ -712,14 +732,19 @@ export class YellowClient {
     const responsePromise = this.waitForResponse(RPCMethod.GetLedgerBalances);
     this.sendWS(msg);
     const raw = await responsePromise;
-    const res = parseGetLedgerBalancesResponse(raw);
-    const balances: LedgerBalance[] = (res.params.ledgerBalances ?? []).map(
-      (b: RPCBalance) => ({
+    try {
+      const res = parseGetLedgerBalancesResponse(raw);
+      return (res.params.ledgerBalances ?? []).map((b: RPCBalance) => ({
         asset: b.asset,
         amount: b.amount,
-      })
-    );
-    return balances;
+      }));
+    } catch {
+      // fallback parse
+      const parsed = JSON.parse(raw);
+      return (parsed?.res?.[2]?.balances ?? parsed?.res?.[2]?.ledger_balances ?? []).map(
+        (b: any) => ({ asset: b.asset, amount: String(b.amount) })
+      );
+    }
   }
 
   // ── Get channels ─────────────────────────────────────────────────────────
@@ -731,32 +756,33 @@ export class YellowClient {
     const responsePromise = this.waitForResponse(RPCMethod.GetChannels);
     this.sendWS(msg);
     const raw = await responsePromise;
-    const res = parseGetChannelsResponse(raw);
-    return (res.params.channels ?? []).map(
-      (ch: RPCChannelUpdateWithWallet) => ({
-        channelId: ch.channelId,
-        participant: ch.participant,
-        status: ch.status,
-        token: ch.token,
-        amount: String(ch.amount),
-        chainId: ch.chainId,
-        version: ch.version,
-        wallet: ch.wallet,
-      })
-    );
+
+    let allChannels: ChannelInfo[];
+    try {
+      const res = parseGetChannelsResponse(raw);
+      allChannels = (res.params.channels ?? []).map(mapChannel);
+    } catch {
+      // SDK parser failed → parse raw JSON with snake_case support
+      const parsed = JSON.parse(raw);
+      allChannels = (parsed?.res?.[2]?.channels ?? []).map(mapChannel);
+    }
+
+    const filtered = this.filterChannelsByWallet(allChannels);
+    this.log("info", `getChannels: ${filtered.length} yours / ${allChannels.length} total`);
+    return filtered;
   }
 
   // ── Create channel ───────────────────────────────────────────────────────
 
   async createChannel(
     token: Address,
-    depositAmount: bigint
+    _depositAmount: bigint
   ): Promise<{ channelId: Hex; txHash: Hash }> {
     if (!this.sessionSigner || !this.nitroliteClient || !this.walletClient) {
       throw new Error("Not authenticated");
     }
 
-    this.log("info", `Creating channel for token ${token}...`);
+    this.log("info", `Requesting channel creation for token ${token}...`);
 
     // 1. Request channel params from ClearNode
     const createMsg = await createCreateChannelMessage(this.sessionSigner, {
@@ -765,58 +791,93 @@ export class YellowClient {
     });
     const responsePromise = this.waitForResponse(RPCMethod.CreateChannel, 30000);
     this.sendWS(createMsg);
+    this.log("info", "Waiting for server channel params...");
     const raw = await responsePromise;
 
-    this.log("info", "Received channel params from server, submitting on-chain...");
+    // 2. Parse response — support both camelCase (SDK) and snake_case (server raw)
+    const parsedRaw = JSON.parse(raw);
+    const resParams = parsedRaw?.res?.[2];
 
-    // 2. Parse response into CreateChannelParams
-    const createRes = parseCreateChannelResponse(raw);
-    const pr = createRes.params as {
-      channelId: Hex;
-      channel: { participants: Address[]; adjudicator: Address; challenge: number; nonce: number };
-      state: { intent: number; version: number; stateData: Hex; allocations: { destination: Address; token: Address; amount: bigint }[] };
-      serverSignature: Hex;
-    };
+    const channelId_: Hex = (resParams?.channelId ?? resParams?.channel_id) as Hex;
+    const serverSig: Hex = (resParams?.serverSignature ?? resParams?.server_signature) as Hex;
+    const channelData = resParams?.channel;
+    const stateData = resParams?.state;
 
+    this.log("info", `Channel params from server: id=${channelId_?.slice(0, 10)}..., allocations=${JSON.stringify(stateData?.allocations)}`);
+
+    if (!channelData || !stateData || !serverSig) {
+      // Fallback: use SDK parser
+      this.log("warn", "Using SDK parser for createChannel response");
+      const createRes = parseCreateChannelResponse(raw);
+      const pr = createRes.params as any;
+      const fallbackToken = pr.state?.allocations?.[0]?.token ?? token;
+      const channelObj: Channel = {
+        participants: pr.channel.participants,
+        adjudicator: pr.channel.adjudicator,
+        challenge: BigInt(pr.channel.challenge),
+        nonce: BigInt(pr.channel.nonce),
+      };
+      const allocations = (pr.state?.allocations ?? []).map((a: any) => ({
+        destination: a.destination as Address,
+        token: (a.token ?? fallbackToken) as Address,
+        amount: BigInt(a.amount ?? 0),
+      }));
+      const unsignedInitialState: UnsignedState = {
+        intent: pr.state.intent as StateIntent,
+        version: BigInt(pr.state.version),
+        data: pr.state.stateData ?? pr.state.state_data,
+        allocations,
+      };
+      this.log("info", "Submitting createChannel on-chain (SDK path)...");
+      const result = await this.nitroliteClient.createChannel({
+        channel: channelObj,
+        unsignedInitialState,
+        serverSignature: pr.serverSignature,
+      } as CreateChannelParams);
+      const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+      this.log("info", `✓ Channel created on-chain | TX: ${txHash}`);
+      return { channelId: pr.channelId ?? pr.channel_id, txHash };
+    }
+
+    // 3. Build Channel object
+    const tokenAddr: Address = stateData?.allocations?.[0]?.token ?? token;
     const channelObj: Channel = {
-      participants: pr.channel.participants,
-      adjudicator: pr.channel.adjudicator,
-      challenge: BigInt(pr.channel.challenge),
-      nonce: BigInt(pr.channel.nonce),
+      participants: channelData.participants as Address[],
+      adjudicator: channelData.adjudicator as Address,
+      challenge: BigInt(channelData.challenge ?? channelData.challenge_duration ?? 3600),
+      nonce: BigInt(channelData.nonce),
     };
 
-    const tokenAddr = pr.state.allocations[0]?.token ?? token;
-    const allocations = [
-      { destination: pr.channel.participants[0], token: tokenAddr, amount: 0n },
-      { destination: pr.channel.participants[1], token: tokenAddr, amount: depositAmount },
-    ];
+    // 4. Use server-provided allocations (typically 0-amount; funding happens via resize from Unified Balance)
+    const stateDataHex: Hex = (stateData.stateData ?? stateData.state_data ?? "0x") as Hex;
+    const allocations = (stateData.allocations ?? []).map((a: any) => ({
+      destination: a.destination as Address,
+      token: (a.token ?? tokenAddr) as Address,
+      amount: BigInt(a.amount ?? 0),
+    }));
 
     const unsignedInitialState: UnsignedState = {
-      intent: pr.state.intent as StateIntent,
-      version: BigInt(pr.state.version),
-      data: pr.state.stateData,
+      intent: stateData.intent as StateIntent,
+      version: BigInt(stateData.version),
+      data: stateDataHex,
       allocations,
     };
 
     const createChannelParams: CreateChannelParams = {
       channel: channelObj,
       unsignedInitialState,
-      serverSignature: pr.serverSignature,
+      serverSignature: serverSig,
     };
 
-    // 3. On-chain deposit + create
-    const result = await this.nitroliteClient.depositAndCreateChannel(
-      tokenAddr,
-      depositAmount,
-      createChannelParams
-    );
+    // 5. Submit on-chain (no ERC-20 deposit needed — Unified Balance funds via resize later)
+    this.log("info", "Submitting createChannel on-chain...");
+    const result = await this.nitroliteClient.createChannel(createChannelParams);
+    const channelIdResult: Hex = ((result as any)?.channelId ?? channelId_) as Hex;
+    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
 
-    this.log("info", `Channel created! ID: ${result.channelId}, tx: ${result.txHash}`);
+    this.log("info", `✓ Channel created on-chain! ID: ${channelIdResult?.slice(0, 10)}... | TX: ${txHash}`);
 
-    return {
-      channelId: result.channelId,
-      txHash: result.txHash,
-    };
+    return { channelId: channelIdResult, txHash };
   }
 
   // ── Resize channel ───────────────────────────────────────────────────────
@@ -829,7 +890,7 @@ export class YellowClient {
       throw new Error("Not authenticated");
     }
 
-    this.log("info", `Resizing channel ${channelId.slice(0, 10)}... with amount ${allocateAmount}`);
+    this.log("info", `Resizing channel ${channelId.slice(0, 10)}... allocate=${allocateAmount}`);
 
     const resizeMsg = await createResizeChannelMessage(this.sessionSigner, {
       channel_id: channelId,
@@ -838,35 +899,51 @@ export class YellowClient {
     });
     const responsePromise = this.waitForResponse(RPCMethod.ResizeChannel, 30000);
     this.sendWS(resizeMsg);
+    this.log("info", "Waiting for resize params from server...");
     const raw = await responsePromise;
 
-    this.log("info", "Received resize params, submitting on-chain...");
+    // Parse resize response with snake_case fallbacks
+    let resizeState: FinalState;
+    try {
+      const resizeRes = parseResizeChannelResponse(raw);
+      const pr = resizeRes.params;
+      resizeState = {
+        channelId: pr.channelId,
+        intent: pr.state.intent as StateIntent,
+        version: BigInt(pr.state.version),
+        data: pr.state.stateData,
+        allocations: pr.state.allocations.map((a) => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount),
+        })),
+        serverSignature: pr.serverSignature,
+      };
+    } catch {
+      // Manual parse with snake_case support
+      const p = JSON.parse(raw)?.res?.[2];
+      const st = p?.state;
+      resizeState = {
+        channelId: (p?.channelId ?? p?.channel_id ?? channelId) as Hex,
+        intent: st?.intent as StateIntent,
+        version: BigInt(st?.version ?? 1),
+        data: (st?.stateData ?? st?.state_data ?? "0x") as Hex,
+        allocations: (st?.allocations ?? []).map((a: any) => ({
+          destination: a.destination as Address,
+          token: a.token as Address,
+          amount: BigInt(a.amount ?? 0),
+        })),
+        serverSignature: (p?.serverSignature ?? p?.server_signature) as Hex,
+      };
+    }
 
-    const resizeRes = parseResizeChannelResponse(raw);
-    const pr = resizeRes.params;
+    this.log("info", `Resize allocations: ${JSON.stringify(resizeState.allocations.map(a => ({ token: a.token?.slice(0, 8) + "...", amount: a.amount.toString() })))}`);
+    this.log("info", "Submitting resizeChannel on-chain...");
 
-    const resizeState: FinalState = {
-      channelId: pr.channelId,
-      intent: pr.state.intent as StateIntent,
-      version: BigInt(pr.state.version),
-      data: pr.state.stateData,
-      allocations: pr.state.allocations.map((a) => ({
-        destination: a.destination,
-        token: a.token,
-        amount: BigInt(a.amount),
-      })),
-      serverSignature: pr.serverSignature,
-    };
-
-    const resizeParams: ResizeChannelParams = {
-      resizeState,
-      proofStates: [],
-    };
-
+    const resizeParams: ResizeChannelParams = { resizeState, proofStates: [] };
     const result = await this.nitroliteClient.resizeChannel(resizeParams);
-    // resizeChannel may return a Hash string or an object with txHash
     const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-    this.log("info", `Channel resized! tx: ${txHash}`);
+    this.log("info", `✓ Channel resized on-chain! | TX: ${txHash}`);
 
     return { txHash };
   }
@@ -879,7 +956,7 @@ export class YellowClient {
   ): Promise<void> {
     if (!this.sessionSigner) throw new Error("Not authenticated");
 
-    this.log("info", `Transferring to ${destination.slice(0, 10)}...`);
+    this.log("info", `Transferring to ${destination.slice(0, 10)}... allocations=${JSON.stringify(allocations)}`);
 
     const msg = await createTransferMessage(this.sessionSigner, {
       destination,
@@ -888,7 +965,7 @@ export class YellowClient {
     const responsePromise = this.waitForResponse(RPCMethod.Transfer);
     this.sendWS(msg);
     await responsePromise;
-    this.log("info", "Transfer complete!");
+    this.log("info", "✓ Transfer complete!");
   }
 
   // ── Close channel ────────────────────────────────────────────────────────
@@ -907,23 +984,19 @@ export class YellowClient {
     );
     const responsePromise = this.waitForResponse(RPCMethod.CloseChannel, 30000);
     this.sendWS(closeMsg);
+    this.log("info", "Waiting for close params from server...");
     const raw = await responsePromise;
 
-    this.log("info", "Received close params from server, submitting on-chain...");
-
-    // Parse manually to handle snake_case fields from the server
-    // Server sends: { channel_id, state: { intent, version, state_data, allocations }, server_signature }
+    // Parse close response — support both camelCase and snake_case
     const parsed = JSON.parse(raw);
     const resParams = parsed?.res?.[2];
 
-    // Support both snake_case (server) and camelCase (SDK parser) field names
-    const closedChannelId: Hex = resParams?.channel_id ?? resParams?.channelId ?? channelId;
-    const serverSig: Hex = resParams?.server_signature ?? resParams?.serverSignature;
+    const closedChannelId: Hex = (resParams?.channelId ?? resParams?.channel_id ?? channelId) as Hex;
+    const serverSig: Hex = (resParams?.serverSignature ?? resParams?.server_signature) as Hex;
     const stateObj = resParams?.state;
 
     if (!stateObj || !serverSig) {
-      // Fallback: try SDK parser
-      this.log("warn", "Manual parse incomplete, trying SDK parser...");
+      this.log("warn", "Falling back to SDK parser for close response");
       const closeRes = parseCloseChannelResponse(raw);
       const pr = closeRes.params;
       const finalState: FinalState = {
@@ -938,33 +1011,33 @@ export class YellowClient {
         })),
         serverSignature: pr.serverSignature,
       };
+      this.log("info", "Submitting closeChannel on-chain (SDK path)...");
       const result = await this.nitroliteClient.closeChannel({ finalState, stateData: finalState.data } as any);
       const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-      this.log("info", `Channel ${closedChannelId.slice(0, 10)}... closed on-chain | TX: ${txHash}`);
+      this.log("info", `✓ Channel closed on-chain! | TX: ${txHash}`);
       return { txHash };
     }
 
-    // Build final state from snake_case server response
-    const stateData: Hex = stateObj.state_data ?? stateObj.stateData;
+    const stateDataHex: Hex = (stateObj.stateData ?? stateObj.state_data ?? "0x") as Hex;
     const finalState: FinalState = {
       channelId: closedChannelId,
       intent: stateObj.intent as StateIntent,
       version: BigInt(stateObj.version),
-      data: stateData,
+      data: stateDataHex,
       allocations: (stateObj.allocations ?? []).map((a: any) => ({
-        destination: a.destination,
-        token: a.token,
-        amount: BigInt(a.amount),
+        destination: a.destination as Address,
+        token: a.token as Address,
+        amount: BigInt(a.amount ?? 0),
       })),
       serverSignature: serverSig,
     };
 
-    this.log("info", `Close state: channel=${closedChannelId.slice(0, 10)}... v${stateObj.version}, ${(stateObj.allocations ?? []).length} allocations`);
+    this.log("info", `Close final allocations: ${JSON.stringify(finalState.allocations.map(a => ({ amount: a.amount.toString() })))}`);
+    this.log("info", "Submitting closeChannel on-chain...");
 
-    // Pass stateData separately as the working reference implementation does
-    const result = await this.nitroliteClient.closeChannel({ finalState, stateData } as any);
+    const result = await this.nitroliteClient.closeChannel({ finalState, stateData: stateDataHex } as any);
     const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-    this.log("info", `Channel ${closedChannelId.slice(0, 10)}... closed on-chain | TX: ${txHash}`);
+    this.log("info", `✓ Channel ${closedChannelId.slice(0, 10)}... closed on-chain! | TX: ${txHash}`);
 
     return { txHash };
   }
@@ -978,7 +1051,7 @@ export class YellowClient {
 
     const result = await this.nitroliteClient.withdrawal(token, amount);
     const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-    this.log("info", `Withdrawal complete! tx: ${txHash}`);
+    this.log("info", `✓ Withdrawal complete! | TX: ${txHash}`);
 
     return { txHash };
   }
@@ -995,7 +1068,8 @@ export class YellowClient {
     this.sessionAddress = null;
     this.nitroliteClient = null;
     this.walletClient = null;
+    this.connectedAddress = null;
     this.setStatus(YellowConnectionStatus.Disconnected);
-    this.log("info", "Disconnected");
+    this.log("info", "Disconnected from Yellow Network");
   }
 }
