@@ -293,4 +293,150 @@ export const api = {
   async getRegistryStats(): Promise<RegistryStatsResponse> {
     return request<RegistryStatsResponse>("/api/v1/registry/stats");
   },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // YELLOW NETWORK API
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  yellow: {
+    /** Get Yellow Network configuration from backend */
+    async getConfig(): Promise<YellowConfigResponse> {
+      return request<YellowConfigResponse>("/api/v1/yellow/config");
+    },
+
+    /** Create a private channel with SPECTER stealth address */
+    async createChannel(body: YellowCreateChannelRequest): Promise<YellowChannelResponse> {
+      return request<YellowChannelResponse>("/api/v1/yellow/channel/create", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+
+    /** Discover private channels for a wallet */
+    async discoverChannels(body: YellowDiscoverRequest): Promise<YellowDiscoverResponse> {
+      return request<YellowDiscoverResponse>("/api/v1/yellow/channel/discover", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+
+    /** Fund an existing channel */
+    async fundChannel(body: YellowFundRequest): Promise<YellowChannelResponse> {
+      return request<YellowChannelResponse>("/api/v1/yellow/channel/fund", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+
+    /** Close a channel and settle on-chain */
+    async closeChannel(body: YellowCloseRequest): Promise<YellowCloseResponse> {
+      return request<YellowCloseResponse>("/api/v1/yellow/channel/close", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+
+    /** Get status of a specific channel */
+    async getChannelStatus(channelId: string): Promise<YellowChannelStatusResponse> {
+      return request<YellowChannelStatusResponse>(`/api/v1/yellow/channel/${encodeURIComponent(channelId)}/status`);
+    },
+
+    /** Execute an off-chain transfer */
+    async transfer(body: YellowTransferRequest): Promise<YellowTransferResponse> {
+      return request<YellowTransferResponse>("/api/v1/yellow/transfer", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+  },
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// YELLOW NETWORK TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface YellowConfigResponse {
+  ws_url: string;
+  chain_id: number;
+  custody_address: string;
+  adjudicator_address: string;
+}
+
+export interface YellowCreateChannelRequest {
+  recipient: string;
+  token: string;
+  amount: string;
+  wallet_address: string;
+  wallet_private_key?: string;
+}
+
+export interface YellowChannelResponse {
+  channel_id: string;
+  stealth_address: string;
+  tx_hash: string;
+  announcement?: {
+    ephemeral_key: string;
+    view_tag: number;
+    channel_id: string;
+  };
+}
+
+export interface YellowDiscoverRequest {
+  viewing_sk: string;
+  spending_pk: string;
+  spending_sk: string;
+}
+
+export interface YellowDiscoverResponse {
+  channels: Array<{
+    channel_id: string;
+    stealth_address: string;
+    stealth_private_key: string;
+    eth_private_key: string;
+    discovered_at: number;
+    status?: string;
+    amount?: string;
+  }>;
+}
+
+export interface YellowFundRequest {
+  channel_id: string;
+  amount: string;
+  wallet_address: string;
+}
+
+export interface YellowCloseRequest {
+  channel_id: string;
+  wallet_address: string;
+}
+
+export interface YellowCloseResponse {
+  channel_id: string;
+  close_tx_hash: string;
+  final_balances: Array<{
+    participant: string;
+    amount: string;
+  }>;
+}
+
+export interface YellowChannelStatusResponse {
+  channel_id: string;
+  status: "open" | "closed" | "pending" | "resizing";
+  amount: string;
+  token: string;
+  chain_id: number;
+  participant: string;
+  version: number;
+}
+
+export interface YellowTransferRequest {
+  channel_id: string;
+  destination: string;
+  amount: string;
+  asset: string;
+}
+
+export interface YellowTransferResponse {
+  success: boolean;
+  new_balance: string;
+}

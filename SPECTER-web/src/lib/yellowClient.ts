@@ -153,6 +153,30 @@ function mapChannel(ch: any): ChannelInfo {
   };
 }
 
+/**
+ * Extract a readable message from viem/contract errors (simulation failed, revert reason, etc.).
+ */
+function normalizeContractError(err: any): string {
+  if (!err) return "Unknown error";
+  const msg = err?.message ?? "";
+  const short = err?.shortMessage ?? "";
+  const cause = err?.cause?.message ?? err?.cause ?? "";
+  const causeMsg = typeof cause === "string" ? cause : (cause?.message ?? cause?.shortMessage ?? "");
+  const details = err?.details ?? err?.internal ?? "";
+  const walk = (e: any): string => {
+    if (!e) return "";
+    if (typeof e.message === "string" && e.message && !e.message.includes("Contract call simulation failed")) return e.message;
+    if (typeof e.shortMessage === "string" && e.shortMessage) return e.shortMessage;
+    if (e.cause) return walk(e.cause);
+    return "";
+  };
+  const inner = walk(err?.cause ?? err?.error ?? err);
+  const parts = [msg, short, causeMsg, details, inner].filter(Boolean);
+  const combined = [...new Set(parts)].join(" | ").trim();
+  if (combined) return combined;
+  return msg || short || String(err);
+}
+
 // ── YellowClient ─────────────────────────────────────────────────────────────
 
 export class YellowClient {
@@ -890,6 +914,10 @@ export class YellowClient {
   }
 
   // ── Resize channel ───────────────────────────────────────────────────────
+  //
+  // Yellow 0.5.x: To *fund* the channel (deposit from Unified Balance into channel),
+  // use *negative* allocate_amount. resize_amount = -allocate_amount (positive when funding).
+  // proofStates must include the previous state from getChannelData(channelId).lastValidState.
 
   async resizeChannel(
     channelId: Hex,
@@ -899,11 +927,28 @@ export class YellowClient {
       throw new Error("Not authenticated");
     }
 
-    this.log("info", `Resizing channel ${channelId.slice(0, 10)}... allocate=${allocateAmount}`);
+    // Fund channel = move from Unified Balance into channel → negative allocate_amount per Yellow docs
+    const allocateAmountNeg = -allocateAmount;
+    const resizeAmount = allocateAmount; // resize_amount = -allocate_amount when funding
+    this.log("info", `Resizing channel ${channelId.slice(0, 10)}... allocate_amount=${allocateAmountNeg} (fund channel), resize_amount=${resizeAmount}`);
+
+    // Fetch previous state for proofStates (required by contract for resize)
+    let proofStates: Array<{ intent: number; version: bigint; data: Hex; allocations: Array<{ destination: Address; token: Address; amount: bigint }>; sigs: Hex[] }> = [];
+    try {
+      const channelData = await this.nitroliteClient.getChannelData(channelId);
+      if (channelData?.lastValidState) {
+        proofStates = [channelData.lastValidState as any];
+        this.log("info", `Using previous state for proofStates (version ${channelData.lastValidState.version})`);
+      }
+    } catch (e: any) {
+      const msg = e?.message ?? String(e);
+      this.log("warn", `getChannelData failed (channel may be new): ${msg}. Proceeding with empty proofStates.`);
+    }
 
     const resizeMsg = await createResizeChannelMessage(this.sessionSigner, {
       channel_id: channelId,
-      allocate_amount: allocateAmount,
+      resize_amount: resizeAmount,
+      allocate_amount: allocateAmountNeg,
       funds_destination: this.walletClient.account.address,
     });
     const responsePromise = this.waitForResponse(RPCMethod.ResizeChannel, 30000);
@@ -949,12 +994,17 @@ export class YellowClient {
     this.log("info", `Resize allocations: ${JSON.stringify(resizeState.allocations.map(a => ({ token: a.token?.slice(0, 8) + "...", amount: a.amount.toString() })))}`);
     this.log("info", "Submitting resizeChannel on-chain...");
 
-    const resizeParams: ResizeChannelParams = { resizeState, proofStates: [] };
-    const result = await this.nitroliteClient.resizeChannel(resizeParams);
-    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-    this.log("info", `✓ Channel resized on-chain! | TX: ${txHash}`);
-
-    return { txHash };
+    const resizeParams: ResizeChannelParams = { resizeState, proofStates };
+    try {
+      const result = await this.nitroliteClient.resizeChannel(resizeParams);
+      const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+      this.log("info", `✓ Channel resized on-chain! | TX: ${txHash}`);
+      return { txHash };
+    } catch (err: any) {
+      const detail = normalizeContractError(err);
+      this.log("error", `resizeChannel on-chain failed: ${detail}`);
+      throw new Error(detail);
+    }
   }
 
   // ── Transfer (off-chain) ─────────────────────────────────────────────────
@@ -1051,6 +1101,53 @@ export class YellowClient {
     return { txHash };
   }
 
+  // ── Deposit to custody ──────────────────────────────────────────────────
+
+  async deposit(token: Address, amount: bigint): Promise<{ txHash: Hash }> {
+    if (!this.nitroliteClient) throw new Error("Not authenticated");
+
+    this.log("info", `Depositing ${amount} of ${token.slice(0, 10)}... to custody contract`);
+
+    try {
+      // Check allowance first
+      const allowance = await this.nitroliteClient.getTokenAllowance(token);
+      this.log("info", `Current allowance: ${allowance}`);
+
+      if (allowance < amount) {
+        this.log("info", `Approving ${amount} tokens for custody...`);
+        const approveTx = await this.nitroliteClient.approveTokens(token, amount);
+        this.log("info", `Approval TX: ${approveTx}`);
+        // Wait a bit for approval to confirm
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+
+      const result = await this.nitroliteClient.deposit(token, amount);
+      const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+      this.log("info", `✓ Deposit complete! | TX: ${txHash}`);
+
+      return { txHash };
+    } catch (err: any) {
+      const detail = normalizeContractError(err);
+      this.log("error", `Deposit failed: ${detail}`);
+      throw new Error(detail);
+    }
+  }
+
+  // ── Get custody balance ──────────────────────────────────────────────────
+
+  async getCustodyBalance(token: Address): Promise<bigint> {
+    if (!this.nitroliteClient) throw new Error("Not authenticated");
+
+    try {
+      const balance = await this.nitroliteClient.getAccountBalance(token);
+      this.log("info", `Custody balance for ${token.slice(0, 10)}...: ${balance}`);
+      return balance;
+    } catch (err: any) {
+      this.log("warn", `Failed to get custody balance: ${err?.message ?? err}`);
+      return 0n;
+    }
+  }
+
   // ── Withdraw from custody ────────────────────────────────────────────────
 
   async withdraw(token: Address, amount: bigint): Promise<{ txHash: Hash }> {
@@ -1058,11 +1155,17 @@ export class YellowClient {
 
     this.log("info", `Withdrawing ${amount} of ${token.slice(0, 10)}... from custody`);
 
-    const result = await this.nitroliteClient.withdrawal(token, amount);
-    const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
-    this.log("info", `✓ Withdrawal complete! | TX: ${txHash}`);
+    try {
+      const result = await this.nitroliteClient.withdrawal(token, amount);
+      const txHash: Hash = typeof result === "string" ? result : (result as any).txHash ?? result;
+      this.log("info", `✓ Withdrawal complete! | TX: ${txHash}`);
 
-    return { txHash };
+      return { txHash };
+    } catch (err: any) {
+      const detail = normalizeContractError(err);
+      this.log("error", `Withdrawal failed: ${detail}`);
+      throw new Error(detail);
+    }
   }
 
   // ── Disconnect ───────────────────────────────────────────────────────────
