@@ -50,6 +50,13 @@ export default function ReactorKnob({
     onValueChange?.(Math.round(latest));
   });
 
+  useEffect(() => {
+    const clamped = Math.max(0, Math.min(100, initialValue));
+    const deg = MIN_DEG + ((MAX_DEG - MIN_DEG) * clamped) / 100;
+    rawRotation.set(deg);
+    snappedRotation.set(deg);
+  }, [initialValue, rawRotation, snappedRotation, MIN_DEG, MAX_DEG]);
+
   const handlePointerDown = useCallback(() => {
     setIsDragging(true);
     document.body.style.cursor = "grabbing";

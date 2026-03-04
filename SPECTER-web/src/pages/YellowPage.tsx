@@ -39,6 +39,7 @@ import {
   Terminal,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { FinancialDashboard } from "@/components/ui/financial-dashboard";
 import { CopyButton } from "@/components/ui/copy-button";
 import { HeadingScramble } from "@/components/ui/heading-scramble";
 import { formatAddress } from "@/lib/utils";
@@ -254,6 +255,7 @@ export default function YellowPage() {
 
   // Active panel tab
   const [activeTab, setActiveTab] = useState("overview");
+  const [expandedQuickAction, setExpandedQuickAction] = useState<number | null>(null);
 
   // ── Balance polling ────────────────────────────────────────────────────────
 
@@ -771,6 +773,10 @@ export default function YellowPage() {
   const confirmedTxCount = transactions.filter((tx) => tx.status === "confirmed").length;
   const pendingTxCount = transactions.filter((tx) => tx.status === "pending").length;
   const suggestedTransferAmount = Math.max(0.1, transferIntensity / 15).toFixed(2);
+  const transferActionIndex = 3;
+  const opInputClass = "bg-zinc-900/95 border-zinc-700/80 text-zinc-100 placeholder:text-zinc-500 transition-all duration-200 focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25 focus-visible:shadow-[0_0_0_3px_rgba(245,158,11,0.08)]";
+  const opSelectClass = "w-full bg-zinc-900/95 border border-zinc-700/80 rounded-md p-2 text-sm text-zinc-100 transition-all duration-200 focus-visible:outline-none focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25";
+  const opButtonClass = "w-full transition-all duration-200 hover:shadow-[0_8px_20px_rgba(0,0,0,0.3)] hover:-translate-y-[1px] active:translate-y-0";
   const activeTabIndex = Math.max(
     0,
     PANEL_TABS.indexOf(activeTab as (typeof PANEL_TABS)[number])
@@ -783,1329 +789,1309 @@ export default function YellowPage() {
     { id: "markets", icon: <Terminal />, label: "Activity" },
   ];
 
+  useEffect(() => {
+    if (activeTab !== "operations" && expandedQuickAction !== null) {
+      setExpandedQuickAction(null);
+    }
+  }, [activeTab, expandedQuickAction]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-        <Header />
+      <Header />
 
-        <main className="flex-1 max-w-7xl mx-auto w-full px-4 pt-28 sm:pt-32 pb-16 space-y-6">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 pt-28 sm:pt-32 pb-16 space-y-6">
 
-          {/* ── Hero Section ── */}
-          <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-4">
-            <motion.div variants={fadeIn} className="relative overflow-hidden rounded-2xl border border-zinc-800/80 p-4 sm:p-5">
-              <AnimatedShaderHero
-                showContent={false}
-                headline={{ line1: "", line2: "" }}
-                subtitle=""
-                className="absolute inset-0 min-h-0 opacity-35"
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/55 to-black/75 pointer-events-none" />
+        {/* ── Hero Section ── */}
+        <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-4">
+          <motion.div variants={fadeIn} className="relative overflow-hidden rounded-2xl border border-zinc-800/80 p-4 sm:p-5">
+            <AnimatedShaderHero
+              showContent={false}
+              headline={{ line1: "", line2: "" }}
+              subtitle=""
+              className="absolute inset-0 min-h-0 opacity-35"
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/55 to-black/75 pointer-events-none" />
 
-              <div className="relative z-10 flex items-center justify-between flex-wrap gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-                      <Network className="w-5 h-5 text-black" />
-                    </div>
-                    <div>
-                      <HeadingScramble className="text-2xl sm:text-3xl md:text-4xl font-bold text-white">
-                        Yellow Network
-                      </HeadingScramble>
-                      <p className="text-zinc-300 text-xs sm:text-sm">State channels for instant, off-chain transfers</p>
-                    </div>
+            <div className="relative z-10 flex items-center justify-between flex-wrap gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
+                    <Network className="w-5 h-5 text-black" />
+                  </div>
+                  <div>
+                    <HeadingScramble className="text-2xl sm:text-3xl md:text-4xl font-bold text-white">
+                      Yellow Network
+                    </HeadingScramble>
+                    <p className="text-zinc-300 text-xs sm:text-sm">State channels for instant, off-chain transfers</p>
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 bg-black/50 rounded-lg px-3 py-2 border border-zinc-700/70">
-                    <span className={`text-sm ${isTestnet ? "text-amber-400 font-medium" : "text-zinc-500"}`}>Sandbox</span>
-                    <Switch
-                      checked={!isTestnet}
-                      onCheckedChange={(c) => setIsTestnet(!c)}
-                      className="data-[state=checked]:bg-green-600"
-                    />
-                    <span className={`text-sm ${!isTestnet ? "text-green-400 font-medium" : "text-zinc-500"}`}>Mainnet</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2 bg-black/50 rounded-lg px-3 py-2 border border-zinc-700/70">
+                  <span className={`text-sm ${isTestnet ? "text-amber-400 font-medium" : "text-zinc-500"}`}>Sandbox</span>
+                  <Switch
+                    checked={!isTestnet}
+                    onCheckedChange={(c) => setIsTestnet(!c)}
+                    className="data-[state=checked]:bg-green-600"
+                  />
+                  <span className={`text-sm ${!isTestnet ? "text-green-400 font-medium" : "text-zinc-500"}`}>Mainnet</span>
+                </div>
+                {isConnected && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    className="border-zinc-700 bg-black/50 text-zinc-200 hover:text-white"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+
+        {/* ── Mainnet overlay ── */}
+        <AnimatePresence>
+          {!isTestnet && (
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center backdrop-blur-sm"
+            >
+              <div className="text-center space-y-6 p-8">
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", damping: 15 }}
+                  className="w-20 h-20 rounded-2xl bg-amber-500/20 flex items-center justify-center mx-auto"
+                >
+                  <Lock className="w-10 h-10 text-amber-400" />
+                </motion.div>
+                <h2 className="text-2xl font-bold text-white">Mainnet Coming Soon</h2>
+                <p className="text-zinc-400 max-w-md">
+                  Yellow Network mainnet integration is under development.
+                  Switch to Sandbox (Sepolia) to test the integration.
+                </p>
+                <Button
+                  onClick={() => setIsTestnet(true)}
+                  className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Switch to Sandbox
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Connection Status Bar ── */}
+        <motion.div variants={fadeIn} initial="hidden" animate="visible">
+          <GlowCard className="p-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isConnected ? "bg-green-500/20" : "bg-zinc-800"
+                  }`}>
+                  <Wallet className={`w-5 h-5 ${isConnected ? "text-green-400" : "text-zinc-400"}`} />
+                </div>
+
+                {primaryWallet?.address ? (
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-zinc-500">Wallet</span>
+                      <span className="font-mono text-sm text-white">{formatAddress(primaryWallet.address)}</span>
+                      <CopyButton text={primaryWallet.address} />
+                    </div>
+                    {isConnected && yellowAddress ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                          <CheckCircle2 className="w-3 h-3 mr-1" />
+                          Yellow Connected
+                        </Badge>
+                        <span className="text-xs text-zinc-500">Session: {formatAddress(yellowAddress)}</span>
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className={`text-xs w-fit ${connectionStatus === YellowConnectionStatus.Error
+                        ? "border-red-500/50 text-red-400"
+                        : connectionStatus === YellowConnectionStatus.WaitingForSignature
+                          ? "border-amber-500/50 text-amber-400 animate-pulse"
+                          : connectionStatus === YellowConnectionStatus.Authenticating
+                            ? "border-blue-500/50 text-blue-400 animate-pulse"
+                            : "border-zinc-600/50 text-zinc-400"
+                        }`}>
+                        {connectionStatus === YellowConnectionStatus.WaitingForSignature
+                          ? "⏳ Sign in wallet…"
+                          : connectionStatus === YellowConnectionStatus.Authenticating
+                            ? "⏳ Authenticating…"
+                            : connectionStatus === YellowConnectionStatus.Error
+                              ? "⚠ Auth error"
+                              : "Not connected to Yellow"}
+                      </Badge>
+                    )}
                   </div>
-                  {isConnected && (
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-sm text-zinc-400">No wallet connected</span>
+                    <span className="text-xs text-zinc-600">Connect to start using Yellow Network</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {!primaryWallet?.address && (
+                  <Button
+                    onClick={() => setShowAuthFlow(true)}
+                    className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                  >
+                    <Wallet className="w-4 h-4 mr-2" />
+                    Connect Wallet
+                  </Button>
+                )}
+                {primaryWallet?.address && !isConnected && (
+                  <>
+                    <Button
+                      onClick={handleConnectAndAuth}
+                      disabled={isConnecting}
+                      className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                    >
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          {connectionStatus === YellowConnectionStatus.WaitingForSignature
+                            ? "Sign in wallet…"
+                            : "Connecting…"}
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-4 h-4 mr-2" />
+                          Connect Yellow
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleFullDisconnect}
+                      className="text-zinc-500 hover:text-zinc-300"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </Button>
+                  </>
+                )}
+                {isConnected && (
+                  <>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={handleRefresh}
-                      disabled={isRefreshing}
-                      className="border-zinc-700 bg-black/50 text-zinc-200 hover:text-white"
+                      onClick={handleDisconnect}
+                      className="border-zinc-700 text-zinc-400 hover:text-white"
                     >
-                      <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
-                      Refresh
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Disconnect Yellow
                     </Button>
-                  )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleFullDisconnect}
+                      className="border-red-700/50 text-red-400 hover:text-red-300 hover:border-red-600"
+                    >
+                      Disconnect Wallet
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </GlowCard>
+        </motion.div>
+
+        {/* ── Warning Banners ── */}
+        <AnimatePresence>
+          {primaryWallet?.address && needsETH && (
+            <motion.div
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+            >
+              <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-amber-300 font-medium">Low Sepolia ETH</p>
+                  <p className="text-xs text-zinc-400">
+                    Balance: {parseFloat(ethBalance?.formatted ?? "0").toFixed(5)} ETH — You need ETH for gas
+                  </p>
                 </div>
+                <a
+                  href={SEPOLIA_ETH_FAUCET}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0"
+                >
+                  <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10">
+                    Get ETH <ExternalLink className="w-3 h-3 ml-1" />
+                  </Button>
+                </a>
               </div>
             </motion.div>
-          </motion.div>
+          )}
+        </AnimatePresence>
 
-          {/* ── Mainnet overlay ── */}
-          <AnimatePresence>
-            {!isTestnet && (
-              <motion.div
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center backdrop-blur-sm"
-              >
-                <div className="text-center space-y-6 p-8">
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", damping: 15 }}
-                    className="w-20 h-20 rounded-2xl bg-amber-500/20 flex items-center justify-center mx-auto"
-                  >
-                    <Lock className="w-10 h-10 text-amber-400" />
-                  </motion.div>
-                  <h2 className="text-2xl font-bold text-white">Mainnet Coming Soon</h2>
-                  <p className="text-zinc-400 max-w-md">
-                    Yellow Network mainnet integration is under development.
-                    Switch to Sandbox (Sepolia) to test the integration.
-                  </p>
-                  <Button
-                    onClick={() => setIsTestnet(true)}
-                    className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
-                  >
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Switch to Sandbox
-                  </Button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── Connection Status Bar ── */}
-          <motion.div variants={fadeIn} initial="hidden" animate="visible">
-            <GlowCard className="p-4">
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isConnected ? "bg-green-500/20" : "bg-zinc-800"
-                    }`}>
-                    <Wallet className={`w-5 h-5 ${isConnected ? "text-green-400" : "text-zinc-400"}`} />
-                  </div>
-
-                  {primaryWallet?.address ? (
-                    <div className="flex flex-col gap-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs text-zinc-500">Wallet</span>
-                        <span className="font-mono text-sm text-white">{formatAddress(primaryWallet.address)}</span>
-                        <CopyButton text={primaryWallet.address} />
-                      </div>
-                      {isConnected && yellowAddress ? (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
-                            <CheckCircle2 className="w-3 h-3 mr-1" />
-                            Yellow Connected
-                          </Badge>
-                          <span className="text-xs text-zinc-500">Session: {formatAddress(yellowAddress)}</span>
-                        </div>
-                      ) : (
-                        <Badge variant="outline" className={`text-xs w-fit ${connectionStatus === YellowConnectionStatus.Error
-                          ? "border-red-500/50 text-red-400"
-                          : connectionStatus === YellowConnectionStatus.WaitingForSignature
-                            ? "border-amber-500/50 text-amber-400 animate-pulse"
-                            : connectionStatus === YellowConnectionStatus.Authenticating
-                              ? "border-blue-500/50 text-blue-400 animate-pulse"
-                              : "border-zinc-600/50 text-zinc-400"
-                          }`}>
-                          {connectionStatus === YellowConnectionStatus.WaitingForSignature
-                            ? "⏳ Sign in wallet…"
-                            : connectionStatus === YellowConnectionStatus.Authenticating
-                              ? "⏳ Authenticating…"
-                              : connectionStatus === YellowConnectionStatus.Error
-                                ? "⚠ Auth error"
-                                : "Not connected to Yellow"}
-                        </Badge>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-sm text-zinc-400">No wallet connected</span>
-                      <span className="text-xs text-zinc-600">Connect to start using Yellow Network</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  {!primaryWallet?.address && (
-                    <Button
-                      onClick={() => setShowAuthFlow(true)}
-                      className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
-                    >
-                      <Wallet className="w-4 h-4 mr-2" />
-                      Connect Wallet
-                    </Button>
-                  )}
-                  {primaryWallet?.address && !isConnected && (
-                    <>
-                      <Button
-                        onClick={handleConnectAndAuth}
-                        disabled={isConnecting}
-                        className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
-                      >
-                        {isConnecting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            {connectionStatus === YellowConnectionStatus.WaitingForSignature
-                              ? "Sign in wallet…"
-                              : "Connecting…"}
-                          </>
-                        ) : (
-                          <>
-                            <Zap className="w-4 h-4 mr-2" />
-                            Connect Yellow
-                          </>
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleFullDisconnect}
-                        className="text-zinc-500 hover:text-zinc-300"
-                      >
-                        <LogOut className="w-4 h-4" />
-                      </Button>
-                    </>
-                  )}
-                  {isConnected && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleDisconnect}
-                        className="border-zinc-700 text-zinc-400 hover:text-white"
-                      >
-                        <LogOut className="w-4 h-4 mr-2" />
-                        Disconnect Yellow
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleFullDisconnect}
-                        className="border-red-700/50 text-red-400 hover:text-red-300 hover:border-red-600"
-                      >
-                        Disconnect Wallet
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </GlowCard>
-          </motion.div>
-
-          {/* ── Warning Banners ── */}
-          <AnimatePresence>
-            {primaryWallet?.address && needsETH && (
-              <motion.div
-                variants={scaleIn}
-                initial="hidden"
-                animate="visible"
-                exit="hidden"
-              >
-                <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
-                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-amber-300 font-medium">Low Sepolia ETH</p>
-                    <p className="text-xs text-zinc-400">
-                      Balance: {parseFloat(ethBalance?.formatted ?? "0").toFixed(5)} ETH — You need ETH for gas
+        {/* ── Account + Faucet Deck ── */}
+        <motion.div variants={fadeIn} initial="hidden" animate="visible">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <GlowCard className="p-5 xl:col-span-2">
+              <div className="relative z-10">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-200">Balances and Access</h3>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Single source of truth for wallet, ledger, and custody. Faucet is embedded here.
                     </p>
                   </div>
-                  <a
-                    href={SEPOLIA_ETH_FAUCET}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0"
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400">
+                    Sandbox / Sepolia
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ETH</p>
+                    <p className="text-lg font-mono text-white mt-1">
+                      {ethBalance ? `${parseFloat(ethBalance.formatted).toFixed(4)}` : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ytest</p>
+                    <p className="text-lg font-mono text-white mt-1">
+                      {ytestBalance ? formatYtest(ytestBalance.formatted) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-amber-300/80">Unified Balance</p>
+                    <p className="text-lg font-mono text-amber-200 mt-1">
+                      {totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Custody</p>
+                    <p className="text-lg font-mono text-white mt-1">
+                      {custodyBalance !== null ? formatYtest(custodyBalance) : "—"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    onClick={handleRequestFaucet}
+                    disabled={isRequestingFaucet || !primaryWallet?.address}
+                    size="sm"
+                    className="bg-amber-500 hover:bg-amber-600 text-black"
                   >
-                    <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10">
-                      Get ETH <ExternalLink className="w-3 h-3 ml-1" />
+                    {isRequestingFaucet ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Requesting faucet…
+                      </>
+                    ) : (
+                      <>
+                        <Droplets className="w-4 h-4 mr-2" />
+                        Request Faucet Tokens
+                      </>
+                    )}
+                  </Button>
+                  <a href={YTEST_USD_FAUCET} target="_blank" rel="noopener noreferrer">
+                    <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300">
+                      Open ytest faucet <ExternalLink className="w-3 h-3 ml-1" />
                     </Button>
                   </a>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+            </GlowCard>
 
-          {/* ── Account + Faucet Deck ── */}
+            <GlowCard className="p-5">
+              <div className="relative z-10">
+                <h3 className="text-sm font-semibold text-zinc-200">Network Pulse</h3>
+                <p className="text-xs text-zinc-500 mt-1">Interactive map for active sandbox route.</p>
+                <div className="mt-4 flex justify-center">
+                  <LocationMap
+                    className="mb-6"
+                    location="Yellow Sandbox Route"
+                    coordinates="Sepolia · wss://clearnet-sandbox.yellow.com/ws"
+                  />
+                </div>
+              </div>
+            </GlowCard>
+          </div>
+        </motion.div>
+
+        {/* ── Main Panel ── */}
+        {isConnected && (
           <motion.div variants={fadeIn} initial="hidden" animate="visible">
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <GlowCard className="p-5 xl:col-span-2">
-                <div className="relative z-10">
-                  <div className="flex items-start justify-between gap-3 flex-wrap">
-                    <div>
-                      <h3 className="text-sm font-semibold text-zinc-200">Balances and Access</h3>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Single source of truth for wallet, ledger, and custody. Faucet is embedded here.
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="border-zinc-700 text-zinc-400">
-                      Sandbox / Sepolia
-                    </Badge>
+            <GlowCard className="p-6">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                {isSyncingYellow && (
+                  <div className="flex items-center gap-2 mb-4 text-xs text-zinc-500 bg-zinc-800/50 rounded-lg px-3 py-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Syncing with Yellow Network…</span>
                   </div>
+                )}
 
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ETH</p>
-                      <p className="text-lg font-mono text-white mt-1">
-                        {ethBalance ? `${parseFloat(ethBalance.formatted).toFixed(4)}` : "—"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ytest</p>
-                      <p className="text-lg font-mono text-white mt-1">
-                        {ytestBalance ? formatYtest(ytestBalance.formatted) : "—"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-amber-300/80">Unified Balance</p>
-                      <p className="text-lg font-mono text-amber-200 mt-1">
-                        {totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—"}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Custody</p>
-                      <p className="text-lg font-mono text-white mt-1">
-                        {custodyBalance !== null ? formatYtest(custodyBalance) : "—"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button
-                      onClick={handleRequestFaucet}
-                      disabled={isRequestingFaucet || !primaryWallet?.address}
-                      size="sm"
-                      className="bg-amber-500 hover:bg-amber-600 text-black"
-                    >
-                      {isRequestingFaucet ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Requesting faucet…
-                        </>
-                      ) : (
-                        <>
-                          <Droplets className="w-4 h-4 mr-2" />
-                          Request Faucet Tokens
-                        </>
-                      )}
-                    </Button>
-                    <a href={YTEST_USD_FAUCET} target="_blank" rel="noopener noreferrer">
-                      <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300">
-                        Open ytest faucet <ExternalLink className="w-3 h-3 ml-1" />
-                      </Button>
-                    </a>
-                  </div>
+                <div className="mb-6 overflow-x-auto pb-1">
+                  <LimelightNav
+                    className="min-w-max bg-zinc-900/75 border-zinc-800"
+                    items={tabNavItems}
+                    activeIndex={activeTabIndex}
+                    onTabChange={(index) => setActiveTab(PANEL_TABS[index] ?? "overview")}
+                    iconContainerClassName="px-3 sm:px-5"
+                    iconClassName="text-zinc-200"
+                  />
                 </div>
-              </GlowCard>
 
-              <GlowCard className="p-5">
-                <div className="relative z-10">
-                  <h3 className="text-sm font-semibold text-zinc-200">Network Pulse</h3>
-                  <p className="text-xs text-zinc-500 mt-1">Interactive map for active sandbox route.</p>
-                  <div className="mt-4 flex justify-center">
-                    <LocationMap
-                      className="mb-6"
-                      location="Yellow Sandbox Route"
-                      coordinates="Sepolia · wss://clearnet-sandbox.yellow.com/ws"
-                    />
-                  </div>
-                </div>
-              </GlowCard>
-            </div>
-          </motion.div>
-
-          {/* ── Main Panel ── */}
-          {isConnected && (
-            <motion.div variants={fadeIn} initial="hidden" animate="visible">
-              <GlowCard className="p-6">
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                  {isSyncingYellow && (
-                    <div className="flex items-center gap-2 mb-4 text-xs text-zinc-500 bg-zinc-800/50 rounded-lg px-3 py-2">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span>Syncing with Yellow Network…</span>
-                    </div>
-                  )}
-
-                  <div className="mb-6 overflow-x-auto pb-1">
-                    <LimelightNav
-                      className="min-w-max bg-zinc-900/75 border-zinc-800"
-                      items={tabNavItems}
-                      activeIndex={activeTabIndex}
-                      onTabChange={(index) => setActiveTab(PANEL_TABS[index] ?? "overview")}
-                      iconContainerClassName="px-3 sm:px-5"
-                      iconClassName="text-zinc-200"
-                    />
-                  </div>
-
-                  {/* ── Overview Tab ── */}
-                  <TabsContent value="overview" className="space-y-6">
-                    {/* Next Step Guidance */}
-                    <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-xl p-5">
-                      <div className="flex items-start gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
-                          {currentStep < 4 ? (
-                            <Zap className="w-5 h-5 text-amber-400" />
-                          ) : currentStep < 6 ? (
-                            <ArrowUpRight className="w-5 h-5 text-amber-400" />
-                          ) : (
-                            <CheckCircle2 className="w-5 h-5 text-green-400" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="text-sm font-semibold text-white mb-1">
-                            {currentStep < 4
-                              ? "Create Your First Channel"
-                              : currentStep < 5
-                                ? "Deposit Tokens to Custody"
-                                : currentStep < 6
-                                  ? "Fund Your Channel"
-                                  : currentStep < 7
-                                    ? "Make a Transfer"
-                                    : "All Steps Complete!"}
-                          </h3>
-                          <p className="text-xs text-zinc-400 leading-relaxed">
-                            {currentStep < 4
-                              ? "Open a state channel on-chain to start making instant off-chain transfers. You'll need Sepolia ETH for gas and ytest.usd tokens."
-                              : currentStep < 5
-                                ? "Move ytest.usd from your wallet into the custody contract. This is required before you can allocate funds to channels."
-                                : currentStep < 6
-                                  ? "Allocate funds from the custody contract into your open channel to enable off-chain transfers."
-                                  : currentStep < 7
-                                    ? "Send an instant, gas-free off-chain transfer to any address on the Yellow Network."
-                                    : "You've completed the full state channel lifecycle. You can close channels and withdraw funds."}
-                          </p>
-                          {currentStep < 7 && (
-                            <Button
-                              onClick={() => setActiveTab("operations")}
-                              size="sm"
-                              className="mt-3 bg-amber-500 hover:bg-amber-600 text-black font-medium"
-                            >
-                              <ArrowRight className="w-3.5 h-3.5 mr-1.5" />
-                              Go to Operations
-                            </Button>
-                          )}
-                        </div>
+                {/* ── Overview Tab ── */}
+                <TabsContent value="overview" className="space-y-6">
+                  {/* Next Step Guidance */}
+                  <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-xl p-5">
+                    <div className="flex items-start gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                        {currentStep < 4 ? (
+                          <Zap className="w-5 h-5 text-amber-400" />
+                        ) : currentStep < 6 ? (
+                          <ArrowUpRight className="w-5 h-5 text-amber-400" />
+                        ) : (
+                          <CheckCircle2 className="w-5 h-5 text-green-400" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-semibold text-white mb-1">
+                          {currentStep < 4
+                            ? "Create Your First Channel"
+                            : currentStep < 5
+                              ? "Deposit Tokens to Custody"
+                              : currentStep < 6
+                                ? "Fund Your Channel"
+                                : currentStep < 7
+                                  ? "Make a Transfer"
+                                  : "All Steps Complete!"}
+                        </h3>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
+                          {currentStep < 4
+                            ? "Open a state channel on-chain to start making instant off-chain transfers. You'll need Sepolia ETH for gas and ytest.usd tokens."
+                            : currentStep < 5
+                              ? "Move ytest.usd from your wallet into the custody contract. This is required before you can allocate funds to channels."
+                              : currentStep < 6
+                                ? "Allocate funds from the custody contract into your open channel to enable off-chain transfers."
+                                : currentStep < 7
+                                  ? "Send an instant, gas-free off-chain transfer to any address on the Yellow Network."
+                                  : "You've completed the full state channel lifecycle. You can close channels and withdraw funds."}
+                        </p>
+                        {currentStep < 7 && (
+                          <Button
+                            onClick={() => setActiveTab("operations")}
+                            size="sm"
+                            className="mt-3 bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                          >
+                            <ArrowRight className="w-3.5 h-3.5 mr-1.5" />
+                            Go to Operations
+                          </Button>
+                        )}
                       </div>
                     </div>
+                  </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                      <ReactorKnob
-                        className="xl:col-span-2"
-                        initialValue={transferIntensity}
-                        onValueChange={setTransferIntensity}
-                      />
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                    <ReactorKnob
+                      className="xl:col-span-2"
+                      initialValue={transferIntensity}
+                      onValueChange={setTransferIntensity}
+                    />
 
-                      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                        <h3 className="text-sm font-semibold text-zinc-200">Execution Preset</h3>
-                        <p className="text-xs text-zinc-500 mt-1">
-                          Use the control dial to set a transfer intent and push it to Operations.
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                      <h3 className="text-sm font-semibold text-zinc-200">Execution Preset</h3>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Use the control dial to set a transfer intent and push it to Operations.
+                      </p>
+                      <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                        <p className="text-xs text-zinc-500">Suggested transfer</p>
+                        <p className="font-mono text-2xl text-amber-300 mt-1">
+                          {suggestedTransferAmount}
+                          <span className="text-sm text-zinc-500 ml-1">ytest.usd</span>
                         </p>
-                        <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
-                          <p className="text-xs text-zinc-500">Suggested transfer</p>
-                          <p className="font-mono text-2xl text-amber-300 mt-1">
-                            {suggestedTransferAmount}
-                            <span className="text-sm text-zinc-500 ml-1">ytest.usd</span>
-                          </p>
-                        </div>
-                        <div className="mt-4 space-y-2">
+                      </div>
+                      <div className="mt-4 space-y-2">
                           <Button
                             size="sm"
                             className="w-full bg-amber-500 hover:bg-amber-600 text-black"
                             onClick={() => {
                               setTransferAmount(suggestedTransferAmount);
+                              setTransferAsset("ytest.usd");
                               setActiveTab("operations");
+                              setExpandedQuickAction(transferActionIndex);
                             }}
                           >
-                            Apply and Open Operations
+                            Apply to Transfer and Open Operations
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full border-zinc-700 text-zinc-300"
-                            onClick={handleRequestFaucet}
-                            disabled={isRequestingFaucet}
-                          >
-                            <Droplets className="w-3.5 h-3.5 mr-1.5" />
-                            Request faucet tokens
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Channel Status + Quick Actions */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Active Channels Summary */}
-                      <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-                            <Network className="w-4 h-4 text-amber-400" />
-                            Channels
-                          </h3>
-                          <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
-                            {openChannels.length} open
-                          </Badge>
-                        </div>
-                        {openChannels.length === 0 ? (
-                          <p className="text-xs text-zinc-500">No open channels. Create one to start.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {openChannels.slice(0, 3).map((ch) => (
-                              <div key={ch.channelId} className="flex items-center justify-between bg-zinc-800/50 rounded-lg px-3 py-2">
-                                <span className="font-mono text-xs text-zinc-300">
-                                  {ch.channelId?.slice(0, 8)}…{ch.channelId?.slice(-6)}
-                                </span>
-                                <span className="text-xs font-mono text-amber-400">
-                                  {formatYtest(ch.amount ?? "0")}
-                                </span>
-                              </div>
-                            ))}
-                            {openChannels.length > 3 && (
-                              <button
-                                onClick={() => setActiveTab("channels")}
-                                className="text-xs text-amber-400 hover:text-amber-300 mt-1"
-                              >
-                                View all {openChannels.length} channels →
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Quick Actions */}
-                      <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
-                        <h3 className="text-sm font-semibold text-zinc-300 mb-3 flex items-center gap-2">
-                          <Zap className="w-4 h-4 text-amber-400" />
-                          Quick Actions
-                        </h3>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setActiveTab("operations")}
-                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
-                          >
-                            <PlusCircle className="w-3.5 h-3.5 mr-1.5 text-green-400" />
-                            Create
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setActiveTab("operations")}
-                            disabled={openChannels.length === 0}
-                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
-                          >
-                            <ArrowUpRight className="w-3.5 h-3.5 mr-1.5 text-blue-400" />
-                            Fund
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setActiveTab("operations")}
-                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
-                          >
-                            <Send className="w-3.5 h-3.5 mr-1.5 text-purple-400" />
-                            Transfer
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleRequestFaucet}
-                            disabled={isRequestingFaucet}
-                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
-                          >
-                            <Droplets className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
-                            Faucet
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Recent Transactions Mini */}
-                    {transactions.length > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-                            <Activity className="w-4 h-4 text-amber-400" />
-                            Recent Activity
-                          </h3>
-                          <button
-                            onClick={() => setActiveTab("transactions")}
-                            className="text-xs text-amber-400 hover:text-amber-300"
-                          >
-                            View all →
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          {transactions.slice(0, 3).map((tx) => (
-                            <div
-                              key={tx.id}
-                              className="flex items-center justify-between bg-zinc-800/40 rounded-lg px-3 py-2 border border-zinc-700/40"
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className={`w-2 h-2 rounded-full shrink-0 ${tx.status === "confirmed" ? "bg-green-400" :
-                                    tx.status === "failed" ? "bg-red-400" :
-                                      "bg-amber-400 animate-pulse"
-                                  }`} />
-                                <div className="min-w-0">
-                                  <p className="text-xs font-medium text-zinc-300">{tx.label}</p>
-                                  <p className="text-xs text-zinc-500">{new Date(tx.timestamp).toLocaleTimeString()}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="font-mono text-xs text-zinc-500">
-                                  {tx.hash.slice(0, 6)}…{tx.hash.slice(-4)}
-                                </span>
-                                <a
-                                  href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-zinc-500 hover:text-amber-400"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                </a>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  {/* ── Channels Tab ── */}
-                  <TabsContent value="channels" className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-zinc-300">Your State Channels</h3>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleRefresh}
-                        disabled={isRefreshing}
-                        className="text-zinc-400 hover:text-white"
-                      >
-                        <RefreshCw className={`w-3 h-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
-                        Refresh
-                      </Button>
-                    </div>
-
-                    {channels.length === 0 ? (
-                      <div className="text-center py-12 space-y-4">
-                        <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
-                          <Network className="w-8 h-8 text-zinc-600" />
-                        </div>
-                        <div>
-                          <p className="text-zinc-400 font-medium">No channels found</p>
-                          <p className="text-zinc-600 text-sm mt-1">Create your first state channel to get started</p>
-                        </div>
                         <Button
-                          onClick={() => setActiveTab("operations")}
-                          className="bg-amber-500 hover:bg-amber-600 text-black"
+                          size="sm"
+                          variant="outline"
+                          className="w-full border-zinc-700 text-zinc-300"
+                          onClick={handleRequestFaucet}
+                          disabled={isRequestingFaucet}
                         >
-                          <PlusCircle className="w-4 h-4 mr-2" />
-                          Create Channel
+                          <Droplets className="w-3.5 h-3.5 mr-1.5" />
+                          Request faucet tokens
                         </Button>
                       </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {channels.filter((ch) => ch.channelId).map((ch) => (
-                          <motion.div
-                            key={ch.channelId}
-                            variants={slideIn}
-                            initial="hidden"
-                            animate="visible"
-                            className="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50 hover:border-zinc-600/50 transition-all"
+                    </div>
+                  </div>
+
+                  {/* Channel Status + Quick Actions */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Active Channels Summary */}
+                    <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                          <Network className="w-4 h-4 text-amber-400" />
+                          Channels
+                        </h3>
+                        <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
+                          {openChannels.length} open
+                        </Badge>
+                      </div>
+                      {openChannels.length === 0 ? (
+                        <p className="text-xs text-zinc-500">No open channels. Create one to start.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {openChannels.slice(0, 3).map((ch) => (
+                            <div key={ch.channelId} className="flex items-center justify-between bg-zinc-800/50 rounded-lg px-3 py-2">
+                              <span className="font-mono text-xs text-zinc-300">
+                                {ch.channelId?.slice(0, 8)}…{ch.channelId?.slice(-6)}
+                              </span>
+                              <span className="text-xs font-mono text-amber-400">
+                                {formatYtest(ch.amount ?? "0")}
+                              </span>
+                            </div>
+                          ))}
+                          {openChannels.length > 3 && (
+                            <button
+                              onClick={() => setActiveTab("channels")}
+                              className="text-xs text-amber-400 hover:text-amber-300 mt-1"
+                            >
+                              View all {openChannels.length} channels →
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Quick Actions */}
+                    <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
+                      <h3 className="text-sm font-semibold text-zinc-300 mb-3 flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-amber-400" />
+                        Quick Actions
+                      </h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveTab("operations")}
+                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5 mr-1.5 text-green-400" />
+                          Create
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveTab("operations")}
+                          disabled={openChannels.length === 0}
+                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                        >
+                          <ArrowUpRight className="w-3.5 h-3.5 mr-1.5 text-blue-400" />
+                          Fund
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setActiveTab("operations")}
+                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                        >
+                          <Send className="w-3.5 h-3.5 mr-1.5 text-purple-400" />
+                          Transfer
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRequestFaucet}
+                          disabled={isRequestingFaucet}
+                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                        >
+                          <Droplets className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
+                          Faucet
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recent Transactions Mini */}
+                  {transactions.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-amber-400" />
+                          Recent Activity
+                        </h3>
+                        <button
+                          onClick={() => setActiveTab("transactions")}
+                          className="text-xs text-amber-400 hover:text-amber-300"
+                        >
+                          View all →
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {transactions.slice(0, 3).map((tx) => (
+                          <div
+                            key={tx.id}
+                            className="flex items-center justify-between bg-zinc-800/40 rounded-lg px-3 py-2 border border-zinc-700/40"
                           >
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-lg bg-zinc-700/50 flex items-center justify-center">
-                                  <Network className="w-5 h-5 text-amber-400" />
-                                </div>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-mono text-sm text-zinc-300">
-                                      {ch.channelId?.slice(0, 8)}…{ch.channelId?.slice(-6)}
-                                    </span>
-                                    <CopyButton text={ch.channelId ?? ""} />
-                                    <a
-                                      href={`${ETHERSCAN_BASE}/address/${ch.channelId}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-zinc-500 hover:text-amber-400 transition-colors"
-                                    >
-                                      <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                  </div>
-                                  <p className="text-xs text-zinc-500">v{ch.version ?? 0}</p>
-                                </div>
-                              </div>
-                              <StatusBadge status={ch.status ?? "unknown"} />
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                              <div>
-                                <p className="text-xs text-zinc-500">Amount</p>
-                                <p className="font-mono text-zinc-200">{formatYtest(ch.amount ?? "0")} ytest.usd</p>
-                              </div>
-                              <div>
-                                <p className="text-xs text-zinc-500">Token</p>
-                                <p className="font-mono text-zinc-400 text-xs">{ch.token ? formatAddress(ch.token) : "—"}</p>
-                              </div>
-                              <div>
-                                <p className="text-xs text-zinc-500">Chain</p>
-                                <p className="text-zinc-400">{ch.chainId ?? "—"}</p>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${tx.status === "confirmed" ? "bg-green-400" :
+                                tx.status === "failed" ? "bg-red-400" :
+                                  "bg-amber-400 animate-pulse"
+                                }`} />
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-zinc-300">{tx.label}</p>
+                                <p className="text-xs text-zinc-500">{new Date(tx.timestamp).toLocaleTimeString()}</p>
                               </div>
                             </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono text-xs text-zinc-500">
+                                {tx.hash.slice(0, 6)}…{tx.hash.slice(-4)}
+                              </span>
+                              <a
+                                href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-zinc-500 hover:text-amber-400"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
 
-                            {ch.status?.toLowerCase() === "open" && (
-                              <div className="flex items-center gap-2 mt-4 pt-3 border-t border-zinc-700/50">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => { setResizeChannelId(ch.channelId); setActiveTab("operations"); }}
-                                  className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10"
+                {/* ── Channels Tab ── */}
+                <TabsContent value="channels" className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-zinc-300">Your State Channels</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRefresh}
+                      disabled={isRefreshing}
+                      className="text-zinc-400 hover:text-white"
+                    >
+                      <RefreshCw className={`w-3 h-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
+                      Refresh
+                    </Button>
+                  </div>
+
+                  {channels.length === 0 ? (
+                    <div className="text-center py-12 space-y-4">
+                      <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
+                        <Network className="w-8 h-8 text-zinc-600" />
+                      </div>
+                      <div>
+                        <p className="text-zinc-400 font-medium">No channels found</p>
+                        <p className="text-zinc-600 text-sm mt-1">Create your first state channel to get started</p>
+                      </div>
+                      <Button
+                        onClick={() => setActiveTab("operations")}
+                        className="bg-amber-500 hover:bg-amber-600 text-black"
+                      >
+                        <PlusCircle className="w-4 h-4 mr-2" />
+                        Create Channel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {channels.filter((ch) => ch.channelId).map((ch) => (
+                        <motion.div
+                          key={ch.channelId}
+                          variants={slideIn}
+                          initial="hidden"
+                          animate="visible"
+                          className="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50 hover:border-zinc-600/50 transition-all"
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-zinc-700/50 flex items-center justify-center">
+                                <Network className="w-5 h-5 text-amber-400" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-sm text-zinc-300">
+                                    {ch.channelId?.slice(0, 8)}…{ch.channelId?.slice(-6)}
+                                  </span>
+                                  <CopyButton text={ch.channelId ?? ""} />
+                                  <a
+                                    href={`${ETHERSCAN_BASE}/address/${ch.channelId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-zinc-500 hover:text-amber-400 transition-colors"
+                                  >
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                </div>
+                                <p className="text-xs text-zinc-500">v{ch.version ?? 0}</p>
+                              </div>
+                            </div>
+                            <StatusBadge status={ch.status ?? "unknown"} />
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-4 text-sm">
+                            <div>
+                              <p className="text-xs text-zinc-500">Amount</p>
+                              <p className="font-mono text-zinc-200">{formatYtest(ch.amount ?? "0")} ytest.usd</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-zinc-500">Token</p>
+                              <p className="font-mono text-zinc-400 text-xs">{ch.token ? formatAddress(ch.token) : "—"}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-zinc-500">Chain</p>
+                              <p className="text-zinc-400">{ch.chainId ?? "—"}</p>
+                            </div>
+                          </div>
+
+                          {ch.status?.toLowerCase() === "open" && (
+                            <div className="flex items-center gap-2 mt-4 pt-3 border-t border-zinc-700/50">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => { setResizeChannelId(ch.channelId); setActiveTab("operations"); }}
+                                className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10"
+                              >
+                                <ArrowUpRight className="w-3 h-3 mr-1" />
+                                Fund
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => { setCloseChannelId(ch.channelId); setActiveTab("operations"); }}
+                                className="border-red-500/50 text-red-400 hover:bg-red-500/10"
+                              >
+                                <XIcon className="w-3 h-3 mr-1" />
+                                Close
+                              </Button>
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+
+                {/* ── Operations Tab ── */}
+                <TabsContent value="operations" className="space-y-5">
+                  <FinancialDashboard
+                    searchPlaceholder="Search operations, channels, or type a command..."
+                    expandedQuickAction={expandedQuickAction}
+                    onExpandedQuickActionChange={setExpandedQuickAction}
+                    quickActions={[
+                      {
+                        icon: PlusCircle,
+                        title: "Create Channel",
+                        description: "Open a new state channel",
+                        renderForm: () => (
+                          <>
+                            <Input
+                              type="number"
+                              value={createAmount}
+                              onChange={(e) => setCreateAmount(e.target.value)}
+                              placeholder="Initial amount (ytest.usd)"
+                              className={opInputClass}
+                            />
+                            <Button
+                              onClick={handleCreateChannel}
+                              disabled={isCreating || !createAmount || needsETH}
+                              className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
+                              size="sm"
+                            >
+                              {isCreating ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating…</>
+                              ) : (
+                                <><PlusCircle className="w-4 h-4 mr-2" />Create Channel</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                      {
+                        icon: Lock,
+                        title: "Deposit",
+                        description: "Fund custody account",
+                        renderForm: () => (
+                          <>
+                            <p className="text-xs text-zinc-500">
+                              Custody: {custodyBalance !== null ? formatYtest(custodyBalance) : "—"} ytest.usd
+                            </p>
+                            <Input
+                              type="number"
+                              value={depositAmount}
+                              onChange={(e) => setDepositAmount(e.target.value)}
+                              placeholder="Amount (ytest.usd)"
+                              className={opInputClass}
+                            />
+                            <Button
+                              onClick={handleDeposit}
+                              disabled={isDepositing || !depositAmount || needsETH}
+                              className={`${opButtonClass} bg-amber-600 hover:bg-amber-700 text-black`}
+                              size="sm"
+                            >
+                              {isDepositing ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Depositing…</>
+                              ) : (
+                                <><Lock className="w-4 h-4 mr-2" />Deposit</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                      {
+                        icon: ArrowUpRight,
+                        title: "Fund Channel",
+                        description: "Allocate to channel",
+                        renderForm: () => (
+                          <>
+                            {resizeError && (
+                              <div className="rounded-lg border border-red-500/35 bg-red-500/10 p-3 text-xs shadow-[0_6px_20px_rgba(127,29,29,0.2)]">
+                                <p className="text-red-300 break-words font-mono leading-relaxed">{resizeError}</p>
+                                <button
+                                  onClick={() => setResizeError(null)}
+                                  className="mt-2 inline-flex items-center rounded-md border border-red-400/30 px-2 py-1 text-[11px] text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200"
                                 >
-                                  <ArrowUpRight className="w-3 h-3 mr-1" />
-                                  Fund
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => { setCloseChannelId(ch.channelId); setActiveTab("operations"); }}
-                                  className="border-red-500/50 text-red-400 hover:bg-red-500/10"
-                                >
-                                  <XIcon className="w-3 h-3 mr-1" />
-                                  Close
-                                </Button>
+                                  Dismiss
+                                </button>
                               </div>
                             )}
-                          </motion.div>
+                            <select
+                              value={resizeChannelId}
+                              onChange={(e) => { setResizeChannelId(e.target.value); setResizeError(null); }}
+                              className={opSelectClass}
+                            >
+                              <option value="">Select channel…</option>
+                              {openChannels.map((ch) => (
+                                <option key={ch.channelId} value={ch.channelId}>
+                                  {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)} — {formatYtest(ch.amount)}
+                                </option>
+                              ))}
+                            </select>
+                            <Input
+                              type="number"
+                              value={resizeAmount}
+                              onChange={(e) => { setResizeAmount(e.target.value); setResizeError(null); }}
+                              placeholder="Amount (ytest.usd)"
+                              className={opInputClass}
+                            />
+                            <Button
+                              onClick={handleResizeChannel}
+                              disabled={isResizing || !resizeChannelId || !resizeAmount}
+                              className={`${opButtonClass} bg-sky-600 hover:bg-sky-700 text-white`}
+                              size="sm"
+                            >
+                              {isResizing ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Funding…</>
+                              ) : (
+                                <><ArrowUpRight className="w-4 h-4 mr-2" />Fund Channel</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                      {
+                        icon: Send,
+                        title: "Transfer",
+                        description: "Send off-chain",
+                        renderForm: () => (
+                          <>
+                            <p className="text-[11px] text-zinc-500">
+                              Gauge preset: <span className="font-mono text-amber-300">{suggestedTransferAmount} ytest.usd</span>
+                            </p>
+                            <Input
+                              value={transferDest}
+                              onChange={(e) => setTransferDest(e.target.value)}
+                              placeholder="Destination address (0x...)"
+                              className={opInputClass}
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input
+                                value={transferAsset}
+                                onChange={(e) => setTransferAsset(e.target.value)}
+                                placeholder="Asset"
+                                className={opInputClass}
+                              />
+                              <Input
+                                type="number"
+                                value={transferAmount}
+                                onChange={(e) => setTransferAmount(e.target.value)}
+                                placeholder="Amount"
+                                className={opInputClass}
+                              />
+                            </div>
+                            <Button
+                              onClick={handleTransfer}
+                              disabled={isTransferring || !transferDest || !transferAmount}
+                              className={`${opButtonClass} bg-violet-600 hover:bg-violet-700 text-white`}
+                              size="sm"
+                            >
+                              {isTransferring ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Transferring…</>
+                              ) : (
+                                <><Send className="w-4 h-4 mr-2" />Transfer</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                    ]}
+                    recentActivity={transactions.slice(0, 5).map((tx) => {
+                      const isPositive = tx.label.toLowerCase().includes("deposit") || tx.label.toLowerCase().includes("fund");
+                      const StatusIcon = tx.status === "confirmed" ? CheckCircle2 : tx.status === "failed" ? XIcon : Loader2;
+                      return {
+                        icon: (
+                          <div className={`w-9 h-9 flex items-center justify-center rounded-full text-sm ${tx.status === "confirmed"
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : tx.status === "failed"
+                              ? "bg-red-500/15 text-red-400"
+                              : "bg-amber-500/15 text-amber-400"
+                            }`}>
+                            <StatusIcon className={`w-4 h-4 ${tx.status === "pending" ? "animate-spin" : ""}`} />
+                          </div>
+                        ),
+                        title: tx.label,
+                        time: new Date(tx.timestamp).toLocaleString(),
+                        amount: isPositive ? 1 : -1,
+                      };
+                    })}
+                    financialServices={[
+                      {
+                        icon: XIcon,
+                        title: "Close Channel",
+                        description: "Settle & close open channels",
+                        hasAction: true,
+                        renderForm: () => (
+                          <>
+                            <select
+                              value={closeChannelId}
+                              onChange={(e) => setCloseChannelId(e.target.value)}
+                              className={opSelectClass}
+                            >
+                              <option value="">Select channel…</option>
+                              {openChannels.map((ch) => (
+                                <option key={ch.channelId} value={ch.channelId}>
+                                  {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)}
+                                </option>
+                              ))}
+                            </select>
+                            <Button
+                              onClick={handleCloseChannel}
+                              disabled={isClosing || !closeChannelId || needsETH}
+                              variant="destructive"
+                              className={opButtonClass}
+                              size="sm"
+                            >
+                              {isClosing ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Closing…</>
+                              ) : (
+                                <><XIcon className="w-4 h-4 mr-2" />Close Channel</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                      {
+                        icon: ArrowDownRight,
+                        title: "Withdraw",
+                        description: "Withdraw from custody to wallet",
+                        hasAction: true,
+                        renderForm: () => (
+                          <>
+                            <Input
+                              type="number"
+                              value={withdrawAmount}
+                              onChange={(e) => setWithdrawAmount(e.target.value)}
+                              placeholder="Amount (ytest.usd)"
+                              className={opInputClass}
+                            />
+                            <Button
+                              onClick={handleWithdraw}
+                              disabled={isWithdrawing || !withdrawAmount || needsETH}
+                              className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
+                              size="sm"
+                            >
+                              {isWithdrawing ? (
+                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Withdrawing…</>
+                              ) : (
+                                <><ArrowDownRight className="w-4 h-4 mr-2" />Withdraw</>
+                              )}
+                            </Button>
+                          </>
+                        ),
+                      },
+                      {
+                        icon: Droplets,
+                        title: "Faucet",
+                        description: "Request testnet tokens",
+                        onClick: handleRequestFaucet,
+                      },
+                      {
+                        icon: RefreshCw,
+                        title: "Sync Balances",
+                        description: "Refresh all balances & channels",
+                        onClick: handleRefresh,
+                      },
+                    ]}
+                  />
+                </TabsContent>
+
+              {/* ── Transactions Tab ── */}
+              <TabsContent value="transactions" className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-300">Transaction History</h3>
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
+                    {transactions.length} total
+                  </Badge>
+                </div>
+                {transactions.length === 0 ? (
+                  <div className="text-center py-12 space-y-4">
+                    <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
+                      <Receipt className="w-8 h-8 text-zinc-600" />
+                    </div>
+                    <div>
+                      <p className="text-zinc-400 font-medium">No transactions yet</p>
+                      <p className="text-zinc-600 text-sm mt-1">Transactions will appear here as you create channels, deposit, and transfer</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-zinc-700/50">
+                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Status</th>
+                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Operation</th>
+                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">TX Hash</th>
+                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Time</th>
+                          <th className="text-right py-2 px-3 text-xs font-medium text-zinc-500">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {transactions.map((tx) => (
+                          <tr key={tx.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2.5 h-2.5 rounded-full ${tx.status === "confirmed" ? "bg-green-400" :
+                                  tx.status === "failed" ? "bg-red-400" :
+                                    "bg-amber-400 animate-pulse"
+                                  }`} />
+                                <span className={`text-xs font-medium capitalize ${tx.status === "confirmed" ? "text-green-400" :
+                                  tx.status === "failed" ? "text-red-400" :
+                                    "text-amber-400"
+                                  }`}>
+                                  {tx.status}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="text-zinc-200 font-medium">{tx.label}</span>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs text-zinc-400">
+                                  {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
+                                </span>
+                                <CopyButton text={tx.hash} />
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="text-xs text-zinc-500">
+                                {new Date(tx.timestamp).toLocaleString()}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <a
+                                href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+                              >
+                                Etherscan <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* ── Activity Tab ── */}
+              <TabsContent value="markets" className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-300">Network Activity</h3>
+                  <p className="text-xs text-zinc-500">Live stream from your Yellow session and tx pipeline</p>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  <div className="xl:col-span-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                    {logs.length === 0 ? (
+                      <div className="h-full min-h-52 flex items-center justify-center text-center">
+                        <p className="text-sm text-zinc-500">
+                          No network logs yet. Run an operation to populate activity.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+                        {logs.slice(-25).reverse().map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span
+                                className={`text-[11px] font-mono ${entry.level === "error"
+                                  ? "text-red-400"
+                                  : entry.level === "warn"
+                                    ? "text-amber-400"
+                                    : "text-emerald-400"
+                                  }`}
+                              >
+                                {entry.level.toUpperCase()}
+                              </span>
+                              <span className="text-[11px] text-zinc-500">
+                                {new Date(entry.timestamp).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            <p className="text-xs text-zinc-300 mt-1 break-words">{entry.message}</p>
+                          </div>
                         ))}
                       </div>
                     )}
-                  </TabsContent>
+                  </div>
 
-                  {/* ── Operations Tab ── */}
-                  <TabsContent value="operations" className="space-y-5">
-                    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-                      <motion.div
-                        variants={slideIn}
-                        initial="hidden"
-                        animate="visible"
-                        className="xl:col-span-6 rounded-2xl border border-zinc-800/90 bg-zinc-900/40 p-4 space-y-4 h-full"
-                      >
-                        <div>
-                          <h3 className="text-sm font-semibold text-zinc-200">Channel Setup</h3>
-                          <p className="text-xs text-zinc-500 mt-1">
-                            Create a channel, then move wallet funds into custody.
-                          </p>
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                      <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
+                        Transaction Health
+                      </h4>
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                          <span className="text-xs text-zinc-500">Confirmed</span>
+                          <span className="font-mono text-sm text-emerald-400">{confirmedTxCount}</span>
                         </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3 h-full flex flex-col">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <PlusCircle className="w-4 h-4 text-emerald-400" />
-                            <span className="text-sm font-medium">Create Channel</span>
-                          </div>
-                          <Input
-                            type="number"
-                            value={createAmount}
-                            onChange={(e) => setCreateAmount(e.target.value)}
-                            placeholder="Initial amount (ytest.usd)"
-                            className="bg-zinc-900 border-zinc-800"
-                          />
-                          <Button
-                            onClick={handleCreateChannel}
-                            disabled={isCreating || !createAmount || needsETH}
-                            className="w-full mt-auto bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            {isCreating ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Creating…
-                              </>
-                            ) : (
-                              <>
-                                <PlusCircle className="w-4 h-4 mr-2" />
-                                Create Channel
-                              </>
-                            )}
-                          </Button>
+                        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                          <span className="text-xs text-zinc-500">Pending</span>
+                          <span className="font-mono text-sm text-amber-400">{pendingTxCount}</span>
                         </div>
-
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3 h-full flex flex-col">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <Lock className="w-4 h-4 text-amber-400" />
-                            <span className="text-sm font-medium">Deposit to Custody</span>
-                          </div>
-                          <p className="text-xs text-zinc-500">
-                            Custody: {custodyBalance !== null ? formatYtest(custodyBalance) : "—"} ytest.usd
-                          </p>
-                          <Input
-                            type="number"
-                            value={depositAmount}
-                            onChange={(e) => setDepositAmount(e.target.value)}
-                            placeholder="Amount (ytest.usd)"
-                            className="bg-zinc-900 border-zinc-800"
-                          />
-                          <Button
-                            onClick={handleDeposit}
-                            disabled={isDepositing || !depositAmount || needsETH}
-                            className="w-full mt-auto bg-amber-600 hover:bg-amber-700 text-black"
-                          >
-                            {isDepositing ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Depositing…
-                              </>
-                            ) : (
-                              <>
-                                <Lock className="w-4 h-4 mr-2" />
-                                Deposit to Custody
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                        </div>
-                      </motion.div>
-
-                      <motion.div
-                        variants={slideIn}
-                        initial="hidden"
-                        animate="visible"
-                        className="xl:col-span-6 rounded-2xl border border-zinc-800/90 bg-zinc-900/40 p-4 space-y-4 h-full"
-                      >
-                        <div>
-                          <h3 className="text-sm font-semibold text-zinc-200">Fund and Transfer</h3>
-                          <p className="text-xs text-zinc-500 mt-1">
-                            Allocate from custody to channel, then send off-chain.
-                          </p>
-                        </div>
-
-                        {resizeError && (
-                          <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm">
-                            <p className="font-medium text-red-300 mb-1">Fund failed</p>
-                            <p className="text-red-200/90 break-words font-mono text-xs max-h-24 overflow-y-auto">
-                              {resizeError}
-                            </p>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="mt-2 text-red-300 hover:text-red-200"
-                              onClick={() => setResizeError(null)}
-                            >
-                              Dismiss
-                            </Button>
-                          </div>
-                        )}
-
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <ArrowUpRight className="w-4 h-4 text-sky-400" />
-                            <span className="text-sm font-medium">Fund Channel</span>
-                          </div>
-                          <select
-                            value={resizeChannelId}
-                            onChange={(e) => {
-                              setResizeChannelId(e.target.value);
-                              setResizeError(null);
-                            }}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-md p-2 text-sm text-white"
-                          >
-                            <option value="">Select channel…</option>
-                            {openChannels.map((ch) => (
-                              <option key={ch.channelId} value={ch.channelId}>
-                                {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)} — {formatYtest(ch.amount)}
-                              </option>
-                            ))}
-                          </select>
-                          <Input
-                            type="number"
-                            value={resizeAmount}
-                            onChange={(e) => {
-                              setResizeAmount(e.target.value);
-                              setResizeError(null);
-                            }}
-                            placeholder="Amount (ytest.usd)"
-                            className="bg-zinc-900 border-zinc-800"
-                          />
-                          <Button
-                            onClick={handleResizeChannel}
-                            disabled={isResizing || !resizeChannelId || !resizeAmount}
-                            className="w-full bg-sky-600 hover:bg-sky-700 text-white"
-                          >
-                            {isResizing ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Funding…
-                              </>
-                            ) : (
-                              <>
-                                <ArrowUpRight className="w-4 h-4 mr-2" />
-                                Fund Channel
-                              </>
-                            )}
-                          </Button>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <Send className="w-4 h-4 text-violet-400" />
-                            <span className="text-sm font-medium">Transfer</span>
-                          </div>
-                          <Input
-                            value={transferDest}
-                            onChange={(e) => setTransferDest(e.target.value)}
-                            placeholder="Destination address (0x...)"
-                            className="bg-zinc-900 border-zinc-800"
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              value={transferAsset}
-                              onChange={(e) => setTransferAsset(e.target.value)}
-                              placeholder="Asset"
-                              className="bg-zinc-900 border-zinc-800"
-                            />
-                            <Input
-                              type="number"
-                              value={transferAmount}
-                              onChange={(e) => setTransferAmount(e.target.value)}
-                              placeholder="Amount"
-                              className="bg-zinc-900 border-zinc-800"
-                            />
-                          </div>
-                          <Button
-                            onClick={handleTransfer}
-                            disabled={isTransferring || !transferDest || !transferAmount}
-                            className="w-full bg-violet-600 hover:bg-violet-700 text-white"
-                          >
-                            {isTransferring ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Transferring…
-                              </>
-                            ) : (
-                              <>
-                                <Send className="w-4 h-4 mr-2" />
-                                Transfer
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                      </motion.div>
-                    </div>
-
-                    <motion.div
-                      variants={slideIn}
-                      initial="hidden"
-                      animate="visible"
-                      className="rounded-2xl border border-zinc-800/90 bg-zinc-900/40 p-4"
-                    >
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-fr">
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3 h-full flex flex-col">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <XIcon className="w-4 h-4 text-rose-400" />
-                            <span className="text-sm font-medium">Close Channel</span>
-                          </div>
-                          <select
-                            value={closeChannelId}
-                            onChange={(e) => setCloseChannelId(e.target.value)}
-                            className="w-full bg-zinc-900 border border-zinc-800 rounded-md p-2 text-sm text-white"
-                          >
-                            <option value="">Select channel…</option>
-                            {openChannels.map((ch) => (
-                              <option key={ch.channelId} value={ch.channelId}>
-                                {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)}
-                              </option>
-                            ))}
-                          </select>
-                          <Button
-                            onClick={handleCloseChannel}
-                            disabled={isClosing || !closeChannelId || needsETH}
-                            variant="destructive"
-                            className="w-full mt-auto"
-                          >
-                            {isClosing ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Closing…
-                              </>
-                            ) : (
-                              <>
-                                <XIcon className="w-4 h-4 mr-2" />
-                                Close Channel
-                              </>
-                            )}
-                          </Button>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-4 space-y-3 h-full flex flex-col">
-                          <div className="flex items-center gap-2 text-zinc-300">
-                            <ArrowDownRight className="w-4 h-4 text-emerald-400" />
-                            <span className="text-sm font-medium">Withdraw from Custody</span>
-                          </div>
-                          <Input
-                            type="number"
-                            value={withdrawAmount}
-                            onChange={(e) => setWithdrawAmount(e.target.value)}
-                            placeholder="Amount (ytest.usd)"
-                            className="bg-zinc-900 border-zinc-800"
-                          />
-                          <Button
-                            onClick={handleWithdraw}
-                            disabled={isWithdrawing || !withdrawAmount || needsETH}
-                            className="w-full mt-auto bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            {isWithdrawing ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Withdrawing…
-                              </>
-                            ) : (
-                              <>
-                                <ArrowDownRight className="w-4 h-4 mr-2" />
-                                Withdraw
-                              </>
-                            )}
-                          </Button>
+                        <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                          <span className="text-xs text-zinc-500">Open channels</span>
+                          <span className="font-mono text-sm text-zinc-200">{openChannels.length}</span>
                         </div>
                       </div>
-                    </motion.div>
-                  </TabsContent>
-
-                  {/* ── Transactions Tab ── */}
-                  <TabsContent value="transactions" className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-zinc-300">Transaction History</h3>
-                      <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
-                        {transactions.length} total
-                      </Badge>
                     </div>
-                    {transactions.length === 0 ? (
-                      <div className="text-center py-12 space-y-4">
-                        <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
-                          <Receipt className="w-8 h-8 text-zinc-600" />
-                        </div>
-                        <div>
-                          <p className="text-zinc-400 font-medium">No transactions yet</p>
-                          <p className="text-zinc-600 text-sm mt-1">Transactions will appear here as you create channels, deposit, and transfer</p>
-                        </div>
-                      </div>
+
+                    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+                      <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase mb-3">
+                        Route
+                      </h4>
+                      <LocationMap
+                        location="Settlement Corridor"
+                        coordinates={`${openChannels.length} open channel(s) · ${pendingTxCount} pending tx`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </GlowCard>
+          </motion.div>
+        )}
+
+      {(isConnected || primaryWallet?.address) && (
+        <motion.div variants={fadeIn} initial="hidden" animate="visible">
+          <GlowCard className="p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-semibold text-zinc-300">Workflow Progress</p>
+              <Badge variant="outline" className="border-zinc-700 text-zinc-400">
+                Step {currentStep + 1}/{TIMELINE_STEPS.length}
+              </Badge>
+            </div>
+            <Progress value={(currentStep / (TIMELINE_STEPS.length - 1)) * 100} className="h-1.5 mb-4" />
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2">
+              {TIMELINE_STEPS.map((step, i) => {
+                const isComplete = currentStep > i;
+                const isActive = currentStep === i;
+                const Icon = step.icon;
+                return (
+                  <motion.div
+                    key={step.label}
+                    initial={{ opacity: 0.5, y: 8 }}
+                    animate={{
+                      opacity: isComplete || isActive ? 1 : 0.5,
+                      y: 0,
+                    }}
+                    transition={{ duration: 0.25, delay: i * 0.03 }}
+                    className={`rounded-lg border p-2 text-center ${isComplete
+                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      : isActive
+                        ? "border-amber-500/40 bg-amber-500/10"
+                        : "border-zinc-800 bg-zinc-900/40"
+                      }`}
+                  >
+                    <div className="mx-auto w-7 h-7 rounded-md flex items-center justify-center mb-1 bg-black/30">
+                      {isComplete ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Icon className="w-3.5 h-3.5 text-zinc-400" />}
+                    </div>
+                    <p className="text-[10px] leading-tight text-zinc-400">{step.label}</p>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </GlowCard>
+        </motion.div>
+      )}
+
+      {/* ── Network Config ── */}
+      {networkConfig && (
+        <motion.div variants={fadeIn} initial="hidden" animate="visible">
+          <GlowCard className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Info className="w-4 h-4 text-zinc-400" />
+              <span className="text-sm font-semibold text-zinc-400">Network Configuration</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <span className="text-zinc-500">Custody Contract</span>
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="font-mono text-zinc-300">{formatAddress(networkConfig.custody)}</span>
+                  <CopyButton text={networkConfig.custody} />
+                </div>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <span className="text-zinc-500">Adjudicator</span>
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="font-mono text-zinc-300">{formatAddress(networkConfig.adjudicator)}</span>
+                  <CopyButton text={networkConfig.adjudicator} />
+                </div>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg p-3">
+                <span className="text-zinc-500">WebSocket</span>
+                <p className="font-mono text-zinc-300 mt-1 break-all">{networkConfig.wsUrl}</p>
+              </div>
+            </div>
+          </GlowCard>
+        </motion.div>
+      )}
+    </main>
+
+      {/* ── Sticky Debug Log Footer Tray ── */ }
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800">
+          {/* Minimized bar */}
+          <button
+            onClick={() => setLogExpanded(!logExpanded)}
+            className="w-full px-4 py-2 flex items-center justify-between text-left hover:bg-zinc-900/50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Terminal className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-xs font-medium text-zinc-400">Debug Log</span>
+              <Badge variant="outline" className="border-zinc-700 text-zinc-500 text-[10px] px-1.5 py-0">
+                {logs.length}
+              </Badge>
+              {logs.some(l => l.level === "error") && (
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              )}
+              {logs.length > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setLogs([]); }}
+                  className="text-[10px] text-zinc-600 hover:text-zinc-300 ml-1 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {logExpanded
+              ? <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
+              : <ChevronUp className="w-3.5 h-3.5 text-zinc-500" />
+            }
+          </button>
+
+          {/* Expanded log panel */}
+          <AnimatePresence>
+            {logExpanded && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-3">
+                  <div className="bg-black/60 rounded-lg border border-zinc-800 p-3 max-h-[35vh] overflow-y-auto font-mono text-xs space-y-1">
+                    {logs.length === 0 ? (
+                      <p className="text-zinc-600">No log entries yet. Connect to Yellow Network to start.</p>
                     ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-zinc-700/50">
-                              <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Status</th>
-                              <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Operation</th>
-                              <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">TX Hash</th>
-                              <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Time</th>
-                              <th className="text-right py-2 px-3 text-xs font-medium text-zinc-500">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {transactions.map((tx) => (
-                              <tr key={tx.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-2">
-                                    <div className={`w-2.5 h-2.5 rounded-full ${tx.status === "confirmed" ? "bg-green-400" :
-                                        tx.status === "failed" ? "bg-red-400" :
-                                          "bg-amber-400 animate-pulse"
-                                      }`} />
-                                    <span className={`text-xs font-medium capitalize ${tx.status === "confirmed" ? "text-green-400" :
-                                        tx.status === "failed" ? "text-red-400" :
-                                          "text-amber-400"
-                                      }`}>
-                                      {tx.status}
-                                    </span>
-                                  </div>
-                                </td>
-                                <td className="py-3 px-3">
-                                  <span className="text-zinc-200 font-medium">{tx.label}</span>
-                                </td>
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-mono text-xs text-zinc-400">
-                                      {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
-                                    </span>
-                                    <CopyButton text={tx.hash} />
-                                  </div>
-                                </td>
-                                <td className="py-3 px-3">
-                                  <span className="text-xs text-zinc-500">
-                                    {new Date(tx.timestamp).toLocaleString()}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-3 text-right">
+                      logs.map((entry) => {
+                        const txMatch = entry.message?.match(/TX:\s*(0x[a-fA-F0-9]{64})/);
+                        return (
+                          <div
+                            key={entry.id}
+                            className={`flex gap-2 ${entry.level === "error" ? "bg-red-500/5 rounded px-1 -mx-1" : ""}`}
+                          >
+                            <span className="text-zinc-600 shrink-0">
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span className={`shrink-0 ${entry.level === "error" ? "text-red-400" :
+                              entry.level === "warn" ? "text-amber-400" : "text-green-400"
+                              }`}>
+                              [{entry.level.toUpperCase()}]
+                            </span>
+                            <span className="text-zinc-300 break-all">
+                              {txMatch ? (
+                                <>
+                                  {entry.message.split(txMatch[0])[0]}
                                   <a
-                                    href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                    href={`${ETHERSCAN_BASE}/tx/${txMatch[1]}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+                                    className="text-amber-400 hover:text-amber-300 underline"
                                   >
-                                    Etherscan <ExternalLink className="w-3 h-3" />
+                                    TX: {txMatch[1].slice(0, 8)}…
                                   </a>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                                </>
+                              ) : entry.message}
+                            </span>
+                          </div>
+                        );
+                      })
                     )}
-                  </TabsContent>
-
-                  {/* ── Activity Tab ── */}
-                  <TabsContent value="markets" className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-zinc-300">Network Activity</h3>
-                      <p className="text-xs text-zinc-500">Live stream from your Yellow session and tx pipeline</p>
-                    </div>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                      <div className="xl:col-span-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                        {logs.length === 0 ? (
-                          <div className="h-full min-h-52 flex items-center justify-center text-center">
-                            <p className="text-sm text-zinc-500">
-                              No network logs yet. Run an operation to populate activity.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                            {logs.slice(-25).reverse().map((entry) => (
-                              <div
-                                key={entry.id}
-                                className="rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span
-                                    className={`text-[11px] font-mono ${
-                                      entry.level === "error"
-                                        ? "text-red-400"
-                                        : entry.level === "warn"
-                                          ? "text-amber-400"
-                                          : "text-emerald-400"
-                                    }`}
-                                  >
-                                    {entry.level.toUpperCase()}
-                                  </span>
-                                  <span className="text-[11px] text-zinc-500">
-                                    {new Date(entry.timestamp).toLocaleTimeString()}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-zinc-300 mt-1 break-words">{entry.message}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                          <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
-                            Transaction Health
-                          </h4>
-                          <div className="mt-3 space-y-2">
-                            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
-                              <span className="text-xs text-zinc-500">Confirmed</span>
-                              <span className="font-mono text-sm text-emerald-400">{confirmedTxCount}</span>
-                            </div>
-                            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
-                              <span className="text-xs text-zinc-500">Pending</span>
-                              <span className="font-mono text-sm text-amber-400">{pendingTxCount}</span>
-                            </div>
-                            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
-                              <span className="text-xs text-zinc-500">Open channels</span>
-                              <span className="font-mono text-sm text-zinc-200">{openChannels.length}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                          <h4 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase mb-3">
-                            Route
-                          </h4>
-                          <LocationMap
-                            location="Settlement Corridor"
-                            coordinates={`${openChannels.length} open channel(s) · ${pendingTxCount} pending tx`}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </GlowCard>
-            </motion.div>
-          )}
-
-          {(isConnected || primaryWallet?.address) && (
-            <motion.div variants={fadeIn} initial="hidden" animate="visible">
-              <GlowCard className="p-4">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <p className="text-sm font-semibold text-zinc-300">Workflow Progress</p>
-                  <Badge variant="outline" className="border-zinc-700 text-zinc-400">
-                    Step {currentStep + 1}/{TIMELINE_STEPS.length}
-                  </Badge>
-                </div>
-                <Progress value={(currentStep / (TIMELINE_STEPS.length - 1)) * 100} className="h-1.5 mb-4" />
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2">
-                  {TIMELINE_STEPS.map((step, i) => {
-                    const isComplete = currentStep > i;
-                    const isActive = currentStep === i;
-                    const Icon = step.icon;
-                    return (
-                      <motion.div
-                        key={step.label}
-                        initial={{ opacity: 0.5, y: 8 }}
-                        animate={{
-                          opacity: isComplete || isActive ? 1 : 0.5,
-                          y: 0,
-                        }}
-                        transition={{ duration: 0.25, delay: i * 0.03 }}
-                        className={`rounded-lg border p-2 text-center ${
-                          isComplete
-                            ? "border-emerald-500/40 bg-emerald-500/10"
-                            : isActive
-                              ? "border-amber-500/40 bg-amber-500/10"
-                              : "border-zinc-800 bg-zinc-900/40"
-                        }`}
-                      >
-                        <div className="mx-auto w-7 h-7 rounded-md flex items-center justify-center mb-1 bg-black/30">
-                          {isComplete ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Icon className="w-3.5 h-3.5 text-zinc-400" />}
-                        </div>
-                        <p className="text-[10px] leading-tight text-zinc-400">{step.label}</p>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </GlowCard>
-            </motion.div>
-          )}
-
-          {/* ── Network Config ── */}
-          {networkConfig && (
-            <motion.div variants={fadeIn} initial="hidden" animate="visible">
-              <GlowCard className="p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Info className="w-4 h-4 text-zinc-400" />
-                  <span className="text-sm font-semibold text-zinc-400">Network Configuration</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div className="bg-zinc-800/50 rounded-lg p-3">
-                    <span className="text-zinc-500">Custody Contract</span>
-                    <div className="flex items-center gap-1 mt-1">
-                      <span className="font-mono text-zinc-300">{formatAddress(networkConfig.custody)}</span>
-                      <CopyButton text={networkConfig.custody} />
-                    </div>
-                  </div>
-                  <div className="bg-zinc-800/50 rounded-lg p-3">
-                    <span className="text-zinc-500">Adjudicator</span>
-                    <div className="flex items-center gap-1 mt-1">
-                      <span className="font-mono text-zinc-300">{formatAddress(networkConfig.adjudicator)}</span>
-                      <CopyButton text={networkConfig.adjudicator} />
-                    </div>
-                  </div>
-                  <div className="bg-zinc-800/50 rounded-lg p-3">
-                    <span className="text-zinc-500">WebSocket</span>
-                    <p className="font-mono text-zinc-300 mt-1 break-all">{networkConfig.wsUrl}</p>
+                    <div ref={logEndRef} />
                   </div>
                 </div>
-              </GlowCard>
-            </motion.div>
-          )}
-        </main>
-
-        {/* ── Sticky Debug Log Footer Tray ── */}
-        <div className="fixed bottom-0 left-0 right-0 z-50">
-          <div className="bg-zinc-950/95 backdrop-blur-md border-t border-zinc-800">
-            {/* Minimized bar */}
-            <button
-              onClick={() => setLogExpanded(!logExpanded)}
-              className="w-full px-4 py-2 flex items-center justify-between text-left hover:bg-zinc-900/50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Terminal className="w-3.5 h-3.5 text-amber-400" />
-                <span className="text-xs font-medium text-zinc-400">Debug Log</span>
-                <Badge variant="outline" className="border-zinc-700 text-zinc-500 text-[10px] px-1.5 py-0">
-                  {logs.length}
-                </Badge>
-                {logs.some(l => l.level === "error") && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                )}
-                {logs.length > 0 && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setLogs([]); }}
-                    className="text-[10px] text-zinc-600 hover:text-zinc-300 ml-1 px-1.5 py-0.5 rounded border border-zinc-800 hover:border-zinc-600"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              {logExpanded
-                ? <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
-                : <ChevronUp className="w-3.5 h-3.5 text-zinc-500" />
-              }
-            </button>
-
-            {/* Expanded log panel */}
-            <AnimatePresence>
-              {logExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden"
-                >
-                  <div className="px-4 pb-3">
-                    <div className="bg-black/60 rounded-lg border border-zinc-800 p-3 max-h-[35vh] overflow-y-auto font-mono text-xs space-y-1">
-                      {logs.length === 0 ? (
-                        <p className="text-zinc-600">No log entries yet. Connect to Yellow Network to start.</p>
-                      ) : (
-                        logs.map((entry) => {
-                          const txMatch = entry.message?.match(/TX:\s*(0x[a-fA-F0-9]{64})/);
-                          return (
-                            <div
-                              key={entry.id}
-                              className={`flex gap-2 ${entry.level === "error" ? "bg-red-500/5 rounded px-1 -mx-1" : ""}`}
-                            >
-                              <span className="text-zinc-600 shrink-0">
-                                {new Date(entry.timestamp).toLocaleTimeString()}
-                              </span>
-                              <span className={`shrink-0 ${entry.level === "error" ? "text-red-400" :
-                                  entry.level === "warn" ? "text-amber-400" : "text-green-400"
-                                }`}>
-                                [{entry.level.toUpperCase()}]
-                              </span>
-                              <span className="text-zinc-300 break-all">
-                                {txMatch ? (
-                                  <>
-                                    {entry.message.split(txMatch[0])[0]}
-                                    <a
-                                      href={`${ETHERSCAN_BASE}/tx/${txMatch[1]}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-amber-400 hover:text-amber-300 underline"
-                                    >
-                                      TX: {txMatch[1].slice(0, 8)}…
-                                    </a>
-                                  </>
-                                ) : entry.message}
-                              </span>
-                            </div>
-                          );
-                        })
-                      )}
-                      <div ref={logEndRef} />
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-
-        <Footer />
       </div>
+
+      <Footer />
+    </div >
   );
 }
