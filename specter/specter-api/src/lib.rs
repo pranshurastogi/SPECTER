@@ -121,7 +121,7 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
         axum::http::header::HeaderName::from_static("x-api-key"),
     ]);
 
-    if origins.len() == 1 && origins[0] == "*" {
+    if origins.iter().any(|o| o == "*") {
         // Dev mode: allow all
         CorsLayer::new()
             .allow_origin(AllowOrigin::any())
