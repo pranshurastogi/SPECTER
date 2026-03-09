@@ -28,7 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=builder /app/target/release/specter /app/specter
 
-EXPOSE 3001
+EXPOSE 8080
 
-# PORT is read from env by the binary via clap (defaults to 3001)
+# Cloud Run sets PORT=8080; the binary reads it via clap/env
+ENV PORT=8080
 CMD ["/app/specter", "serve"]

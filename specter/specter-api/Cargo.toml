@@ -37,6 +37,10 @@ tracing-subscriber = { workspace = true }
 # Random
 rand = { workspace = true }
 
+# Security
+governor = { workspace = true }
+dashmap = { workspace = true }
+
 # Config
 dotenvy = "0.15"
 

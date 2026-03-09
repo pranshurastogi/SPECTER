@@ -17,12 +17,81 @@ pub struct ApiConfig {
     pub pinata_gateway_token: String,
     pub sui_rpc_url: String,
     pub enable_cache: bool,
+    /// Security configuration
+    pub security: SecurityConfig,
+}
+
+/// Production security settings (loaded from environment).
+#[derive(Clone, Debug)]
+pub struct SecurityConfig {
+    /// API key required for POST/PUT/DELETE requests. None = no auth (dev mode).
+    pub api_key: Option<String>,
+    /// Allowed CORS origins (comma-separated). "*" = allow all (dev mode).
+    pub allowed_origins: Vec<String>,
+    /// Rate limit: requests per second per IP.
+    pub rate_limit_rps: u32,
+    /// Rate limit: burst size per IP.
+    pub rate_limit_burst: u32,
+    /// Max request body size in bytes (default: 1 MB).
+    pub max_body_size: usize,
 }
 
 const DEFAULT_ETH_MAINNET_RPC: &str = "https://ethereum.publicnode.com";
 const DEFAULT_ETH_SEPOLIA_RPC: &str = "https://ethereum-sepolia-rpc.publicnode.com";
 const DEFAULT_SUI_MAINNET_RPC: &str = "https://fullnode.mainnet.sui.io:443";
 const DEFAULT_SUI_TESTNET_RPC: &str = "https://fullnode.testnet.sui.io:443";
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            allowed_origins: vec!["*".into()],
+            rate_limit_rps: 10,
+            rate_limit_burst: 30,
+            max_body_size: 1024 * 1024, // 1 MB
+        }
+    }
+}
+
+impl SecurityConfig {
+    pub fn from_env() -> Self {
+        let api_key = std::env::var("API_KEY").ok().filter(|k| !k.is_empty());
+
+        let allowed_origins = std::env::var("ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| "*".into())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let rate_limit_rps = std::env::var("RATE_LIMIT_RPS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+
+        let rate_limit_burst = std::env::var("RATE_LIMIT_BURST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let max_body_size = std::env::var("MAX_BODY_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1024 * 1024);
+
+        if api_key.is_none() {
+            eprintln!("⚠️  API_KEY not set — POST endpoints are UNPROTECTED (dev mode)");
+        }
+
+        Self {
+            api_key,
+            allowed_origins,
+            rate_limit_rps,
+            rate_limit_burst,
+            max_body_size,
+        }
+    }
+}
 
 impl Default for ApiConfig {
     fn default() -> Self {
@@ -34,6 +103,7 @@ impl Default for ApiConfig {
             pinata_gateway_token: String::new(),
             sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
             enable_cache: true,
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -60,12 +130,15 @@ impl ApiConfig {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
-        // When use_testnet=true, use Sepolia RPC only (ETH_RPC_URL_SEPOLIA or default)
-        let rpc_url = if use_testnet {
-            std::env::var("ETH_RPC_URL_SEPOLIA").unwrap_or_else(|_| DEFAULT_ETH_SEPOLIA_RPC.into())
+        // ETH_RPC_URL is the primary env var for both testnet and mainnet;
+        // the user sets the appropriate URL based on USE_TESTNET.
+        let default_rpc = if use_testnet {
+            DEFAULT_ETH_SEPOLIA_RPC
         } else {
-            std::env::var("ETH_RPC_URL").unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into())
+            DEFAULT_ETH_MAINNET_RPC
         };
+        let rpc_url =
+            std::env::var("ETH_RPC_URL").unwrap_or_else(|_| default_rpc.into());
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
             if use_testnet {
@@ -92,6 +165,7 @@ impl ApiConfig {
             enable_cache: std::env::var("ENABLE_CACHE")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
+            security: SecurityConfig::from_env(),
         }
     }
 }
@@ -137,7 +211,8 @@ impl AppState {
         let yellow_config = YellowConfig {
             ws_url: std::env::var("YELLOW_WS_URL")
                 .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
-            rpc_url: std::env::var("ETH_RPC_URL_SEPOLIA")
+            rpc_url: std::env::var("ALCHEMY_RPC_URL")
+                .or_else(|_| std::env::var("ETH_RPC_URL"))
                 .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
             chain_id: std::env::var("YELLOW_CHAIN_ID")
                 .ok()
