@@ -30,6 +30,8 @@ import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
 import { CopyButton } from "@/components/ui/copy-button";
 import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
+import { UnlockSavedKeys } from "@/components/keys/UnlockSavedKeys";
+import { type DecryptedKeys } from "@/lib/keyVault";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -229,6 +231,26 @@ export default function ScanPayments() {
                   Keys are never stored on the backend. Use only on trusted devices.
                 </p>
               </div>
+
+              <UnlockSavedKeys
+                onUnlock={(dk: DecryptedKeys) => {
+                  setKeys({
+                    viewing_sk: dk.viewing_sk,
+                    spending_pk: dk.spending_pk,
+                    spending_sk: dk.spending_sk,
+                    view_tag: dk.view_tag,
+                  });
+                  setKeysPaste("");
+                  setLoadError(null);
+                }}
+              />
+
+              <div className="flex items-center gap-2 my-4">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground">or load from file</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+
               <div className="space-y-3">
                 <input
                   ref={fileInputRef}
