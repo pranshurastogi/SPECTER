@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   Globe,
   Wallet,
+  HardDrive,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
 import { formatAddress } from "@/lib/utils";
+import { SaveToDeviceDialog } from "@/components/keys/SaveToDeviceDialog";
 
 type SetupStep = 1 | 2 | 3 | 4;
 
@@ -65,6 +67,7 @@ export default function GenerateKeys() {
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
   const [keysDownloaded, setKeysDownloaded] = useState(false);
   const [showContinueWithoutDownloadWarning, setShowContinueWithoutDownloadWarning] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [ensUploading, setEnsUploading] = useState(false);
   const [ensTxHash, setEnsTxHash] = useState<string | null>(null);
   const [ensUploadResult, setEnsUploadResult] = useState<{ cid: string; text_record: string; ensName: string } | null>(null);
@@ -362,6 +365,31 @@ export default function GenerateKeys() {
                             className="w-full ring-2 ring-primary ring-offset-2 font-semibold shadow-md animate-in fade-in"
                             tooltip="Keep this file safe and never share it"
                             onDownload={() => setKeysDownloaded(true)}
+                          />
+                        )}
+
+                        <Button
+                          variant="outline"
+                          size="default"
+                          className="w-full"
+                          onClick={() => setShowSaveDialog(true)}
+                        >
+                          <HardDrive className="h-4 w-4 mr-2" />
+                          Save to this device (optional)
+                        </Button>
+
+                        {keysJson && (
+                          <SaveToDeviceDialog
+                            open={showSaveDialog}
+                            onOpenChange={setShowSaveDialog}
+                            keys={{
+                              spending_pk: keysJson.spending_pk,
+                              spending_sk: keysJson.spending_sk,
+                              viewing_pk: keysJson.viewing_pk,
+                              viewing_sk: keysJson.viewing_sk,
+                              meta_address: keysJson.meta_address,
+                              view_tag: keysJson.view_tag,
+                            }}
                           />
                         )}
 
