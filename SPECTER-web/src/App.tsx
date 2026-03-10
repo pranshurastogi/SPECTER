@@ -20,9 +20,9 @@ const App = () => (
       <BrowserRouter>
         <div className="relative min-h-screen bg-background">
           <AnimatedGridPattern
-            numSquares={24}
-            maxOpacity={0.06}
-            duration={5}
+            numSquares={124}
+            maxOpacity={0.09}
+            duration={10}
             className="absolute inset-0 z-0 [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%,white,transparent)]"
           />
           <div className="relative z-10">

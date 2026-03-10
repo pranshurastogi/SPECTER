@@ -28,7 +28,7 @@ export function Footer() {
             >
               <div className="h-6 w-6 flex items-center justify-center">
                 <img
-                  src="/SPECTER-logo.png"
+                  src="/Specterpq-dark.png"
                   alt=""
                   className="size-full scale-125 object-contain"
                   aria-hidden

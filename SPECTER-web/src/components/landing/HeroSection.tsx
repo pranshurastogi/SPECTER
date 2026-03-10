@@ -4,9 +4,10 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { HeadingScramble } from "@/components/ui/heading-scramble";
+import { ShutterText } from "@/components/ui/hero-shutter-text";
 
 const HEADLINE_PREFIX = "Privacy that survives ";
-const HEADLINE_HIGHLIGHT = "Quantum Computers";
+const HEADLINE_LINES = ["Quantum", "Computers"];
 
 export function HeroSection() {
   const [hoverTrigger, setHoverTrigger] = useState(0);
@@ -20,20 +21,47 @@ export function HeroSection() {
           transition={{ duration: 0.6 }}
           className="py-8"
         >
-          <div
-            className="min-h-[6rem] flex flex-wrap items-baseline justify-center gap-x-2 mb-8 cursor-default"
-            onMouseEnter={() => setHoverTrigger((t) => t + 1)}
-          >
-            <HeadingScramble
-              as="h1"
-              trigger={hoverTrigger}
-              className="font-display text-6xl md:text-8xl lg:text-9xl font-bold tracking-tight text-foreground"
+          {/*
+            Outer wrapper is a div — HeadingScramble renders the real <h1> tag.
+            Nesting <h1> inside <h1> is invalid HTML; the browser would auto-close
+            the outer one early, breaking the layout entirely.
+          */}
+          <div className="font-display font-bold tracking-tight mb-8 leading-[1.12]">
+            {/* Line 1 – scramble on hover; HeadingScramble owns the <h1> tag */}
+            <div
+              className="cursor-default"
+              onMouseEnter={() => setHoverTrigger((t) => t + 1)}
             >
-              {HEADLINE_PREFIX}
-            </HeadingScramble>
-            <span className="font-display text-6xl md:text-8xl lg:text-9xl font-bold tracking-tight gradient-text">
-              {HEADLINE_HIGHLIGHT}
-            </span>
+              <HeadingScramble
+                as="h1"
+                trigger={hoverTrigger}
+                className="block text-5xl md:text-7xl lg:text-8xl font-semibold text-foreground"
+              >
+                {HEADLINE_PREFIX}
+              </HeadingScramble>
+            </div>
+
+            {/* Lines 2 & 3 – shutter plays once on mount, never re-triggered by hover */}
+            <div className="relative">
+              {/* ambient glow */}
+              <span
+                aria-hidden
+                className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[200%] w-[110%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[80px]"
+                style={{
+                  background:
+                    "radial-gradient(ellipse 65% 65% at 25% 50%, hsl(263 70% 52% / 0.5), transparent 65%), radial-gradient(ellipse 65% 65% at 75% 50%, hsl(188 80% 44% / 0.4), transparent 65%)",
+                }}
+              />
+              {HEADLINE_LINES.map((word, lineIdx) => (
+                <div key={word}>
+                  <ShutterText
+                    text={word}
+                    trigger={lineIdx}
+                    className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight"
+                  />
+                </div>
+              ))}
+            </div>
           </div>
 
           <motion.p

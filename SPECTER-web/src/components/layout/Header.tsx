@@ -67,11 +67,11 @@ export function Header() {
 
   const logoElement = (
     <Link to="/" className="flex items-center gap-2 group">
-      <div className="h-6 w-6 flex items-center justify-center">
+      <div className="h-7 w-auto flex items-center justify-center">
         <img
-          src="/SPECTER-logo.png"
-          alt="SPECTER"
-          className="size-full scale-125 object-contain"
+          src="/dark-logo-large.png"
+          alt="SPECTER logo"
+          className="h-full w-auto object-contain"
         />
       </div>
       <span className="font-cursive text-lg sm:text-xl font-medium tracking-wide">

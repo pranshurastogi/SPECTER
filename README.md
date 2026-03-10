@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/SPECTER-logo-with-tagline.png" alt="SPECTER Logo" width="200">
+  <img src="assets/logo/dark-logo-large.png" alt="SPECTER Logo" width="260">
 
   **Post quantum stealth address protocol for Ethereum and Sui**
 

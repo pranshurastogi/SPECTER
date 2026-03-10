@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Dancing+Script:wght@400;500;600;700&family=Signika:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Dancing+Script:wght@400;500;600;700&family=Signika:wght@400;500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -8,23 +8,23 @@
 
 @layer base {
   :root {
-    /* Deep space navy background */
-    --background: 222 47% 6%;
+    /* Deep Specter Midnight background (darker, less shiny) */
+    --background: 230 35% 4%;
     --foreground: 210 40% 98%;
 
-    /* Cards with glass effect */
-    --card: 222 47% 8%;
+    /* Cards and surfaces (slightly darker) */
+    --card: 230 30% 7%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 47% 10%;
+    --popover: 230 30% 9%;
     --popover-foreground: 210 40% 98%;
 
-    /* Quantum purple primary */
-    --primary: 263 70% 50%;
+    /* Specter Purple primary (darker, less neon) */
+    --primary: 263 70% 52%;
     --primary-foreground: 210 40% 98%;
-    --primary-glow: 263 100% 65%;
+    --primary-glow: 263 85% 60%;
 
-    /* Slate secondary */
+    /* Neutral secondary */
     --secondary: 217 19% 18%;
     --secondary-foreground: 215 20% 65%;
 
@@ -32,16 +32,15 @@
     --muted: 217 19% 14%;
     --muted-foreground: 215 16% 47%;
 
-    /* Cyan accent for security/success */
-    --accent: 180 100% 50%;
+    /* Specter Cyan accent (slightly dimmed) */
+    --accent: 188 80% 44%;
     --accent-foreground: 222 47% 6%;
 
-    /* Success states */
-    --success: 160 84% 39%;
+    /* Success / Warning / Error (Tailwind green, yellow, red) */
+    --success: 142 72% 45%;
     --success-foreground: 210 40% 98%;
 
-    /* Warning/caution */
-    --warning: 38 92% 50%;
+    --warning: 47 97% 64%;
     --warning-foreground: 222 47% 6%;
 
     --destructive: 0 84% 60%;
@@ -49,22 +48,22 @@
 
     --border: 217 19% 20%;
     --input: 217 19% 14%;
-    --ring: 263 70% 50%;
+    --ring: 263 70% 52%;
 
     --radius: 0.75rem;
 
-    /* Custom gradients */
-    --gradient-quantum: linear-gradient(135deg, hsl(263 70% 50%), hsl(280 100% 60%), hsl(200 100% 50%));
-    --gradient-glow: linear-gradient(180deg, hsl(263 70% 50% / 0.2), transparent);
-    --gradient-card: linear-gradient(180deg, hsl(217 19% 14% / 0.5), hsl(222 47% 8% / 0.8));
+    /* Brand gradients: Specter Purple → Cyan, toned down */
+    --gradient-quantum: linear-gradient(135deg, hsl(263 70% 52%), hsl(230 45% 40%), hsl(188 80% 44%));
+    --gradient-glow: linear-gradient(180deg, hsl(263 70% 52% / 0.16), transparent);
+    --gradient-card: linear-gradient(180deg, hsl(217 19% 14% / 0.5), hsl(222 47% 7% / 0.8));
 
     /* Shadows */
-    --shadow-glow: 0 0 40px hsl(263 70% 50% / 0.3);
+    --shadow-glow: 0 0 40px hsl(263 70% 52% / 0.22);
     --shadow-card: 0 4px 24px hsl(222 47% 2% / 0.5);
 
     /* Fonts */
-    --font-display: 'JetBrains Mono', monospace;
-    --font-body: 'Inter', sans-serif;
+    --font-display: 'Space Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-body: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-cursive: 'Dancing Script', cursive;
     --font-signika: 'Signika', sans-serif;
     --font-dm-sans: 'DM Sans', sans-serif;
@@ -77,6 +76,34 @@
     --sidebar-accent-foreground: 210 40% 98%;
     --sidebar-border: 217 19% 20%;
     --sidebar-ring: 263 70% 50%;
+
+    /* Material Design 3-style system tokens (mapped to Specter palette) */
+    --md-sys-color-primary: hsl(var(--primary));
+    --md-sys-color-on-primary: hsl(var(--primary-foreground));
+    --md-sys-color-primary-container: hsl(var(--card));
+    --md-sys-color-on-primary-container: hsl(var(--card-foreground));
+
+    --md-sys-color-secondary: hsl(var(--secondary));
+    --md-sys-color-on-secondary: hsl(var(--secondary-foreground));
+    --md-sys-color-secondary-container: hsl(var(--muted));
+    --md-sys-color-on-secondary-container: hsl(var(--muted-foreground));
+
+    --md-sys-color-tertiary: hsl(var(--accent));
+    --md-sys-color-on-tertiary: hsl(var(--accent-foreground));
+
+    --md-sys-color-error: hsl(var(--destructive));
+    --md-sys-color-on-error: hsl(var(--destructive-foreground));
+
+    --md-sys-color-background: hsl(var(--background));
+    --md-sys-color-on-background: hsl(var(--foreground));
+
+    --md-sys-color-surface: hsl(var(--card));
+    --md-sys-color-on-surface: hsl(var(--card-foreground));
+    --md-sys-color-outline: hsl(var(--border));
+
+    /* Optional expressive tokens */
+    --md-sys-color-inverse-surface: hsl(0 0% 100% / 0.04);
+    --md-sys-color-inverse-on-surface: hsl(0 0% 100%);
   }
 }
 
@@ -122,6 +149,26 @@
     background-clip: text;
   }
 
+  /* "Quantum Computers" flowing-gradient individual characters */
+  .quantum-char {
+    display: inline-block;
+    background: linear-gradient(
+      90deg,
+      hsl(263 70% 68%),
+      hsl(220 85% 72%),
+      hsl(188 80% 58%),
+      hsl(220 85% 72%),
+      hsl(263 70% 68%)
+    );
+    background-size: 300% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: quantum-sweep 5s linear infinite;
+    /* stagger each character's phase so the wave flows left→right */
+    animation-delay: calc(var(--char-i, 0) * -0.22s);
+  }
+
   /* Grid background pattern */
   .grid-pattern {
     background-image: 
@@ -147,12 +194,17 @@
   }
 }
 
+@keyframes quantum-sweep {
+  0%   { background-position: 100% center; }
+  100% { background-position: -200% center; }
+}
+
 @keyframes pulseGlow {
   0%, 100% {
-    box-shadow: 0 0 20px hsl(263 70% 50% / 0.4);
+    box-shadow: 0 0 20px hsl(263 70% 52% / 0.32);
   }
   50% {
-    box-shadow: 0 0 40px hsl(263 70% 50% / 0.6);
+    box-shadow: 0 0 40px hsl(263 70% 52% / 0.44);
   }
 }
 
