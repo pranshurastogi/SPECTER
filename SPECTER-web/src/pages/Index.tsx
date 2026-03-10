@@ -1,7 +1,7 @@
 import { Header } from "@/components/layout/Header";
 import { HomeLayout } from "@/components/layout/HomeLayout";
-import { HeroSection } from "@/components/landing/HeroSection";
-import { TimelineSection } from "@/components/landing/TimelineSection";
+import { HeroSection } from "@/components/features/landing/HeroSection";
+import { TimelineSection } from "@/components/features/landing/TimelineSection";
 import { Footer } from "@/components/layout/Footer";
 
 export default function Index() {

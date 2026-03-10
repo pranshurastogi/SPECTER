@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
 import { useQuery } from "@tanstack/react-query";
-import { publicClient } from "@/lib/viemClient";
-import { chain, useTestnet } from "@/lib/chainConfig";
-import { setEnsTextRecord } from "@/lib/ensSetText";
-import { setSuinsContentHash } from "@/lib/suinsSetContent";
+import { publicClient } from "@/lib/blockchain/viemClient";
+import { chain, useTestnet } from "@/lib/blockchain/chainConfig";
+import { setEnsTextRecord } from "@/lib/blockchain/ensSetText";
+import { setSuinsContentHash } from "@/lib/blockchain/suinsSetContent";
 import {
   useCurrentAccount,
   useDisconnectWallet,
@@ -17,8 +17,8 @@ import {
 import { SuinsClient } from "@mysten/suins";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/base/button";
+import { Card, CardContent } from "@/components/ui/base/card";
 import {
   Key,
   Lock,
@@ -35,10 +35,10 @@ import {
   HardDrive,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { toast } from "@/components/ui/sonner";
-import { CopyButton } from "@/components/ui/copy-button";
-import { DownloadJsonButton } from "@/components/ui/download-json-button";
-import { TooltipLabel } from "@/components/ui/tooltip-label";
+import { toast } from "@/components/ui/base/sonner";
+import { CopyButton } from "@/components/ui/specialized/copy-button";
+import { DownloadJsonButton } from "@/components/ui/specialized/download-json-button";
+import { TooltipLabel } from "@/components/ui/specialized/tooltip-label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -48,10 +48,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@/components/ui/specialized/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
 import { formatAddress } from "@/lib/utils";
-import { SaveToDeviceDialog } from "@/components/keys/SaveToDeviceDialog";
+import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
 
 type SetupStep = 1 | 2 | 3 | 4;
 

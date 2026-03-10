@@ -7,7 +7,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/ui/base/tooltip";
 
 const navLinks = [
   { path: "/setup", label: "Setup" },

@@ -1,9 +1,9 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/base/toaster";
+import { Toaster as Sonner } from "@/components/ui/base/sonner";
+import { TooltipProvider } from "@/components/ui/base/tooltip";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { WalletProvider } from "@/components/WalletProvider";
-import { AnimatedGridPattern } from "@/components/ui/animated-grid-pattern";
+import { WalletProvider } from "@/components/features/wallet/WalletProvider";
+import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
 import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";

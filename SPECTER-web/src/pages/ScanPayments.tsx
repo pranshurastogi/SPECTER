@@ -6,9 +6,9 @@ import { Secp256k1Keypair } from "@mysten/sui/keypairs/secp256k1";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/base/button";
+import { Input } from "@/components/ui/base/input";
+import { Card, CardContent } from "@/components/ui/base/card";
 import {
   Scan,
   Loader2,
@@ -25,13 +25,13 @@ import {
   Info,
   Lock,
 } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "@/components/ui/base/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
-import { CopyButton } from "@/components/ui/copy-button";
-import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
+import { CopyButton } from "@/components/ui/specialized/copy-button";
+import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
-import { UnlockSavedKeys } from "@/components/keys/UnlockSavedKeys";
-import { type DecryptedKeys } from "@/lib/keyVault";
+import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
+import { type DecryptedKeys } from "@/lib/crypto/keyVault";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 

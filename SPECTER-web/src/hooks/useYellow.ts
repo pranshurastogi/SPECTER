@@ -12,11 +12,11 @@ import {
   type ChannelInfo,
   type LedgerBalance,
   type YellowConfig,
-} from "@/lib/yellowClient";
+} from "@/lib/yellow/yellowClient";
 import {
   fetchTokenBalance,
   type TokenBalance,
-} from "@/lib/yellowBalances";
+} from "@/lib/yellow/yellowBalances";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

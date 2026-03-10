@@ -2,8 +2,8 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { Button } from "@/components/ui/button";
-import { SearchBar } from "@/components/ui/search-bar";
+import { Button } from "@/components/ui/base/button";
+import { SearchBar } from "@/components/ui/specialized/search-bar";
 import {
   Check,
   Zap,
@@ -14,30 +14,30 @@ import {
   User,
   Wallet,
 } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
-import { CopyButton } from "@/components/ui/copy-button";
-import { DownloadJsonButton } from "@/components/ui/download-json-button";
-import { TooltipLabel } from "@/components/ui/tooltip-label";
-import { HeadingScramble } from "@/components/ui/heading-scramble";
-import { PixelCanvas } from "@/components/ui/pixel-canvas";
-import { AnimatedTicket } from "@/components/ui/ticket-confirmation-card";
+import { toast } from "@/components/ui/base/sonner";
+import { CopyButton } from "@/components/ui/specialized/copy-button";
+import { DownloadJsonButton } from "@/components/ui/specialized/download-json-button";
+import { TooltipLabel } from "@/components/ui/specialized/tooltip-label";
+import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
+import { PixelCanvas } from "@/components/ui/animations/pixel-canvas";
+import { AnimatedTicket } from "@/components/ui/specialized/ticket-confirmation-card";
 import { api, ApiError, type ResolveEnsResponse, type CreateStealthResponse } from "@/lib/api";
-import { verifyTx, type TxChain, type VerifiedTx } from "@/lib/verifyTx";
-import { Input } from "@/components/ui/input";
+import { verifyTx, type TxChain, type VerifiedTx } from "@/lib/blockchain/verifyTx";
+import { Input } from "@/components/ui/base/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+} from "@/components/ui/base/select";
+import { Label } from "@/components/ui/base/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/base/tabs";
 
 const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
-import { validateEnsName, EnsResolverError } from "@/lib/ensResolver";
-import { validateSuinsName, SuinsResolverError } from "@/lib/suinsResolver";
-import { EthereumIcon, SuiIcon } from "@/components/ui/chain-icons";
+import { validateEnsName, EnsResolverError } from "@/lib/blockchain/ensResolver";
+import { validateSuinsName, SuinsResolverError } from "@/lib/blockchain/suinsResolver";
+import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
@@ -52,8 +52,8 @@ import {
   ConnectModal,
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
-import { publicClient } from "@/lib/viemClient";
-import { chain } from "@/lib/chainConfig";
+import { publicClient } from "@/lib/blockchain/viemClient";
+import { chain } from "@/lib/blockchain/chainConfig";
 import { parseEther } from "viem";
 
 type SendStep = "input" | "generated" | "published";

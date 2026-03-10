@@ -2,13 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/base/button";
+import { Input } from "@/components/ui/base/input";
+import { Card } from "@/components/ui/base/card";
+import { Badge } from "@/components/ui/base/badge";
+import { Switch } from "@/components/ui/base/switch";
+import { Tabs, TabsContent } from "@/components/ui/base/tabs";
+import { Progress } from "@/components/ui/base/progress";
 import {
   Check,
   Loader2,
@@ -38,14 +38,14 @@ import {
   Receipt,
   Terminal,
 } from "lucide-react";
-import { toast } from "@/components/ui/sonner";
-import { FinancialDashboard } from "@/components/ui/financial-dashboard";
-import { CopyButton } from "@/components/ui/copy-button";
-import { HeadingScramble } from "@/components/ui/heading-scramble";
+import { toast } from "@/components/ui/base/sonner";
+import { FinancialDashboard } from "@/components/ui/specialized/financial-dashboard";
+import { CopyButton } from "@/components/ui/specialized/copy-button";
+import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { formatAddress } from "@/lib/utils";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
-import { chain } from "@/lib/chainConfig";
+import { chain } from "@/lib/blockchain/chainConfig";
 import {
   YellowClient,
   YellowConnectionStatus,
@@ -53,19 +53,19 @@ import {
   type ChannelInfo,
   type LedgerBalance,
   type LogLevel,
-} from "@/lib/yellowClient";
+} from "@/lib/yellow/yellowClient";
 import {
   fetchTokenBalance,
   isLowBalance,
   YTEST_USD_FAUCET,
   SEPOLIA_ETH_FAUCET,
   type TokenBalance,
-} from "@/lib/yellowBalances";
+} from "@/lib/yellow/yellowBalances";
 import { formatYtest } from "@/hooks/useYellow";
-import ReactorKnob from "@/components/ui/control-knob";
-import { LocationMap } from "@/components/ui/expand-map";
-import { LimelightNav, type NavItem } from "@/components/ui/limelight-nav";
-import AnimatedShaderHero from "@/components/ui/animated-shader-hero";
+import ReactorKnob from "@/components/ui/specialized/control-knob";
+import { LocationMap } from "@/components/ui/specialized/expand-map";
+import { LimelightNav, type NavItem } from "@/components/ui/specialized/limelight-nav";
+import AnimatedShaderHero from "@/components/ui/animations/animated-shader-hero";
 import type { Address } from "viem";
 import { parseUnits } from "viem";
 
@@ -94,6 +94,21 @@ const scaleIn = {
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+function isUserRejectedError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as any;
+  const code = anyErr?.code ?? anyErr?.error?.code;
+  const name = String(anyErr?.name ?? "").toLowerCase();
+  const msg = String(
+    anyErr?.message ?? anyErr?.shortMessage ?? anyErr?.cause?.message ?? ""
+  ).toLowerCase();
+
+  if (code === 4001) return true; // EIP-1193 user rejected request
+  if (name.includes("userrejected") || name.includes("rejectedrequest")) return true;
+  if (msg.includes("user rejected") || msg.includes("user denied")) return true;
+  return false;
+}
 
 interface LogEntry {
   id: string;
@@ -501,15 +516,24 @@ export default function YellowPage() {
       setConnectionStatus(YellowConnectionStatus.Disconnected);
 
       const msg = err?.message ?? "Connection failed";
-      if (msg.toLowerCase().includes("rejected") || msg.toLowerCase().includes("user denied")) {
-        toast.error("Signature rejected — please approve the sign request in your wallet");
-      } else if (msg.toLowerCase().includes("parse")) {
+      const lowerMsg = msg.toLowerCase();
+      if (isUserRejectedError(err)) {
+        toast.error(
+          "Signature rejected — open your wallet (or browser popup tray) and approve the sign request, then try again."
+        );
+      } else if (lowerMsg.includes("timeout")) {
+        toast.error(
+          "Connection timed out — check your internet, ensure the Yellow WebSocket URL is reachable, then try again."
+        );
+      } else if (lowerMsg.includes("parse")) {
         toast.error(
           "Server rejected auth. If this persists, wait 60s and try again.",
           { duration: 8000 }
         );
-      } else if (msg.toLowerCase().includes("timeout")) {
-        toast.error("Connection timed out — check your internet connection");
+      } else if (lowerMsg.includes("websocket connection failed")) {
+        toast.error(
+          "Could not reach Yellow Network — check that your VPN or firewall is not blocking WebSocket connections."
+        );
       } else {
         toast.error(`Connection failed: ${msg}`, { duration: 6000 });
       }

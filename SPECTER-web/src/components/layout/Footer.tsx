@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { X, Github, BookOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/base/button";
 
 export function Footer() {
   const socialLinks = [

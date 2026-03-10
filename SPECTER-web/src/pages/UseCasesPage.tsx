@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { LineChart, ArrowRight } from "lucide-react";
-import UseCasesCarousel from "@/components/ui/executive-impact-carousel";
+import UseCasesCarousel from "@/components/ui/specialized/executive-impact-carousel";
 
 export default function UseCasesPage() {
   return (
