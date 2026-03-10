@@ -62,7 +62,6 @@ import {
   type TokenBalance,
 } from "@/lib/yellow/yellowBalances";
 import { formatYtest } from "@/hooks/useYellow";
-import ReactorKnob from "@/components/ui/specialized/control-knob";
 import { LocationMap } from "@/components/ui/specialized/expand-map";
 import { LimelightNav, type NavItem } from "@/components/ui/specialized/limelight-nav";
 import AnimatedShaderHero from "@/components/ui/animations/animated-shader-hero";
@@ -75,7 +74,7 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const DEFAULT_YTEST_TOKEN = "0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb" as Address;
 const ETHERSCAN_BASE = "https://sepolia.etherscan.io";
 const FAUCET_API_URL = "https://clearnet-sandbox.yellow.com/faucet/requestTokens";
-const PANEL_TABS = ["overview", "channels", "operations", "transactions", "markets"] as const;
+const PANEL_TABS = ["overview", "channels", "operations", "activity"] as const;
 
 const ease = [0.43, 0.13, 0.23, 0.96] as const;
 const fadeIn = {
@@ -229,14 +228,12 @@ export default function YellowPage() {
   }, []);
 
   // Forms
-  const [createAmount, setCreateAmount] = useState("1");
   const [depositAmount, setDepositAmount] = useState("10");
   const [resizeChannelId, setResizeChannelId] = useState("");
   const [resizeAmount, setResizeAmount] = useState("10");
   const [transferDest, setTransferDest] = useState("");
   const [transferAmount, setTransferAmount] = useState("1");
   const [transferAsset, setTransferAsset] = useState("ytest.usd");
-  const [transferIntensity, setTransferIntensity] = useState(37);
   const [closeChannelId, setCloseChannelId] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("1");
 
@@ -250,6 +247,7 @@ export default function YellowPage() {
   const [isResizing, setIsResizing] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [isClosingAll, setIsClosingAll] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncingYellow, setIsSyncingYellow] = useState(false);
@@ -509,6 +507,7 @@ export default function YellowPage() {
       await syncYellowOnce();
 
       toast.success("✓ Connected to Yellow Network!");
+      setActiveTab("operations");
     } catch (err: any) {
       clientRef.current?.disconnect();
       clientRef.current = null;
@@ -565,11 +564,6 @@ export default function YellowPage() {
     const client = clientRef.current;
     if (!client) { toast.error("Not connected to Yellow Network"); return; }
 
-    if (!createAmount || parseFloat(createAmount) <= 0) {
-      toast.error("Enter a valid deposit amount");
-      return;
-    }
-
     if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
       toast.error("Insufficient Sepolia ETH for gas. Get ETH from the faucet first.", { duration: 6000 });
       return;
@@ -577,13 +571,13 @@ export default function YellowPage() {
 
     setIsCreating(true);
     try {
-      const amount = parseUnits(createAmount, 6);
       toast.info("Creating channel on-chain… this may take 30–60 seconds", { duration: 10000 });
-      const result = await client.createChannel(ytestTokenAddress, amount);
+      // Note: Channel funding is done later via Resize from Unified Balance.
+      const result = await client.createChannel(ytestTokenAddress, 0n);
       addTx("Create Channel", result.txHash);
       toast.success(`Channel created! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 4));
-      setActiveTab("channels");
+      setActiveTab("operations");
       void pollYellowAfterTx();
     } catch (err: any) {
       const msg = err?.message ?? "Channel creation failed";
@@ -595,7 +589,7 @@ export default function YellowPage() {
     } finally {
       setIsCreating(false);
     }
-  }, [createAmount, ytestTokenAddress, currentStep, ethBalance, addTx, pollYellowAfterTx]);
+  }, [ytestTokenAddress, currentStep, ethBalance, addTx, pollYellowAfterTx]);
 
   // ── Resize Channel ─────────────────────────────────────────────────────────
 
@@ -614,10 +608,10 @@ export default function YellowPage() {
       const amount = parseUnits(resizeAmount, 6);
       toast.info("Allocating funds from Unified Balance…", { duration: 8000 });
       const result = await client.resizeChannel(resizeChannelId as `0x${string}`, amount);
-      addTx("Resize Channel", result.txHash);
+      addTx(`Resize Channel ${resizeAmount} ytest.usd`, result.txHash);
       toast.success(`Channel funded! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 5));
-      setActiveTab("channels");
+      setActiveTab("operations");
       void pollYellowAfterTx();
     } catch (err: any) {
       const msg = (err?.message ?? "").toLowerCase();
@@ -661,8 +655,14 @@ export default function YellowPage() {
 
     setIsTransferring(true);
     try {
+      const humanAmount = parseFloat(transferAmount);
+      if (Number.isNaN(humanAmount) || humanAmount <= 0) {
+        throw new Error("Invalid transfer amount");
+      }
+      // ytest.usd has 6 decimals; Nitro expects base units for allocations.
+      const rawUnits = BigInt(Math.floor(humanAmount * 1_000_000));
       await client.transfer(transferDest as Address, [
-        { asset: transferAsset, amount: transferAmount },
+        { asset: transferAsset, amount: rawUnits.toString() },
       ]);
       toast.success(`Transferred ${transferAmount} ${transferAsset} (off-chain, instant!)`);
       setCurrentStep(Math.max(currentStep, 6));
@@ -694,7 +694,7 @@ export default function YellowPage() {
       setCurrentStep(Math.max(currentStep, 7));
       setCloseChannelId("");
       toast.success(`Channel closed! TX: ${result.txHash.slice(0, 10)}...`);
-      setActiveTab("channels");
+      setActiveTab("operations");
       void pollYellowAfterTx();
     } catch (err: any) {
       const msg = (err?.message ?? "Close failed").toLowerCase();
@@ -707,6 +707,46 @@ export default function YellowPage() {
       setIsClosing(false);
     }
   }, [closeChannelId, currentStep, ethBalance, addTx, pollYellowAfterTx]);
+
+  // ── Close All Channels ────────────────────────────────────────────────────
+
+  const handleCloseAllChannels = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) { toast.error("Not connected"); return; }
+
+    const toClose = channels.filter(
+      (c) => c.channelId && c.status.toLowerCase() === "open"
+    );
+    if (toClose.length === 0) {
+      toast.info("No open channels to close");
+      return;
+    }
+
+    if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
+      toast.error("Insufficient Sepolia ETH for gas.", { duration: 6000 });
+      return;
+    }
+
+    setIsClosingAll(true);
+    let closed = 0;
+    let failed = 0;
+    for (const ch of toClose) {
+      try {
+        toast.info(`Closing ${ch.channelId.slice(0, 8)}…`, { duration: 5000 });
+        const result = await client.closeChannel(ch.channelId as `0x${string}`);
+        addTx(`Close Channel ${ch.channelId.slice(0, 8)}…`, result.txHash);
+        closed++;
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch (err: any) {
+        failed++;
+        toast.error(`Failed to close ${ch.channelId.slice(0, 8)}…: ${(err?.message ?? "").slice(0, 80)}`);
+      }
+    }
+    toast.success(`Closed ${closed} channel(s)${failed > 0 ? `, ${failed} failed` : ""}`);
+    setCurrentStep(Math.max(currentStep, 7));
+    void pollYellowAfterTx();
+    setIsClosingAll(false);
+  }, [channels, currentStep, ethBalance, addTx, pollYellowAfterTx]);
 
   // ── Withdraw ───────────────────────────────────────────────────────────────
 
@@ -728,7 +768,7 @@ export default function YellowPage() {
       const amount = parseUnits(withdrawAmount, 6);
       toast.info("Withdrawing from custody contract…", { duration: 8000 });
       const result = await client.withdraw(ytestTokenAddress, amount);
-      addTx("Withdraw", result.txHash);
+      addTx(`Withdraw ${withdrawAmount} ytest.usd`, result.txHash);
       toast.success(`Withdrawn! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(8);
       void pollYellowAfterTx();
@@ -792,12 +832,16 @@ export default function YellowPage() {
   const openChannels = channels.filter(
     (c) => c.channelId && c.status.toLowerCase() !== "closed"
   );
+  const hasOpenChannels = openChannels.length > 0;
   const needsETH = ethBalance !== null && isLowBalance(ethBalance.formatted, 18, 0.005);
   const totalLedgerBalance = ledgerBalances.reduce((sum, b) => sum + parseFloat(b.amount || "0"), 0);
+  const unifiedBalanceHuman = totalLedgerBalance > 0 ? totalLedgerBalance / 1_000_000 : 0;
+  const hasUnifiedBalance = totalLedgerBalance > 0;
+  const hasCustodyBalance = custodyBalance !== null && custodyBalance > 0n;
   const confirmedTxCount = transactions.filter((tx) => tx.status === "confirmed").length;
   const pendingTxCount = transactions.filter((tx) => tx.status === "pending").length;
-  const suggestedTransferAmount = Math.max(0.1, transferIntensity / 15).toFixed(2);
-  const transferActionIndex = 3;
+  const walletYtestNum = ytestBalance ? parseFloat(ytestBalance.formatted) : 0;
+  const custodyNum = custodyBalance !== null ? Number(custodyBalance) / 1e6 : 0;
   const opInputClass = "bg-zinc-900/95 border-zinc-700/80 text-zinc-100 placeholder:text-zinc-500 transition-all duration-200 focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25 focus-visible:shadow-[0_0_0_3px_rgba(245,158,11,0.08)]";
   const opSelectClass = "w-full bg-zinc-900/95 border border-zinc-700/80 rounded-md p-2 text-sm text-zinc-100 transition-all duration-200 focus-visible:outline-none focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25";
   const opButtonClass = "w-full transition-all duration-200 hover:shadow-[0_8px_20px_rgba(0,0,0,0.3)] hover:-translate-y-[1px] active:translate-y-0";
@@ -809,8 +853,7 @@ export default function YellowPage() {
     { id: "overview", icon: <Activity />, label: "Overview" },
     { id: "channels", icon: <Network />, label: `Channels (${openChannels.length})` },
     { id: "operations", icon: <Zap />, label: "Operations" },
-    { id: "transactions", icon: <Receipt />, label: `Transactions (${transactions.length})` },
-    { id: "markets", icon: <Terminal />, label: "Activity" },
+    { id: "activity", icon: <Terminal />, label: "Activity" },
   ];
 
   useEffect(() => {
@@ -1194,7 +1237,7 @@ export default function YellowPage() {
                           {currentStep < 4
                             ? "Create Your First Channel"
                             : currentStep < 5
-                              ? "Deposit Tokens to Custody"
+                              ? "Fund Your Channel"
                               : currentStep < 6
                                 ? "Fund Your Channel"
                                 : currentStep < 7
@@ -1204,13 +1247,11 @@ export default function YellowPage() {
                         <p className="text-xs text-zinc-400 leading-relaxed">
                           {currentStep < 4
                             ? "Open a state channel on-chain to start making instant off-chain transfers. You'll need Sepolia ETH for gas and ytest.usd tokens."
-                            : currentStep < 5
-                              ? "Move ytest.usd from your wallet into the custody contract. This is required before you can allocate funds to channels."
-                              : currentStep < 6
-                                ? "Allocate funds from the custody contract into your open channel to enable off-chain transfers."
-                                : currentStep < 7
-                                  ? "Send an instant, gas-free off-chain transfer to any address on the Yellow Network."
-                                  : "You've completed the full state channel lifecycle. You can close channels and withdraw funds."}
+                            : currentStep < 6
+                              ? "Allocate funds from your Unified Balance into your open channel to enable off-chain transfers."
+                              : currentStep < 7
+                                ? "Send an instant, gas-free off-chain transfer to any address on the Yellow Network."
+                                : "You've completed the full state channel lifecycle. You can close channels and withdraw funds."}
                         </p>
                         {currentStep < 7 && (
                           <Button
@@ -1226,49 +1267,34 @@ export default function YellowPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                    <ReactorKnob
-                      className="xl:col-span-2"
-                      initialValue={transferIntensity}
-                      onValueChange={setTransferIntensity}
-                    />
-
-                    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                      <h3 className="text-sm font-semibold text-zinc-200">Execution Preset</h3>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Use the control dial to set a transfer intent and push it to Operations.
-                      </p>
-                      <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
-                        <p className="text-xs text-zinc-500">Suggested transfer</p>
-                        <p className="font-mono text-2xl text-amber-300 mt-1">
-                          {suggestedTransferAmount}
-                          <span className="text-sm text-zinc-500 ml-1">ytest.usd</span>
-                        </p>
-                      </div>
-                      <div className="mt-4 space-y-2">
-                          <Button
-                            size="sm"
-                            className="w-full bg-amber-500 hover:bg-amber-600 text-black"
-                            onClick={() => {
-                              setTransferAmount(suggestedTransferAmount);
-                              setTransferAsset("ytest.usd");
-                              setActiveTab("operations");
-                              setExpandedQuickAction(transferActionIndex);
-                            }}
-                          >
-                            Apply to Transfer and Open Operations
-                          </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full border-zinc-700 text-zinc-300"
-                          onClick={handleRequestFaucet}
-                          disabled={isRequestingFaucet}
-                        >
-                          <Droplets className="w-3.5 h-3.5 mr-1.5" />
-                          Request faucet tokens
-                        </Button>
-                      </div>
+                  {/* Fund Flow Diagram */}
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                    <h3 className="text-sm font-semibold text-zinc-200 mb-4 flex items-center gap-2">
+                      <Coins className="w-4 h-4 text-amber-400" />
+                      How Funds Flow
+                    </h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {[
+                        { label: "Wallet", value: walletYtestNum > 0 ? formatYtest(walletYtestNum.toString()) : "—", sub: "ytest.usd", color: "border-zinc-700", highlight: false },
+                        { label: "Unified Balance", value: totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—", sub: "off-chain (faucet)", color: "border-amber-500/40", highlight: totalLedgerBalance > 0 },
+                        { label: "Channel-Locked", value: openChannels.length > 0 ? formatYtest(openChannels.reduce((s, c) => s + parseFloat(c.amount || "0"), 0)) : "—", sub: `${openChannels.length} channel(s)`, color: "border-sky-500/40", highlight: openChannels.length > 0 },
+                        { label: "Custody (L1)", value: custodyNum > 0 ? formatYtest(custodyNum.toString()) : "—", sub: "on-chain", color: "border-zinc-700", highlight: false },
+                      ].map((item) => (
+                        <div key={item.label} className={`rounded-lg border ${item.color} ${item.highlight ? "bg-amber-500/5" : "bg-zinc-900/50"} p-3 text-center`}>
+                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">{item.label}</p>
+                          <p className={`text-lg font-mono mt-1 ${item.highlight ? "text-amber-200" : "text-white"}`}>{item.value}</p>
+                          <p className="text-[10px] text-zinc-600 mt-0.5">{item.sub}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center justify-center gap-1 mt-3 text-[10px] text-zinc-600">
+                      <span>Faucet → Unified Balance</span>
+                      <ArrowRight className="w-3 h-3" />
+                      <span>Resize → Channel</span>
+                      <ArrowRight className="w-3 h-3" />
+                      <span>Transfer (off-chain)</span>
+                      <ArrowRight className="w-3 h-3" />
+                      <span>Close → Withdraw</span>
                     </div>
                   </div>
 
@@ -1301,11 +1327,26 @@ export default function YellowPage() {
                           ))}
                           {openChannels.length > 3 && (
                             <button
-                              onClick={() => setActiveTab("channels")}
+                              onClick={() => setActiveTab("operations")}
                               className="text-xs text-amber-400 hover:text-amber-300 mt-1"
                             >
-                              View all {openChannels.length} channels →
+                              View all {openChannels.length} channels in Operations →
                             </button>
+                          )}
+                          {openChannels.length > 0 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCloseAllChannels}
+                              disabled={isClosingAll || needsETH}
+                              className="w-full mt-2 border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs"
+                            >
+                              {isClosingAll ? (
+                                <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Closing all…</>
+                              ) : (
+                                <><XIcon className="w-3 h-3 mr-1.5" />Close All Channels</>
+                              )}
+                            </Button>
                           )}
                         </div>
                       )}
@@ -1321,7 +1362,7 @@ export default function YellowPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setActiveTab("operations")}
+                          onClick={() => { setActiveTab("operations"); setExpandedQuickAction(0); }}
                           className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
                         >
                           <PlusCircle className="w-3.5 h-3.5 mr-1.5 text-green-400" />
@@ -1330,8 +1371,8 @@ export default function YellowPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setActiveTab("operations")}
-                          disabled={openChannels.length === 0}
+                          onClick={() => { setActiveTab("operations"); setExpandedQuickAction(2); }}
+                          disabled={!hasOpenChannels}
                           className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
                         >
                           <ArrowUpRight className="w-3.5 h-3.5 mr-1.5 text-blue-400" />
@@ -1340,7 +1381,7 @@ export default function YellowPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setActiveTab("operations")}
+                          onClick={() => { setActiveTab("operations"); setExpandedQuickAction(3); }}
                           className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
                         >
                           <Send className="w-3.5 h-3.5 mr-1.5 text-purple-400" />
@@ -1369,7 +1410,7 @@ export default function YellowPage() {
                           Recent Activity
                         </h3>
                         <button
-                          onClick={() => setActiveTab("transactions")}
+                          onClick={() => setActiveTab("activity")}
                           className="text-xs text-amber-400 hover:text-amber-300"
                         >
                           View all →
@@ -1415,16 +1456,33 @@ export default function YellowPage() {
                 <TabsContent value="channels" className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-zinc-300">Your State Channels</h3>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleRefresh}
-                      disabled={isRefreshing}
-                      className="text-zinc-400 hover:text-white"
-                    >
-                      <RefreshCw className={`w-3 h-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
-                      Refresh
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {openChannels.length > 1 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCloseAllChannels}
+                          disabled={isClosingAll || needsETH}
+                          className="border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs"
+                        >
+                          {isClosingAll ? (
+                            <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Closing…</>
+                          ) : (
+                            <><XIcon className="w-3 h-3 mr-1" />Close All</>
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        className="text-zinc-400 hover:text-white"
+                      >
+                        <RefreshCw className={`w-3 h-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
+                        Refresh
+                      </Button>
+                    </div>
                   </div>
 
                   {channels.length === 0 ? (
@@ -1533,19 +1591,21 @@ export default function YellowPage() {
                       {
                         icon: PlusCircle,
                         title: "Create Channel",
-                        description: "Open a new state channel",
+                        description: "Open a new state channel (funding happens in the next step)",
                         renderForm: () => (
                           <>
-                            <Input
-                              type="number"
-                              value={createAmount}
-                              onChange={(e) => setCreateAmount(e.target.value)}
-                              placeholder="Initial amount (ytest.usd)"
-                              className={opInputClass}
-                            />
+                            <p className="text-xs text-zinc-500">
+                              This creates an empty state channel. You will fund it from your Unified Balance using the
+                              <span className="font-medium text-zinc-300"> Fund Channel</span> action.
+                            </p>
+                            {!hasUnifiedBalance && (
+                              <p className="mt-2 text-[11px] text-amber-300">
+                                Tip: Request faucet tokens first so you have Unified Balance to allocate into the channel.
+                              </p>
+                            )}
                             <Button
                               onClick={handleCreateChannel}
-                              disabled={isCreating || !createAmount || needsETH}
+                              disabled={isCreating || needsETH}
                               className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
                               size="sm"
                             >
@@ -1561,133 +1621,207 @@ export default function YellowPage() {
                       {
                         icon: Lock,
                         title: "Deposit",
-                        description: "Fund custody account",
-                        renderForm: () => (
-                          <>
-                            <p className="text-xs text-zinc-500">
-                              Custody: {custodyBalance !== null ? formatYtest(custodyBalance) : "—"} ytest.usd
-                            </p>
-                            <Input
-                              type="number"
-                              value={depositAmount}
-                              onChange={(e) => setDepositAmount(e.target.value)}
-                              placeholder="Amount (ytest.usd)"
-                              className={opInputClass}
-                            />
-                            <Button
-                              onClick={handleDeposit}
-                              disabled={isDepositing || !depositAmount || needsETH}
-                              className={`${opButtonClass} bg-amber-600 hover:bg-amber-700 text-black`}
-                              size="sm"
-                            >
-                              {isDepositing ? (
-                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Depositing…</>
-                              ) : (
-                                <><Lock className="w-4 h-4 mr-2" />Deposit</>
+                        description: "Optional: move funds into the L1 custody contract",
+                        renderForm: () => {
+                          const depAmt = parseFloat(depositAmount) || 0;
+                          const exceeds = depAmt > walletYtestNum;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Wallet ytest.usd</span>
+                                <span className="font-mono text-zinc-300">{walletYtestNum > 0 ? formatYtest(walletYtestNum.toString()) : "0.00"}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Custody balance</span>
+                                <span className="font-mono text-zinc-300">{custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"}</span>
+                              </div>
+                              <Input
+                                type="number"
+                                value={depositAmount}
+                                onChange={(e) => setDepositAmount(e.target.value)}
+                                placeholder="Amount (ytest.usd)"
+                                className={`${opInputClass} ${exceeds ? "!border-red-500/60" : ""}`}
+                              />
+                              {exceeds && (
+                                <p className="text-[11px] text-red-400">
+                                  Exceeds wallet balance ({formatYtest(walletYtestNum.toString())} available)
+                                </p>
                               )}
-                            </Button>
-                          </>
-                        ),
+                              <Button
+                                onClick={handleDeposit}
+                                disabled={isDepositing || !depositAmount || needsETH || exceeds}
+                                className={`${opButtonClass} bg-amber-600 hover:bg-amber-700 text-black`}
+                                size="sm"
+                              >
+                                {isDepositing ? (
+                                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Depositing…</>
+                                ) : (
+                                  <><Lock className="w-4 h-4 mr-2" />Deposit</>
+                                )}
+                              </Button>
+                            </>
+                          );
+                        },
                       },
                       {
                         icon: ArrowUpRight,
                         title: "Fund Channel",
-                        description: "Allocate to channel",
-                        renderForm: () => (
-                          <>
-                            {resizeError && (
-                              <div className="rounded-lg border border-red-500/35 bg-red-500/10 p-3 text-xs shadow-[0_6px_20px_rgba(127,29,29,0.2)]">
-                                <p className="text-red-300 break-words font-mono leading-relaxed">{resizeError}</p>
-                                <button
-                                  onClick={() => setResizeError(null)}
-                                  className="mt-2 inline-flex items-center rounded-md border border-red-400/30 px-2 py-1 text-[11px] text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200"
-                                >
-                                  Dismiss
-                                </button>
-                              </div>
-                            )}
-                            <select
-                              value={resizeChannelId}
-                              onChange={(e) => { setResizeChannelId(e.target.value); setResizeError(null); }}
-                              className={opSelectClass}
-                            >
-                              <option value="">Select channel…</option>
-                              {openChannels.map((ch) => (
-                                <option key={ch.channelId} value={ch.channelId}>
-                                  {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)} — {formatYtest(ch.amount)}
-                                </option>
-                              ))}
-                            </select>
-                            <Input
-                              type="number"
-                              value={resizeAmount}
-                              onChange={(e) => { setResizeAmount(e.target.value); setResizeError(null); }}
-                              placeholder="Amount (ytest.usd)"
-                              className={opInputClass}
-                            />
-                            <Button
-                              onClick={handleResizeChannel}
-                              disabled={isResizing || !resizeChannelId || !resizeAmount}
-                              className={`${opButtonClass} bg-sky-600 hover:bg-sky-700 text-white`}
-                              size="sm"
-                            >
-                              {isResizing ? (
-                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Funding…</>
-                              ) : (
-                                <><ArrowUpRight className="w-4 h-4 mr-2" />Fund Channel</>
+                        description: "Allocate from Unified Balance or custody into a channel",
+                        renderForm: () => {
+                          const resAmt = parseFloat(resizeAmount) || 0;
+                          const maxFund = Math.max(totalLedgerBalance, custodyNum);
+                          const exceedsFund = resAmt > 0 && resAmt > maxFund && maxFund > 0;
+                          return (
+                            <>
+                              {!hasOpenChannels && (
+                                <p className="text-xs text-zinc-500 mb-2">
+                                  You have no open channels yet. Create a channel first, then come back to fund it.
+                                </p>
                               )}
-                            </Button>
-                          </>
-                        ),
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Unified Balance</span>
+                                <span className={`font-mono ${totalLedgerBalance > 0 ? "text-amber-300" : "text-zinc-500"}`}>
+                                  {totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "0.00"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Custody</span>
+                                <span className="font-mono text-zinc-300">{custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"}</span>
+                              </div>
+                              {!hasUnifiedBalance && !hasCustodyBalance && (
+                                <p className="text-xs text-amber-300">
+                                  No funds available. Request faucet tokens or deposit first.
+                                </p>
+                              )}
+                              {resizeError && (
+                                <div className="rounded-lg border border-red-500/35 bg-red-500/10 p-3 text-xs shadow-[0_6px_20px_rgba(127,29,29,0.2)]">
+                                  <p className="text-red-300 break-words font-mono leading-relaxed">{resizeError}</p>
+                                  <button
+                                    onClick={() => setResizeError(null)}
+                                    className="mt-2 inline-flex items-center rounded-md border border-red-400/30 px-2 py-1 text-[11px] text-red-300 transition-colors hover:bg-red-500/10 hover:text-red-200"
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              )}
+                              <select
+                                value={resizeChannelId}
+                                onChange={(e) => { setResizeChannelId(e.target.value); setResizeError(null); }}
+                                className={opSelectClass}
+                                disabled={!hasOpenChannels}
+                              >
+                                <option value="">Select channel…</option>
+                                {openChannels.map((ch) => (
+                                  <option key={ch.channelId} value={ch.channelId}>
+                                    {ch.channelId.slice(0, 8)}…{ch.channelId.slice(-6)} — {formatYtest(ch.amount)}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                type="number"
+                                value={resizeAmount}
+                                onChange={(e) => { setResizeAmount(e.target.value); setResizeError(null); }}
+                                placeholder="Amount (ytest.usd)"
+                                className={`${opInputClass} ${exceedsFund ? "!border-red-500/60" : ""}`}
+                              />
+                              {exceedsFund && (
+                                <p className="text-[11px] text-red-400">
+                                  Exceeds available funds ({formatYtest(maxFund)} max)
+                                </p>
+                              )}
+                              <Button
+                                onClick={handleResizeChannel}
+                                disabled={isResizing || !resizeChannelId || !resizeAmount || (!hasUnifiedBalance && !hasCustodyBalance) || exceedsFund}
+                                className={`${opButtonClass} bg-sky-600 hover:bg-sky-700 text-white`}
+                                size="sm"
+                              >
+                                {isResizing ? (
+                                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Funding…</>
+                                ) : (
+                                  <><ArrowUpRight className="w-4 h-4 mr-2" />Fund Channel</>
+                                )}
+                              </Button>
+                            </>
+                          );
+                        },
                       },
                       {
                         icon: Send,
                         title: "Transfer",
-                        description: "Send off-chain",
-                        renderForm: () => (
-                          <>
-                            <p className="text-[11px] text-zinc-500">
-                              Gauge preset: <span className="font-mono text-amber-300">{suggestedTransferAmount} ytest.usd</span>
-                            </p>
-                            <Input
-                              value={transferDest}
-                              onChange={(e) => setTransferDest(e.target.value)}
-                              placeholder="Destination address (0x...)"
-                              className={opInputClass}
-                            />
-                            <div className="grid grid-cols-2 gap-2">
-                              <Input
-                                value={transferAsset}
-                                onChange={(e) => setTransferAsset(e.target.value)}
-                                placeholder="Asset"
-                                className={opInputClass}
-                              />
-                              <Input
-                                type="number"
-                                value={transferAmount}
-                                onChange={(e) => setTransferAmount(e.target.value)}
-                                placeholder="Amount"
-                                className={opInputClass}
-                              />
-                            </div>
-                            <Button
-                              onClick={handleTransfer}
-                              disabled={isTransferring || !transferDest || !transferAmount}
-                              className={`${opButtonClass} bg-violet-600 hover:bg-violet-700 text-white`}
-                              size="sm"
-                            >
-                              {isTransferring ? (
-                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Transferring…</>
-                              ) : (
-                                <><Send className="w-4 h-4 mr-2" />Transfer</>
+                        description: "Send off-chain (instant, zero gas)",
+                        renderForm: () => {
+                          const xfrAmt = parseFloat(transferAmount) || 0;
+                          const exceedsLedger = xfrAmt > 0 && unifiedBalanceHuman > 0 && xfrAmt > unifiedBalanceHuman;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Unified Balance</span>
+                                <span className={`font-mono ${unifiedBalanceHuman > 0 ? "text-amber-300" : "text-zinc-500"}`}>
+                                  {unifiedBalanceHuman > 0 ? formatYtest(unifiedBalanceHuman.toString()) : "0.00"}
+                                </span>
+                              </div>
+                              {!hasOpenChannels && (
+                                <p className="text-xs text-zinc-500">No open channels — create and fund a channel before transferring.</p>
                               )}
-                            </Button>
-                          </>
-                        ),
+                              <Input
+                                value={transferDest}
+                                onChange={(e) => setTransferDest(e.target.value)}
+                                placeholder="Destination address (0x...)"
+                                className={opInputClass}
+                              />
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input
+                                  value={transferAsset}
+                                  onChange={(e) => setTransferAsset(e.target.value)}
+                                  placeholder="Asset"
+                                  className={opInputClass}
+                                />
+                                <Input
+                                  type="number"
+                                  value={transferAmount}
+                                  onChange={(e) => setTransferAmount(e.target.value)}
+                                  placeholder="Amount (ytest.usd)"
+                                  className={`${opInputClass} ${exceedsLedger ? "!border-red-500/60" : ""}`}
+                                />
+                              </div>
+                              {exceedsLedger && (
+                                <p className="text-[11px] text-red-400">
+                                  Exceeds Unified Balance ({formatYtest(unifiedBalanceHuman.toString())} available)
+                                </p>
+                              )}
+                              <Button
+                                onClick={handleTransfer}
+                                disabled={isTransferring || !transferDest || !transferAmount || exceedsLedger}
+                                className={`${opButtonClass} bg-violet-600 hover:bg-violet-700 text-white`}
+                                size="sm"
+                              >
+                                {isTransferring ? (
+                                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Transferring…</>
+                                ) : (
+                                  <><Send className="w-4 h-4 mr-2" />Transfer</>
+                                )}
+                              </Button>
+                            </>
+                          );
+                        },
                       },
                     ]}
                     recentActivity={transactions.slice(0, 5).map((tx) => {
-                      const isPositive = tx.label.toLowerCase().includes("deposit") || tx.label.toLowerCase().includes("fund");
+                      const labelLower = tx.label.toLowerCase();
+                      const match = tx.label.match(/(\d+(\.\d+)?)/);
+                      const numeric = match ? parseFloat(match[1]) : null;
+                      let signedAmount: number | null = null;
+                      if (numeric !== null && !Number.isNaN(numeric)) {
+                        const isCredit =
+                          labelLower.includes("deposit") ||
+                          labelLower.includes("resize") ||
+                          labelLower.includes("fund");
+                        const isDebit =
+                          labelLower.includes("withdraw") ||
+                          labelLower.includes("close");
+                        if (isCredit) signedAmount = numeric;
+                        else if (isDebit) signedAmount = -numeric;
+                      }
                       const StatusIcon = tx.status === "confirmed" ? CheckCircle2 : tx.status === "failed" ? XIcon : Loader2;
                       return {
                         icon: (
@@ -1702,7 +1836,7 @@ export default function YellowPage() {
                         ),
                         title: tx.label,
                         time: new Date(tx.timestamp).toLocaleString(),
-                        amount: isPositive ? 1 : -1,
+                        amount: signedAmount ?? 0,
                       };
                     })}
                     financialServices={[
@@ -1746,29 +1880,63 @@ export default function YellowPage() {
                         title: "Withdraw",
                         description: "Withdraw from custody to wallet",
                         hasAction: true,
-                        renderForm: () => (
-                          <>
-                            <Input
-                              type="number"
-                              value={withdrawAmount}
-                              onChange={(e) => setWithdrawAmount(e.target.value)}
-                              placeholder="Amount (ytest.usd)"
-                              className={opInputClass}
-                            />
-                            <Button
-                              onClick={handleWithdraw}
-                              disabled={isWithdrawing || !withdrawAmount || needsETH}
-                              className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
-                              size="sm"
-                            >
-                              {isWithdrawing ? (
-                                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Withdrawing…</>
-                              ) : (
-                                <><ArrowDownRight className="w-4 h-4 mr-2" />Withdraw</>
+                        renderForm: () => {
+                          const wAmt = parseFloat(withdrawAmount) || 0;
+                          const exceedsW = wAmt > 0 && custodyNum > 0 && wAmt > custodyNum;
+                          return (
+                            <>
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-zinc-500">Custody balance</span>
+                                <span className={`font-mono ${custodyNum > 0 ? "text-emerald-300" : "text-zinc-500"}`}>
+                                  {custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"} ytest.usd
+                                </span>
+                              </div>
+                              {custodyNum <= 0 && (
+                                <p className="text-xs text-zinc-500">
+                                  No custody balance. Close a channel first to move funds back to custody, then withdraw.
+                                </p>
                               )}
-                            </Button>
-                          </>
-                        ),
+                              <Input
+                                type="number"
+                                value={withdrawAmount}
+                                onChange={(e) => setWithdrawAmount(e.target.value)}
+                                placeholder="Amount (ytest.usd)"
+                                className={`${opInputClass} ${exceedsW ? "!border-red-500/60" : ""}`}
+                              />
+                              {exceedsW && (
+                                <p className="text-[11px] text-red-400">
+                                  Exceeds custody balance ({formatYtest(custodyNum.toString())} available)
+                                </p>
+                              )}
+                              {custodyNum > 0 && (
+                                <button
+                                  onClick={() => setWithdrawAmount(custodyNum.toFixed(2))}
+                                  className="text-[11px] text-amber-400 hover:text-amber-300"
+                                >
+                                  Use max: {formatYtest(custodyNum.toString())}
+                                </button>
+                              )}
+                              <Button
+                                onClick={handleWithdraw}
+                                disabled={isWithdrawing || !withdrawAmount || needsETH || exceedsW || custodyNum <= 0}
+                                className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
+                                size="sm"
+                              >
+                                {isWithdrawing ? (
+                                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Withdrawing…</>
+                                ) : (
+                                  <><ArrowDownRight className="w-4 h-4 mr-2" />Withdraw</>
+                                )}
+                              </Button>
+                            </>
+                          );
+                        },
+                      },
+                      {
+                        icon: XIcon,
+                        title: "Close All Channels",
+                        description: `Close all ${openChannels.length} open channel(s) at once`,
+                        onClick: handleCloseAllChannels,
                       },
                       {
                         icon: Droplets,
@@ -1787,93 +1955,105 @@ export default function YellowPage() {
                 </TabsContent>
 
               {/* ── Transactions Tab ── */}
-              <TabsContent value="transactions" className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-zinc-300">Transaction History</h3>
-                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
-                    {transactions.length} total
-                  </Badge>
-                </div>
-                {transactions.length === 0 ? (
-                  <div className="text-center py-12 space-y-4">
-                    <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
-                      <Receipt className="w-8 h-8 text-zinc-600" />
-                    </div>
-                    <div>
-                      <p className="text-zinc-400 font-medium">No transactions yet</p>
-                      <p className="text-zinc-600 text-sm mt-1">Transactions will appear here as you create channels, deposit, and transfer</p>
-                    </div>
+              {/* ── Activity Tab (Transactions + Network) ── */}
+              <TabsContent value="activity" className="space-y-6">
+                {/* Transaction History */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-zinc-300">Transaction History</h3>
+                    <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
+                      {transactions.length} total
+                    </Badge>
                   </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-zinc-700/50">
-                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Status</th>
-                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Operation</th>
-                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">TX Hash</th>
-                          <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Time</th>
-                          <th className="text-right py-2 px-3 text-xs font-medium text-zinc-500">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {transactions.map((tx) => (
-                          <tr key={tx.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors">
-                            <td className="py-3 px-3">
-                              <div className="flex items-center gap-2">
-                                <div className={`w-2.5 h-2.5 rounded-full ${tx.status === "confirmed" ? "bg-green-400" :
-                                  tx.status === "failed" ? "bg-red-400" :
-                                    "bg-amber-400 animate-pulse"
-                                  }`} />
-                                <span className={`text-xs font-medium capitalize ${tx.status === "confirmed" ? "text-green-400" :
-                                  tx.status === "failed" ? "text-red-400" :
-                                    "text-amber-400"
-                                  }`}>
-                                  {tx.status}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-3 px-3">
-                              <span className="text-zinc-200 font-medium">{tx.label}</span>
-                            </td>
-                            <td className="py-3 px-3">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs text-zinc-400">
-                                  {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
-                                </span>
-                                <CopyButton text={tx.hash} />
-                              </div>
-                            </td>
-                            <td className="py-3 px-3">
-                              <span className="text-xs text-zinc-500">
-                                {new Date(tx.timestamp).toLocaleString()}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              <a
-                                href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-amber-400 transition-colors"
-                              >
-                                Etherscan <ExternalLink className="w-3 h-3" />
-                              </a>
-                            </td>
+                  {transactions.length === 0 ? (
+                    <div className="text-center py-12 space-y-4">
+                      <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
+                        <Receipt className="w-8 h-8 text-zinc-600" />
+                      </div>
+                      <div>
+                        <p className="text-zinc-400 font-medium">No transactions yet</p>
+                        <p className="text-zinc-600 text-sm mt-1">
+                          Transactions will appear here as you create channels, deposit, and transfer
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-zinc-700/50">
+                            <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Status</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Operation</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">TX Hash</th>
+                            <th className="text-left py-2 px-3 text-xs font-medium text-zinc-500">Time</th>
+                            <th className="text-right py-2 px-3 text-xs font-medium text-zinc-500">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </TabsContent>
-
-              {/* ── Activity Tab ── */}
-              <TabsContent value="markets" className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-zinc-300">Network Activity</h3>
-                  <p className="text-xs text-zinc-500">Live stream from your Yellow session and tx pipeline</p>
+                        </thead>
+                        <tbody>
+                          {transactions.map((tx) => (
+                            <tr
+                              key={tx.id}
+                              className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
+                            >
+                              <td className="py-3 px-3">
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={`w-2.5 h-2.5 rounded-full ${
+                                      tx.status === "confirmed"
+                                        ? "bg-green-400"
+                                        : tx.status === "failed"
+                                          ? "bg-red-400"
+                                          : "bg-amber-400 animate-pulse"
+                                    }`}
+                                  />
+                                  <span
+                                    className={`text-xs font-medium capitalize ${
+                                      tx.status === "confirmed"
+                                        ? "text-green-400"
+                                        : tx.status === "failed"
+                                          ? "text-red-400"
+                                          : "text-amber-400"
+                                    }`}
+                                  >
+                                    {tx.status}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="text-zinc-200 font-medium">{tx.label}</span>
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs text-zinc-400">
+                                    {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
+                                  </span>
+                                  <CopyButton text={tx.hash} />
+                                </div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="text-xs text-zinc-500">
+                                  {new Date(tx.timestamp).toLocaleString()}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                <a
+                                  href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+                                >
+                                  Etherscan <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
 
+                {/* Network Activity + Health */}
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                   <div className="xl:col-span-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
                     {logs.length === 0 ? (
@@ -1891,12 +2071,13 @@ export default function YellowPage() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span
-                                className={`text-[11px] font-mono ${entry.level === "error"
-                                  ? "text-red-400"
-                                  : entry.level === "warn"
-                                    ? "text-amber-400"
-                                    : "text-emerald-400"
-                                  }`}
+                                className={`text-[11px] font-mono ${
+                                  entry.level === "error"
+                                    ? "text-red-400"
+                                    : entry.level === "warn"
+                                      ? "text-amber-400"
+                                      : "text-emerald-400"
+                                }`}
                               >
                                 {entry.level.toUpperCase()}
                               </span>
