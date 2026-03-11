@@ -4,11 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::{Announcement, EthAddress, MetaAddress, SuiAddress};
-use specter_crypto::derive::{
-    derive_eth_address_from_seed, derive_stealth_address, derive_stealth_keys,
-    derive_stealth_sui_address,
-};
-use specter_crypto::{compute_view_tag, decapsulate, encapsulate, KyberCiphertext};
+use specter_crypto::derive::{derive_stealth_address, derive_stealth_sui_address};
+use specter_crypto::{compute_view_tag, encapsulate};
 
 /// Stealth payment: address to send to and announcement to publish.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -56,6 +53,7 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
     })
 }
 
+/// Creates a stealth payment and attaches the provided metadata.
 pub fn create_stealth_payment_with_metadata(
     meta_address: &MetaAddress,
     metadata: PaymentMetadata,
@@ -65,6 +63,7 @@ pub fn create_stealth_payment_with_metadata(
     Ok(payment)
 }
 
+/// Builder for constructing a [`StealthPayment`] with optional metadata.
 #[derive(Default)]
 pub struct StealthPaymentBuilder {
     meta_address: Option<MetaAddress>,
@@ -76,40 +75,48 @@ pub struct StealthPaymentBuilder {
 }
 
 impl StealthPaymentBuilder {
+    /// Creates a new builder.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the recipient meta-address.
     pub fn recipient(mut self, meta_address: MetaAddress) -> Self {
         self.meta_address = Some(meta_address);
         self
     }
 
+    /// Sets an optional ENS name to attach as metadata.
     pub fn recipient_ens(mut self, name: impl Into<String>) -> Self {
         self.recipient_ens = Some(name.into());
         self
     }
 
+    /// Sets an optional amount to attach as metadata.
     pub fn amount(mut self, amount: impl Into<String>) -> Self {
         self.amount = Some(amount.into());
         self
     }
 
+    /// Sets an optional token symbol to attach as metadata.
     pub fn token(mut self, token: impl Into<String>) -> Self {
         self.token = Some(token.into());
         self
     }
 
+    /// Sets an optional memo to attach as metadata.
     pub fn memo(mut self, memo: impl Into<String>) -> Self {
         self.memo = Some(memo.into());
         self
     }
 
+    /// Sets an optional channel ID for the announcement.
     pub fn channel_id(mut self, id: [u8; 32]) -> Self {
         self.channel_id = Some(id);
         self
     }
 
+    /// Builds the payment by encapsulating to the recipient's viewing key.
     pub fn build(self) -> Result<StealthPayment> {
         let meta_address = self.meta_address.ok_or_else(|| {
             SpecterError::ValidationError("recipient meta-address is required".into())
@@ -145,7 +152,8 @@ impl StealthPaymentBuilder {
     }
 }
 
-pub fn verify_payment(payment: &StealthPayment, meta_address: &MetaAddress) -> Result<bool> {
+/// Performs basic structural validation of a [`StealthPayment`].
+pub fn verify_payment(payment: &StealthPayment, _meta_address: &MetaAddress) -> Result<bool> {
     payment.announcement.validate()?;
     if payment.announcement.ephemeral_key.len() != specter_core::constants::KYBER_CIPHERTEXT_SIZE {
         return Ok(false);
@@ -157,8 +165,8 @@ pub fn verify_payment(payment: &StealthPayment, meta_address: &MetaAddress) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use specter_core::types::KyberPublicKey;
-    use specter_crypto::generate_keypair;
+    use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_keys};
+    use specter_crypto::{decapsulate, generate_keypair, KyberCiphertext};
 
     fn create_test_meta_address() -> MetaAddress {
         let spending = generate_keypair();
@@ -177,9 +185,6 @@ mod tests {
 
         // Announcement should be valid
         assert!(payment.announcement.validate().is_ok());
-
-        // View tag should be set
-        assert!(payment.announcement.view_tag <= 255);
     }
 
     #[test]

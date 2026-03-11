@@ -4,13 +4,12 @@
 
 use tracing::{debug, info};
 
-use specter_core::error::{Result, SpecterError};
+use specter_core::error::Result;
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::Announcement;
-use specter_crypto::derive::StealthKeys;
 use specter_stealth::SpecterWallet;
 
-use crate::types::{ChannelStatus, DiscoveredChannel, PrivateChannelInfo};
+use crate::types::DiscoveredChannel;
 
 /// Channel discovery service.
 ///
@@ -160,7 +159,7 @@ impl DiscoveredChannel {
         ChannelCredentials {
             channel_id: self.channel_id.clone(),
             stealth_address: self.stealth_address.to_checksum_string(),
-            private_key: hex::encode(&self.eth_private_key),
+            private_key: hex::encode(self.eth_private_key),
         }
     }
 }
@@ -188,7 +187,6 @@ impl std::fmt::Display for ChannelCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
 
     #[test]
     fn test_channel_credentials_display() {

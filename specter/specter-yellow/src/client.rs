@@ -1,15 +1,13 @@
 //! Yellow Network client with SPECTER privacy integration.
 
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use parking_lot::RwLock;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::types::MetaAddress;
@@ -257,18 +255,19 @@ impl YellowClient {
             .await?;
 
         // Create channel request with stealth address as participant
-        let session = self.session.read();
-        let session = session
-            .as_ref()
-            .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
-
         let create_request = rpc::CreateChannelRequest {
             chain_id: self.config.chain_id,
             token: token.into(),
             participant: Some(stealth_address.to_checksum_string()),
         };
 
-        let msg = self.build_signed_rpc_message("create_channel", &create_request, session)?;
+        let msg = {
+            let session_guard = self.session.read();
+            let session = session_guard
+                .as_ref()
+                .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
+            self.build_signed_rpc_message("create_channel", &create_request, session)?
+        };
 
         sink.send(Message::Text(msg))
             .await
@@ -304,8 +303,6 @@ impl YellowClient {
         wallet: &SpecterWallet,
         registry: &specter_registry::MemoryRegistry,
     ) -> Result<Vec<DiscoveredChannel>> {
-        use specter_core::traits::AnnouncementRegistry;
-
         info!("Scanning for private channels...");
 
         let mut discovered = Vec::new();
@@ -361,17 +358,18 @@ impl YellowClient {
         self.authenticate_on_connection(&mut sink, &mut stream)
             .await?;
 
-        let session = self.session.read();
-        let session = session
-            .as_ref()
-            .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
-
         let close_request = rpc::CloseChannelRequest {
             channel_id: channel_id.into(),
             funds_destination: self.wallet_address.clone(),
         };
 
-        let msg = self.build_signed_rpc_message("close_channel", &close_request, session)?;
+        let msg = {
+            let session_guard = self.session.read();
+            let session = session_guard
+                .as_ref()
+                .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
+            self.build_signed_rpc_message("close_channel", &close_request, session)?
+        };
 
         sink.send(Message::Text(msg))
             .await
@@ -405,6 +403,7 @@ impl YellowClient {
     fn sign_eip712_challenge(&self, _challenge: &str) -> Result<String> {
         // Simplified - in production use proper EIP-712 signing
         // This would sign with the main wallet private key
+        let _ = self.wallet_private_key.len();
         Ok("0x".to_string() + &hex::encode(vec![0u8; 65]))
     }
 
@@ -473,18 +472,19 @@ impl YellowClient {
         channel_id: &str,
         amount: u64,
     ) -> Result<()> {
-        let session = self.session.read();
-        let session = session
-            .as_ref()
-            .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
-
         let resize_request = rpc::ResizeChannelRequest {
             channel_id: channel_id.into(),
             allocate_amount: amount,
             funds_destination: self.wallet_address.clone(),
         };
 
-        let msg = self.build_signed_rpc_message("resize_channel", &resize_request, session)?;
+        let msg = {
+            let session_guard = self.session.read();
+            let session = session_guard
+                .as_ref()
+                .ok_or_else(|| SpecterError::YellowError("Not authenticated".into()))?;
+            self.build_signed_rpc_message("resize_channel", &resize_request, session)?
+        };
 
         sink.send(Message::Text(msg))
             .await

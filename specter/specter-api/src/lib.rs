@@ -23,7 +23,7 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
-use crate::middleware::{RateLimitState, spawn_rate_limit_cleanup};
+use crate::middleware::{spawn_rate_limit_cleanup, RateLimitState};
 
 /// API server for SPECTER.
 pub struct ApiServer {
@@ -94,7 +94,8 @@ impl ApiServer {
 
         axum::serve(
             listener,
-            self.router().into_make_service_with_connect_info::<SocketAddr>(),
+            self.router()
+                .into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
     }
@@ -129,10 +130,8 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             .allow_headers(allow_headers)
     } else {
         // Production: only allow specified origins
-        let parsed: Vec<axum::http::HeaderValue> = origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
+        let parsed: Vec<axum::http::HeaderValue> =
+            origins.iter().filter_map(|o| o.parse().ok()).collect();
 
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(parsed))

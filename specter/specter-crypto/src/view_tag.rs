@@ -65,8 +65,7 @@ pub fn compute_view_tag(shared_secret: &[u8]) -> u8 {
 /// * `len` - Number of bytes to return (max 32)
 pub fn compute_view_tag_bytes(shared_secret: &[u8], len: usize) -> Vec<u8> {
     let max_len = len.min(SHAKE256_VIEW_TAG_OUTPUT_SIZE);
-    let hash = shake256(DOMAIN_VIEW_TAG, shared_secret, max_len);
-    hash
+    shake256(DOMAIN_VIEW_TAG, shared_secret, max_len)
 }
 
 /// Checks if a view tag matches the expected value for a shared secret.
@@ -164,9 +163,7 @@ mod tests {
 
         // Different secrets should usually produce different tags
         // (1/256 chance of collision)
-        // We just verify both are valid u8 values
-        assert!(tag1 <= 255);
-        assert!(tag2 <= 255);
+        let _ = (tag1, tag2);
     }
 
     #[test]

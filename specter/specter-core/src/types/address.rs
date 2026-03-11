@@ -207,9 +207,9 @@ impl EthAddress {
     }
 
     /// Returns checksummed hex string (EIP-55).
-    pub fn to_checksum_string(&self) -> String {
+    pub fn to_checksum_string(self) -> String {
         // Simple implementation - could add full EIP-55 checksum later
-        format!("0x{}", hex::encode(&self.bytes))
+        format!("0x{}", hex::encode(self.bytes))
     }
 
     /// Parses from hex string (with or without 0x prefix).
@@ -283,8 +283,8 @@ impl SuiAddress {
     }
 
     /// Returns hex string with 0x prefix (Sui format).
-    pub fn to_hex_string(&self) -> String {
-        format!("0x{}", hex::encode(&self.bytes))
+    pub fn to_hex_string(self) -> String {
+        format!("0x{}", hex::encode(self.bytes))
     }
 
     /// Parses from hex string (with or without 0x prefix).

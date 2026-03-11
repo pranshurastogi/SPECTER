@@ -127,6 +127,7 @@ pub fn scan_announcement(
     }
 }
 
+/// Scans a list of announcements and returns `(index, keys)` for each match.
 pub fn scan_announcements(
     announcements: &[Announcement],
     viewing_sk: &[u8],
@@ -145,13 +146,18 @@ pub fn scan_announcements(
         .collect()
 }
 
+/// Result of scanning announcements with additional context.
 #[derive(Debug)]
 pub struct DiscoveryResult {
+    /// The matching announcement.
     pub announcement: Announcement,
+    /// Derived stealth keys for the announcement.
     pub keys: StealthKeys,
+    /// Index of the announcement in the input slice.
     pub index: usize,
 }
 
+/// Scans announcements and returns full context for each discovered payment.
 pub fn scan_with_context(
     announcements: &[Announcement],
     viewing_sk: &[u8],
@@ -174,6 +180,7 @@ pub fn scan_with_context(
         .collect()
 }
 
+/// Verifies that a given announcement derives to an expected stealth address.
 pub fn verify_address_from_announcement(
     announcement: &Announcement,
     viewing_sk: &[u8],

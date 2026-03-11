@@ -2,8 +2,7 @@
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::traits::AnnouncementRegistry;
-use specter_core::types::{Announcement, EthAddress, MetaAddress};
-use specter_stealth::create_stealth_payment;
+use specter_core::types::{Announcement, EthAddress};
 
 use crate::client::YellowClient;
 use crate::types::*;
@@ -143,10 +142,10 @@ impl PrivateChannel {
     /// This is critical - without publishing, the recipient won't know about the channel.
     pub async fn publish_announcement<R: AnnouncementRegistry>(&self, registry: &R) -> Result<u64> {
         let ephemeral_key =
-            hex::decode(&self.announcement.ephemeral_key).map_err(|e| SpecterError::HexError(e))?;
+            hex::decode(&self.announcement.ephemeral_key).map_err(SpecterError::HexError)?;
 
         let channel_id_bytes =
-            hex::decode(&self.announcement.channel_id).map_err(|e| SpecterError::HexError(e))?;
+            hex::decode(&self.announcement.channel_id).map_err(SpecterError::HexError)?;
 
         let mut channel_id_arr = [0u8; 32];
         if channel_id_bytes.len() == 32 {
@@ -163,10 +162,10 @@ impl PrivateChannel {
     /// Creates the full announcement ready for the SPECTER registry.
     pub fn to_announcement(&self) -> Result<Announcement> {
         let ephemeral_key =
-            hex::decode(&self.announcement.ephemeral_key).map_err(|e| SpecterError::HexError(e))?;
+            hex::decode(&self.announcement.ephemeral_key).map_err(SpecterError::HexError)?;
 
         let channel_id_bytes =
-            hex::decode(&self.announcement.channel_id).map_err(|e| SpecterError::HexError(e))?;
+            hex::decode(&self.announcement.channel_id).map_err(SpecterError::HexError)?;
 
         let mut channel_id_arr = [0u8; 32];
         if channel_id_bytes.len() == 32 {

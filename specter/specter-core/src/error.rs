@@ -28,11 +28,21 @@ pub enum SpecterError {
 
     /// Invalid key size or format.
     #[error("Invalid key: expected {expected} bytes, got {actual}")]
-    InvalidKeySize { expected: usize, actual: usize },
+    InvalidKeySize {
+        /// Expected key length in bytes.
+        expected: usize,
+        /// Actual key length in bytes.
+        actual: usize,
+    },
 
     /// Invalid ciphertext size or format.
     #[error("Invalid ciphertext: expected {expected} bytes, got {actual}")]
-    InvalidCiphertextSize { expected: usize, actual: usize },
+    InvalidCiphertextSize {
+        /// Expected ciphertext length in bytes.
+        expected: usize,
+        /// Actual ciphertext length in bytes.
+        actual: usize,
+    },
 
     /// Cryptographic verification failed.
     #[error("Cryptographic verification failed: {0}")]
@@ -51,7 +61,12 @@ pub enum SpecterError {
 
     /// View tag mismatch during scanning.
     #[error("View tag mismatch: expected {expected}, got {actual}")]
-    ViewTagMismatch { expected: u8, actual: u8 },
+    ViewTagMismatch {
+        /// Expected view tag.
+        expected: u8,
+        /// Actual view tag.
+        actual: u8,
+    },
 
     /// Failed to derive stealth keys.
     #[error("Stealth key derivation failed: {0}")]
@@ -85,7 +100,12 @@ pub enum SpecterError {
 
     /// ENS resolution failed.
     #[error("ENS resolution failed for '{name}': {reason}")]
-    EnsResolutionFailed { name: String, reason: String },
+    EnsResolutionFailed {
+        /// ENS name that failed to resolve.
+        name: String,
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
 
     /// No SPECTER record found in ENS.
     #[error("No SPECTER record found for ENS name: {0}")]
@@ -104,7 +124,12 @@ pub enum SpecterError {
 
     /// SuiNS resolution failed.
     #[error("SuiNS resolution failed for '{name}': {reason}")]
-    SuinsResolutionFailed { name: String, reason: String },
+    SuinsResolutionFailed {
+        /// SuiNS name that failed to resolve.
+        name: String,
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
 
     /// No SPECTER record found in SuiNS.
     #[error("No SPECTER record found for SuiNS name: {0}")]
@@ -119,7 +144,12 @@ pub enum SpecterError {
 
     /// IPFS download failed.
     #[error("IPFS download failed for CID '{cid}': {reason}")]
-    IpfsDownloadFailed { cid: String, reason: String },
+    IpfsDownloadFailed {
+        /// CID that failed to download.
+        cid: String,
+        /// Human-readable reason for the failure.
+        reason: String,
+    },
 
     /// Invalid IPFS CID format.
     #[error("Invalid IPFS CID: {0}")]
@@ -127,7 +157,10 @@ pub enum SpecterError {
 
     /// IPFS gateway timeout.
     #[error("IPFS gateway timeout after {seconds}s")]
-    IpfsTimeout { seconds: u64 },
+    IpfsTimeout {
+        /// Timeout duration in seconds.
+        seconds: u64,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SERIALIZATION ERRORS
@@ -146,7 +179,12 @@ pub enum SpecterError {
 
     /// Protocol version mismatch.
     #[error("Protocol version mismatch: expected {expected}, got {actual}")]
-    VersionMismatch { expected: u8, actual: u8 },
+    VersionMismatch {
+        /// Expected protocol version.
+        expected: u8,
+        /// Actual protocol version.
+        actual: u8,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════════
     // NETWORK ERRORS

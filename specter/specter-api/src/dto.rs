@@ -26,6 +26,7 @@ pub struct CreateStealthRequest {
     /// Meta-address (hex-encoded)
     pub meta_address: String,
     /// Optional: Yellow channel ID (hex)
+    #[allow(dead_code)]
     pub channel_id: Option<String>,
 }
 

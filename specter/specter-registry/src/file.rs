@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
-use parking_lot::RwLock;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, instrument, warn};

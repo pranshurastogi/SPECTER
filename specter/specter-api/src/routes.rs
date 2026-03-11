@@ -10,6 +10,7 @@ use axum::{
 use crate::handlers;
 use crate::state::AppState;
 
+/// Builds the Axum router for the SPECTER API.
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(handlers::health_check))

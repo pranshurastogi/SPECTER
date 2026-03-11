@@ -61,7 +61,7 @@ impl KyberPublicKey {
 
     /// Returns the hex-encoded public key.
     pub fn to_hex(&self) -> String {
-        hex::encode(&self.bytes)
+        hex::encode(self.bytes)
     }
 
     /// Creates a public key from hex string.

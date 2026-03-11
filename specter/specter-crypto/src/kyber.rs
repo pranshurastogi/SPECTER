@@ -200,17 +200,9 @@ pub fn generate_keypair() -> KeyPair {
 
     // Convert to byte arrays
     // These expect calls are safe because ml-kem guarantees fixed sizes
-    let public = KyberPublicKey::from_array(
-        ek.as_bytes()
-            .try_into()
-            .expect("MlKem768 encapsulation key should be 1184 bytes"),
-    );
+    let public = KyberPublicKey::from_array(ek.as_bytes().into());
 
-    let secret = KyberSecretKey::from_array(
-        dk.as_bytes()
-            .try_into()
-            .expect("MlKem768 decapsulation key should be 2400 bytes"),
-    );
+    let secret = KyberSecretKey::from_array(dk.as_bytes().into());
 
     KeyPair::new(public, secret)
 }

@@ -105,10 +105,7 @@ impl RateLimitState {
         }
     }
 
-    fn get_limiter(
-        &self,
-        ip: IpAddr,
-    ) -> Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>> {
+    fn get_limiter(&self, ip: IpAddr) -> Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>> {
         self.limiters
             .entry(ip)
             .or_insert_with(|| {
@@ -203,22 +200,13 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     let headers = response.headers_mut();
 
     // Prevent MIME type sniffing
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        "nosniff".parse().unwrap(),
-    );
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
 
     // Prevent clickjacking
-    headers.insert(
-        header::X_FRAME_OPTIONS,
-        "DENY".parse().unwrap(),
-    );
+    headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
 
     // XSS protection (legacy browsers)
-    headers.insert(
-        "x-xss-protection",
-        "1; mode=block".parse().unwrap(),
-    );
+    headers.insert("x-xss-protection", "1; mode=block".parse().unwrap());
 
     // Don't send referrer to other origins
     headers.insert(

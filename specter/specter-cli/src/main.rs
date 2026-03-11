@@ -404,7 +404,7 @@ async fn cmd_bench(count: usize) -> Result<()> {
         } else {
             // Random announcement
             let ann = Announcement::new(
-                vec![((i as u8) + 1); specter_core::constants::KYBER_CIPHERTEXT_SIZE],
+                vec![(i as u8) + 1; specter_core::constants::KYBER_CIPHERTEXT_SIZE],
                 (i % 256) as u8,
             );
             let _ = registry.publish(ann).await;

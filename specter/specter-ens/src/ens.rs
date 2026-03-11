@@ -151,7 +151,7 @@ impl EnsClient {
 
         let data = format!(
             "0x59d1d43c{}{}",
-            hex::encode(&node),
+            hex::encode(node),
             self.encode_string_abi(key)
         ); // text(bytes32,string)
         let result_hex = match self.eth_call(&resolver_addr, &data).await? {
@@ -247,7 +247,7 @@ impl EnsClient {
     fn encode_string_abi(&self, s: &str) -> String {
         let bytes = s.as_bytes();
         let len = bytes.len();
-        let padded_len = ((len + 31) / 32) * 32;
+        let padded_len = len.div_ceil(32) * 32;
 
         let mut encoded = vec![0u8; 64 + padded_len];
         encoded[31] = 0x40; // offset: string data starts at byte 64 from params start
@@ -274,7 +274,7 @@ impl EnsClient {
             combined[..32].copy_from_slice(&node);
             combined[32..].copy_from_slice(&label_hash);
 
-            node = Keccak256::digest(&combined).into();
+            node = Keccak256::digest(combined).into();
         }
 
         node
@@ -288,7 +288,7 @@ impl EnsClient {
             return Ok(None);
         }
 
-        let bytes = hex::decode(data).map_err(|e| SpecterError::HexError(e))?;
+        let bytes = hex::decode(data).map_err(SpecterError::HexError)?;
 
         if bytes.len() < 64 {
             return Ok(None);

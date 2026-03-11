@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
 
-use specter_core::error::{Result, SpecterError};
-use specter_core::types::{KeyPair, KyberPublicKey, MetaAddress, SpecterKeys};
+use specter_core::error::Result;
+use specter_core::types::{KyberPublicKey, MetaAddress, SpecterKeys};
 use specter_crypto::derive::{derive_stealth_keys, StealthKeys};
 use specter_crypto::{compute_view_tag, decapsulate, generate_keypair};
 

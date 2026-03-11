@@ -13,8 +13,7 @@ use tracing::{debug, info};
 
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
-use specter_crypto::derive::derive_stealth_address;
-use specter_crypto::{compute_view_tag, encapsulate, generate_keypair};
+use specter_crypto::{compute_view_tag, generate_keypair};
 use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
@@ -203,7 +202,7 @@ pub async fn resolve_suins(
     Path(name): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ResolveSuinsResponse>> {
-    if params.get("no_cache").is_some() {
+    if params.contains_key("no_cache") {
         state.suins_resolver.clear_cache();
     }
 
@@ -501,11 +500,7 @@ pub async fn yellow_discover_channels(
         .filter(|d| d.announcement.channel_id.is_some())
         .map(|d| {
             let amount = d.announcement.amount.clone().unwrap_or_else(|| "0".into());
-            let token = if d.announcement.chain.as_deref() == Some("ethereum") {
-                "USDC".into()
-            } else {
-                "USDC".into()
-            };
+            let token = "USDC".into();
             YellowDiscoveredChannelDto {
                 channel_id: d
                     .announcement

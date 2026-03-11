@@ -6,16 +6,21 @@ use specter_suins::{SuinsResolver, SuinsResolverConfig};
 use specter_yellow::types::YellowConfig;
 
 #[derive(Clone, Debug)]
+/// Configuration for the API service.
 pub struct ApiConfig {
+    /// Ethereum RPC URL.
     pub rpc_url: String,
     /// When true, use Sepolia ENS (Sepolia RPC default)
     pub use_testnet: bool,
+    /// Optional Pinata JWT used for pinning.
     pub pinata_jwt: Option<String>,
     /// Dedicated Pinata gateway (required for IPFS retrieves)
     pub pinata_gateway_url: String,
     /// Gateway token (required for IPFS retrieves)
     pub pinata_gateway_token: String,
+    /// Sui RPC URL.
     pub sui_rpc_url: String,
+    /// Enables IPFS download caching where safe.
     pub enable_cache: bool,
     /// Security configuration
     pub security: SecurityConfig,
@@ -54,6 +59,7 @@ impl Default for SecurityConfig {
 }
 
 impl SecurityConfig {
+    /// Loads security configuration from environment variables.
     pub fn from_env() -> Self {
         let api_key = std::env::var("API_KEY").ok().filter(|k| !k.is_empty());
 
@@ -109,6 +115,7 @@ impl Default for ApiConfig {
 }
 
 impl ApiConfig {
+    /// Loads API configuration from environment variables (optionally via `.env`).
     pub fn from_env() -> Self {
         let _ = dotenvy::dotenv();
         // If running via cargo from repo root, cwd has no .env; try crate root (specter/.env)
@@ -137,8 +144,7 @@ impl ApiConfig {
         } else {
             DEFAULT_ETH_MAINNET_RPC
         };
-        let rpc_url =
-            std::env::var("ETH_RPC_URL").unwrap_or_else(|_| default_rpc.into());
+        let rpc_url = std::env::var("ETH_RPC_URL").unwrap_or_else(|_| default_rpc.into());
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
             if use_testnet {
@@ -170,15 +176,22 @@ impl ApiConfig {
     }
 }
 
+/// Shared application state for request handlers.
 pub struct AppState {
+    /// API configuration.
     pub config: ApiConfig,
+    /// In-memory announcement registry.
     pub registry: MemoryRegistry,
+    /// ENS resolver (Ethereum).
     pub resolver: SpecterResolver,
+    /// SuiNS resolver (Sui).
     pub suins_resolver: SuinsResolver,
+    /// Yellow Network configuration.
     pub yellow_config: YellowConfig,
 }
 
 impl AppState {
+    /// Creates a new [`AppState`] from a provided [`ApiConfig`].
     pub fn new(config: ApiConfig) -> Self {
         let mut resolver_config = ResolverConfig::new(
             &config.rpc_url,

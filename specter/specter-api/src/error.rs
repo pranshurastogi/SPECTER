@@ -68,7 +68,10 @@ impl IntoResponse for ApiError {
         // In production (API_KEY is set), sanitize internal error messages
         // to avoid leaking implementation details to attackers.
         let message = if self.status == StatusCode::INTERNAL_SERVER_ERROR
-            && std::env::var("API_KEY").ok().filter(|k| !k.is_empty()).is_some()
+            && std::env::var("API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty())
+                .is_some()
         {
             "An internal error occurred".to_string()
         } else {

@@ -130,7 +130,7 @@ impl MemoryRegistry {
             // Update view tag index
             self.view_tag_index
                 .entry(ann.view_tag)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(ann.id);
 
             // Update tx hash index
@@ -196,7 +196,7 @@ impl AnnouncementRegistry for MemoryRegistry {
         // Update view tag index
         self.view_tag_index
             .entry(announcement.view_tag)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(id);
 
         // Update tx hash index

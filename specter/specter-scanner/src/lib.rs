@@ -29,16 +29,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, rust_2018_idioms)]
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Instant;
 
-use async_trait::async_trait;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, warn};
 
-use specter_core::error::{Result, SpecterError};
+use specter_core::error::Result;
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::Announcement;
 use specter_stealth::discovery::{scan_announcement, DiscoveredPayment, ScanResult, ScanStats};
@@ -218,7 +215,7 @@ impl Scanner {
     }
 
     /// Creates a scanner from a wallet.
-    pub fn from_wallet(wallet: &specter_stealth::SpecterWallet) -> Self {
+    pub fn from_wallet(_wallet: &specter_stealth::SpecterWallet) -> Self {
         // Note: This requires exposing secret keys from wallet
         // In production, you might want a different approach
         todo!("Implement from_wallet with proper key access")
@@ -388,7 +385,7 @@ impl Scanner {
                 }
 
                 // Update progress every 100 announcements
-                if scanned % 100 == 0 {
+                if scanned.is_multiple_of(100) {
                     progress.update(
                         scanned,
                         discoveries.len() as u64,
@@ -464,6 +461,8 @@ impl From<ScanStats> for ScanSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
     use specter_crypto::{compute_view_tag, encapsulate, generate_keypair};
     use specter_registry::MemoryRegistry;

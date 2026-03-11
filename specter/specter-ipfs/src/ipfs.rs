@@ -299,7 +299,7 @@ impl IpfsClient {
 
         let response = self
             .http_client
-            .delete(&format!("https://api.pinata.cloud/pinning/unpin/{}", cid))
+            .delete(format!("https://api.pinata.cloud/pinning/unpin/{}", cid))
             .header("Authorization", format!("Bearer {}", jwt))
             .send()
             .await

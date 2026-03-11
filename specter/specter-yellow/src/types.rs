@@ -229,48 +229,66 @@ pub mod rpc {
     /// Auth request message.
     #[derive(Debug, Serialize)]
     pub struct AuthRequest {
+        /// Wallet address performing authentication.
         pub address: String,
+        /// Application identifier.
         pub application: String,
+        /// Ephemeral session public key.
         pub session_key: String,
+        /// Allowances requested for the session.
         pub allowances: Vec<super::Allowance>,
+        /// Expiration timestamp (unix seconds).
         pub expires_at: u64,
+        /// Scope string for the session.
         pub scope: String,
     }
 
     /// Create channel request.
     #[derive(Debug, Serialize)]
     pub struct CreateChannelRequest {
+        /// Chain ID for the channel.
         pub chain_id: u64,
+        /// Token address.
         pub token: String,
+        /// Optional participant address (stealth address for private channels).
         pub participant: Option<String>, // Stealth address for private channels
     }
 
     /// Resize channel request.
     #[derive(Debug, Serialize)]
     pub struct ResizeChannelRequest {
+        /// Channel identifier.
         pub channel_id: String,
+        /// Amount to allocate.
         pub allocate_amount: u64,
+        /// Destination address for funds.
         pub funds_destination: String,
     }
 
     /// Close channel request.
     #[derive(Debug, Serialize)]
     pub struct CloseChannelRequest {
+        /// Channel identifier.
         pub channel_id: String,
+        /// Destination address for funds.
         pub funds_destination: String,
     }
 
     /// Generic RPC response.
     #[derive(Debug, Deserialize)]
     pub struct RpcResponse<T> {
+        /// Successful response payload: (request_id, method, result, optional_block).
         pub res: Option<(String, String, T, Option<u64>)>,
+        /// Error payload (if any).
         pub error: Option<RpcError>,
     }
 
     /// RPC error.
     #[derive(Debug, Deserialize)]
     pub struct RpcError {
+        /// Numeric error code.
         pub code: i32,
+        /// Human-readable error message.
         pub message: String,
     }
 }

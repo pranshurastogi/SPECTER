@@ -4,10 +4,10 @@
 
 use tracing::{debug, info};
 
-use specter_core::error::{Result, SpecterError};
+use specter_core::error::Result;
 
 use crate::client::YellowClient;
-use crate::types::{Allocation, DiscoveredChannel, SettlementResult};
+use crate::types::{DiscoveredChannel, SettlementResult};
 
 /// Private settlement handler.
 ///
@@ -50,7 +50,7 @@ impl PrivateSettlement {
     /// After settlement, the funds are in the custody contract.
     /// This withdraws them to the stealth address, from which
     /// the recipient can then move them using the stealth private key.
-    pub async fn withdraw(&self, client: &YellowClient, token: &str) -> Result<String> {
+    pub async fn withdraw(&self, _client: &YellowClient, token: &str) -> Result<String> {
         info!(
             channel_id = %self.channel.channel_id,
             token,
@@ -77,6 +77,7 @@ impl PrivateSettlement {
         info!(
             from = %self.channel.stealth_address,
             to = main_address,
+            token,
             amount,
             "Sweeping funds to main wallet"
         );
@@ -107,7 +108,7 @@ impl PrivateSettlement {
 
     /// Returns the stealth private key as hex string.
     pub fn stealth_private_key_hex(&self) -> String {
-        hex::encode(&self.channel.eth_private_key)
+        hex::encode(self.channel.eth_private_key)
     }
 }
 
