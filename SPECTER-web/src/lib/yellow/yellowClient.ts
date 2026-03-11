@@ -1,6 +1,11 @@
 /**
- * Unified Yellow Network client using @erc7824/nitrolite SDK directly over WebSocket.
+ * Yellow Network Client
+ * 
+ * Unified client using @erc7824/nitrolite SDK directly over WebSocket.
  * Manages the entire lifecycle: config, auth, channels, transfers, close, withdraw.
+ * 
+ * Supports both Sandbox (testnet) and Production (mainnet) environments.
+ * Reference: https://docs.yellow.org/docs/learn/introduction/supported-chains/
  */
 
 import {
@@ -12,6 +17,9 @@ import {
   type Chain,
   type Transport,
   type ParseAccount,
+  type PublicClient,
+  createPublicClient,
+  http,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
@@ -48,31 +56,25 @@ import {
   type MessageSigner,
   type RPCNetworkInfo,
   type RPCBalance,
-  type RPCChannelUpdateWithWallet,
   type RPCAsset,
   type StateIntent,
   type AuthRequestParams,
 } from "@erc7824/nitrolite";
-import { publicClient } from "../blockchain/viemClient";
-import { chain } from "../blockchain/chainConfig";
+import {
+  type YellowEnvironment,
+  type YellowNetworkConfig,
+  getYellowConfig,
+  getNetworkConfig,
+  getPrimaryAsset,
+  getViemChain,
+  YELLOW_APP_NAME,
+  YELLOW_AUTH_SCOPE,
+  YELLOW_CHALLENGE_DURATION,
+} from "./yellowConfig";
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-const _isTestnet =
-  import.meta.env.VITE_USE_TESTNET === "true" ||
-  import.meta.env.VITE_USE_TESTNET === "1";
-
-const WS_URL: string =
-  import.meta.env.VITE_YELLOW_WS_URL ||
-  (_isTestnet
-    ? "wss://clearnet-sandbox.yellow.com/ws"
-    : "wss://clearnet.yellow.com/ws");
-const CUSTODY_ADDRESS: Address = "0x019B65A265EB3363822f2752141b3dF16131b262";
-const ADJUDICATOR_ADDRESS: Address = "0x7c7ccbc98469190849BCC6c926307794fDfB11F2";
-const APPLICATION_NAME = "yellow_demo";
-const AUTH_SCOPE = "console";
-
-// ── Types ────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface YellowConfig {
   brokerAddress: Address;
@@ -109,16 +111,11 @@ export type LogLevel = "info" | "warn" | "error";
 export interface YellowEvent {
   type: YellowEventType;
   timestamp: number;
-  /** For log events */
   level?: LogLevel;
   message?: string;
-  /** For status events */
   connectionStatus?: YellowConnectionStatus;
-  /** For channels events */
   channels?: ChannelInfo[];
-  /** For balances events */
   balances?: LedgerBalance[];
-  /** For config events */
   config?: YellowConfig;
 }
 
@@ -131,15 +128,20 @@ export enum YellowConnectionStatus {
   Error = "error",
 }
 
+/** Options for connecting to Yellow Network */
+export interface YellowConnectOptions {
+  /** Environment: 'sandbox' for testnet, 'production' for mainnet */
+  environment: YellowEnvironment;
+  /** Chain ID to use (must be supported by the environment) */
+  chainId: number;
+}
+
 type EventCallback = (event: YellowEvent) => void;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Map a raw server channel object to ChannelInfo.
- * The server sends snake_case; the SDK parser converts to camelCase.
- * We handle both to be safe.
- */
 function mapChannel(ch: any): ChannelInfo {
   return {
     channelId: (ch.channelId ?? ch.channel_id) as Hex,
@@ -153,9 +155,6 @@ function mapChannel(ch: any): ChannelInfo {
   };
 }
 
-/**
- * Extract a readable message from viem/contract errors (simulation failed, revert reason, etc.).
- */
 function normalizeContractError(err: any): string {
   if (!err) return "Unknown error";
   const msg = err?.message ?? "";
@@ -177,7 +176,9 @@ function normalizeContractError(err: any): string {
   return msg || short || String(err);
 }
 
-// ── YellowClient ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// YellowClient
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class YellowClient {
   private ws: WebSocket | null = null;
@@ -185,12 +186,18 @@ export class YellowClient {
   private sessionAddress: Address | null = null;
   private nitroliteClient: NitroliteClient | null = null;
   private walletClient: WalletClient<Transport, Chain, ParseAccount<Account>> | null = null;
+  private publicClient: PublicClient | null = null;
   private connectedAddress: Address | null = null;
   private listeners: EventCallback[] = [];
   private status: YellowConnectionStatus = YellowConnectionStatus.Disconnected;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private config: YellowConfig | null = null;
   private assets: RPCAsset[] = [];
+  
+  // Environment-specific state
+  private environment: YellowEnvironment = "sandbox";
+  private networkConfig: YellowNetworkConfig | null = null;
+  private chainId: number = 11155111; // Default to Sepolia
 
   // ── Event system ─────────────────────────────────────────────────────────
 
@@ -229,6 +236,8 @@ export class YellowClient {
     });
   }
 
+  // ── Getters ──────────────────────────────────────────────────────────────
+
   getStatus(): YellowConnectionStatus {
     return this.status;
   }
@@ -241,21 +250,27 @@ export class YellowClient {
     return this.assets;
   }
 
-  /** Returns the main wallet address that authenticated with Yellow. */
   getConnectedAddress(): Address | null {
     return this.connectedAddress;
   }
 
-  /** Find the supported token address for a given chain ID (e.g. Sepolia). */
+  getEnvironment(): YellowEnvironment {
+    return this.environment;
+  }
+
+  getChainId(): number {
+    return this.chainId;
+  }
+
+  getNetworkConfig(): YellowNetworkConfig | null {
+    return this.networkConfig;
+  }
+
   getTokenForChain(chainId: number): Address | null {
     const asset = this.assets.find((a) => a.chainId === chainId);
     return asset?.token ?? null;
   }
 
-  /**
-   * Filter channels so only those belonging to the connected wallet are returned.
-   * The clearnode sandbox returns ALL channels from ALL wallets; we must filter client-side.
-   */
   private filterChannelsByWallet(channels: ChannelInfo[]): ChannelInfo[] {
     if (!this.connectedAddress) return channels;
     const addr = this.connectedAddress.toLowerCase();
@@ -268,11 +283,14 @@ export class YellowClient {
     });
   }
 
-  // ── Config fetch (one-shot WS) ──────────────────────────────────────────
+  // ── Config fetch ─────────────────────────────────────────────────────────
 
-  async fetchConfig(): Promise<YellowConfig> {
+  async fetchConfig(options: YellowConnectOptions): Promise<YellowConfig> {
+    const envConfig = getYellowConfig(options.environment);
+    const wsUrl = envConfig.wsUrl;
+
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(wsUrl);
       const timeout = setTimeout(() => {
         ws.close();
         reject(new Error("Config fetch timeout (10s)"));
@@ -331,12 +349,35 @@ export class YellowClient {
   // ── Full auth connect ────────────────────────────────────────────────────
 
   async connect(
-    walletClient: WalletClient<Transport, Chain, ParseAccount<Account>>
+    walletClient: WalletClient<Transport, Chain, ParseAccount<Account>>,
+    options: YellowConnectOptions
   ): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.log("warn", "Already connected — disconnecting first");
       this.disconnect();
     }
+
+    // Store environment configuration
+    this.environment = options.environment;
+    this.chainId = options.chainId;
+    const envConfig = getYellowConfig(options.environment);
+    this.networkConfig = getNetworkConfig(options.environment, options.chainId) ?? null;
+
+    if (!this.networkConfig) {
+      throw new Error(
+        `Chain ${options.chainId} is not supported in ${options.environment} environment. ` +
+        `Supported chains: ${envConfig.networks.map(n => `${n.chainName} (${n.chainId})`).join(", ")}`
+      );
+    }
+
+    const wsUrl = envConfig.wsUrl;
+    const primaryAsset = getPrimaryAsset(options.environment);
+
+    this.log("info", `Environment: ${options.environment.toUpperCase()}`);
+    this.log("info", `Chain: ${this.networkConfig.chainName} (${options.chainId})`);
+    this.log("info", `WebSocket: ${wsUrl}`);
+    this.log("info", `Custody: ${this.networkConfig.custody}`);
+    this.log("info", `Adjudicator: ${this.networkConfig.adjudicator}`);
 
     this.walletClient = walletClient;
     const account = walletClient.account;
@@ -346,6 +387,25 @@ export class YellowClient {
     this.setStatus(YellowConnectionStatus.Connecting);
     this.log("info", `Connecting for wallet: ${account.address}`);
     this.log("info", "Generating session key...");
+
+    // Create a public client for this chain
+    const viemChain = getViemChain(options.chainId);
+    if (viemChain) {
+      this.publicClient = createPublicClient({
+        chain: viemChain,
+        transport: http(this.networkConfig.rpcUrl),
+      });
+    } else {
+      this.publicClient = createPublicClient({
+        chain: {
+          id: options.chainId,
+          name: this.networkConfig.chainName,
+          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+          rpcUrls: { default: { http: [this.networkConfig.rpcUrl] } },
+        } as any,
+        transport: http(this.networkConfig.rpcUrl),
+      });
+    }
 
     // Generate ephemeral session key
     const sessionPrivateKey = generatePrivateKey();
@@ -358,17 +418,17 @@ export class YellowClient {
 
     // EIP-712 auth params
     const expiresAtSec = Math.floor(Date.now() / 1000) + 3600;
-    const authAllowances = [{ asset: "ytest.usd", amount: "1000000000" }];
+    const authAllowances = [{ asset: primaryAsset, amount: "1000000000" }];
 
-    this.log("info", `Auth params: app=${APPLICATION_NAME} scope=${AUTH_SCOPE} expires=${expiresAtSec}`);
+    this.log("info", `Auth params: app=${YELLOW_APP_NAME} scope=${YELLOW_AUTH_SCOPE} asset=${primaryAsset} expires=${expiresAtSec}`);
 
     const partialAuthMessage: PartialEIP712AuthMessage = {
-      scope: AUTH_SCOPE,
+      scope: YELLOW_AUTH_SCOPE,
       session_key: sessionAccount.address,
       expires_at: BigInt(expiresAtSec),
       allowances: authAllowances,
     };
-    const authDomain: EIP712AuthDomain = { name: APPLICATION_NAME };
+    const authDomain: EIP712AuthDomain = { name: YELLOW_APP_NAME };
     const eip712AuthSigner = createEIP712AuthMessageSigner(
       walletClient,
       partialAuthMessage,
@@ -376,24 +436,20 @@ export class YellowClient {
     );
 
     // Init NitroliteClient for on-chain operations
-    const network = this.config?.networks?.find((n) => n.chainId === chain.id);
-    const custodyAddr = network?.custodyAddress ?? CUSTODY_ADDRESS;
-    const adjudicatorAddr = network?.adjudicatorAddress ?? ADJUDICATOR_ADDRESS;
-
     this.nitroliteClient = new NitroliteClient({
-      publicClient,
+      publicClient: this.publicClient,
       walletClient,
       stateSigner: new WalletStateSigner(walletClient),
       addresses: {
-        custody: custodyAddr,
-        adjudicator: adjudicatorAddr,
+        custody: this.networkConfig.custody,
+        adjudicator: this.networkConfig.adjudicator,
       },
-      chainId: chain.id,
-      challengeDuration: 3600n,
+      chainId: options.chainId,
+      challengeDuration: YELLOW_CHALLENGE_DURATION,
     } as ConstructorParameters<typeof NitroliteClient>[0]);
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(wsUrl);
       this.ws = ws;
 
       const timeout = setTimeout(() => {
@@ -408,18 +464,16 @@ export class YellowClient {
           this.setStatus(YellowConnectionStatus.Authenticating);
           this.log("info", "WebSocket connected — sending auth_request...");
 
-          // Build auth_request using SDK (correct serialisation, BigInt→Number)
           const authReqParams: AuthRequestParams = {
             address: account.address,
-            application: APPLICATION_NAME,
+            application: YELLOW_APP_NAME,
             session_key: sessionAccount.address,
             allowances: authAllowances,
             expires_at: BigInt(expiresAtSec),
-            scope: AUTH_SCOPE,
+            scope: YELLOW_AUTH_SCOPE,
           };
           const authMsg = await createAuthRequestMessage(authReqParams);
 
-          // Log the FULL message for debugging
           this.log("info", `auth_request: ${authMsg}`);
           ws.send(authMsg);
         } catch (err) {
@@ -534,7 +588,6 @@ export class YellowClient {
             this.setStatus(YellowConnectionStatus.Error);
             this.log("error", `Server error during auth: ${errMsg} | full=${JSON.stringify(errParams)}`);
             ws.close();
-            // Give user a helpful message
             if (errMsg.toLowerCase().includes("parse")) {
               reject(new Error(
                 `Server rejected auth parameters ("${errMsg}"). ` +
@@ -598,13 +651,11 @@ export class YellowClient {
 
           case RPCMethod.GetChannels: {
             try {
-              // Try SDK parser first (handles snake_case → camelCase via Zod transforms)
               let allChannels: ChannelInfo[];
               try {
                 const res = parseGetChannelsResponse(raw);
                 allChannels = (res.params.channels ?? []).map(mapChannel);
               } catch {
-                // Fallback: parse raw JSON directly with snake_case support
                 const rawChannels = parsed?.res?.[2]?.channels ?? [];
                 allChannels = rawChannels.map(mapChannel);
               }
@@ -618,7 +669,6 @@ export class YellowClient {
           }
 
           case RPCMethod.ChannelsUpdate: {
-            // Server push (method = 'channels')
             const rawChans = parsed?.res?.[2]?.channels;
             if (Array.isArray(rawChans)) {
               const allChannels: ChannelInfo[] = rawChans.map(mapChannel);
@@ -646,13 +696,11 @@ export class YellowClient {
           case RPCMethod.ResizeChannel:
           case RPCMethod.CloseChannel:
           case RPCMethod.Transfer: {
-            // Handled by waitForResponse in each operation method
             this.log("info", `${method} response received`);
             break;
           }
 
           case RPCMethod.ChannelUpdate: {
-            // Single channel state changed (\"cu\"). Refetch full list so UI reflects latest status.
             this.log("info", "Channel update (cu) received — refreshing channels...");
             this.getChannels().catch((e) => {
               this.log("warn", `Failed to refresh channels after update: ${e}`);
@@ -772,7 +820,6 @@ export class YellowClient {
         amount: b.amount,
       }));
     } catch {
-      // fallback parse
       const parsed = JSON.parse(raw);
       return (parsed?.res?.[2]?.balances ?? parsed?.res?.[2]?.ledger_balances ?? []).map(
         (b: any) => ({ asset: b.asset, amount: String(b.amount) })
@@ -795,7 +842,6 @@ export class YellowClient {
       const res = parseGetChannelsResponse(raw);
       allChannels = (res.params.channels ?? []).map(mapChannel);
     } catch {
-      // SDK parser failed → parse raw JSON with snake_case support
       const parsed = JSON.parse(raw);
       allChannels = (parsed?.res?.[2]?.channels ?? []).map(mapChannel);
     }
@@ -817,9 +863,8 @@ export class YellowClient {
 
     this.log("info", `Requesting channel creation for token ${token}...`);
 
-    // 1. Request channel params from ClearNode
     const createMsg = await createCreateChannelMessage(this.sessionSigner, {
-      chain_id: chain.id,
+      chain_id: this.chainId,
       token,
     });
     const responsePromise = this.waitForResponse(RPCMethod.CreateChannel, 30000);
@@ -827,7 +872,6 @@ export class YellowClient {
     this.log("info", "Waiting for server channel params...");
     const raw = await responsePromise;
 
-    // 2. Parse response — support both camelCase (SDK) and snake_case (server raw)
     const parsedRaw = JSON.parse(raw);
     const resParams = parsedRaw?.res?.[2];
 
@@ -839,7 +883,6 @@ export class YellowClient {
     this.log("info", `Channel params from server: id=${channelId_?.slice(0, 10)}..., allocations=${JSON.stringify(stateData?.allocations)}`);
 
     if (!channelData || !stateData || !serverSig) {
-      // Fallback: use SDK parser
       this.log("warn", "Using SDK parser for createChannel response");
       const createRes = parseCreateChannelResponse(raw);
       const pr = createRes.params as any;
@@ -872,7 +915,6 @@ export class YellowClient {
       return { channelId: pr.channelId ?? pr.channel_id, txHash };
     }
 
-    // 3. Build Channel object
     const tokenAddr: Address = stateData?.allocations?.[0]?.token ?? token;
     const channelObj: Channel = {
       participants: channelData.participants as Address[],
@@ -881,7 +923,6 @@ export class YellowClient {
       nonce: BigInt(channelData.nonce),
     };
 
-    // 4. Use server-provided allocations (typically 0-amount; funding happens via resize from Unified Balance)
     const stateDataHex: Hex = (stateData.stateData ?? stateData.state_data ?? "0x") as Hex;
     const allocations = (stateData.allocations ?? []).map((a: any) => ({
       destination: a.destination as Address,
@@ -902,7 +943,6 @@ export class YellowClient {
       serverSignature: serverSig,
     };
 
-    // 5. Submit on-chain (no ERC-20 deposit needed — Unified Balance funds via resize later)
     this.log("info", "Submitting createChannel on-chain...");
     const result = await this.nitroliteClient.createChannel(createChannelParams);
     const channelIdResult: Hex = ((result as any)?.channelId ?? channelId_) as Hex;
@@ -914,10 +954,6 @@ export class YellowClient {
   }
 
   // ── Resize channel ───────────────────────────────────────────────────────
-  //
-  // Yellow 0.5.x: To *fund* the channel (deposit from Unified Balance into channel),
-  // use *negative* allocate_amount. resize_amount = -allocate_amount (positive when funding).
-  // proofStates must include the previous state from getChannelData(channelId).lastValidState.
 
   async resizeChannel(
     channelId: Hex,
@@ -927,12 +963,10 @@ export class YellowClient {
       throw new Error("Not authenticated");
     }
 
-    // Fund channel = move from Unified Balance into channel → negative allocate_amount per Yellow docs
     const allocateAmountNeg = -allocateAmount;
-    const resizeAmount = allocateAmount; // resize_amount = -allocate_amount when funding
+    const resizeAmount = allocateAmount;
     this.log("info", `Resizing channel ${channelId.slice(0, 10)}... allocate_amount=${allocateAmountNeg} (fund channel), resize_amount=${resizeAmount}`);
 
-    // Fetch previous state for proofStates (required by contract for resize)
     let proofStates: Array<{ intent: number; version: bigint; data: Hex; allocations: Array<{ destination: Address; token: Address; amount: bigint }>; sigs: Hex[] }> = [];
     try {
       const channelData = await this.nitroliteClient.getChannelData(channelId);
@@ -956,7 +990,6 @@ export class YellowClient {
     this.log("info", "Waiting for resize params from server...");
     const raw = await responsePromise;
 
-    // Parse resize response with snake_case fallbacks
     let resizeState: FinalState;
     try {
       const resizeRes = parseResizeChannelResponse(raw);
@@ -974,7 +1007,6 @@ export class YellowClient {
         serverSignature: pr.serverSignature,
       };
     } catch {
-      // Manual parse with snake_case support
       const p = JSON.parse(raw)?.res?.[2];
       const st = p?.state;
       resizeState = {
@@ -1046,7 +1078,6 @@ export class YellowClient {
     this.log("info", "Waiting for close params from server...");
     const raw = await responsePromise;
 
-    // Parse close response — support both camelCase and snake_case
     const parsed = JSON.parse(raw);
     const resParams = parsed?.res?.[2];
 
@@ -1109,7 +1140,6 @@ export class YellowClient {
     this.log("info", `Depositing ${amount} of ${token.slice(0, 10)}... to custody contract`);
 
     try {
-      // Check allowance first
       const allowance = await this.nitroliteClient.getTokenAllowance(token);
       this.log("info", `Current allowance: ${allowance}`);
 
@@ -1117,7 +1147,6 @@ export class YellowClient {
         this.log("info", `Approving ${amount} tokens for custody...`);
         const approveTx = await this.nitroliteClient.approveTokens(token, amount);
         this.log("info", `Approval TX: ${approveTx}`);
-        // Wait a bit for approval to confirm
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
@@ -1180,7 +1209,9 @@ export class YellowClient {
     this.sessionAddress = null;
     this.nitroliteClient = null;
     this.walletClient = null;
+    this.publicClient = null;
     this.connectedAddress = null;
+    this.networkConfig = null;
     this.setStatus(YellowConnectionStatus.Disconnected);
     this.log("info", "Disconnected from Yellow Network");
   }

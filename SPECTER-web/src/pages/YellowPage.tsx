@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/base/button";
 import { Input } from "@/components/ui/base/input";
 import { Card } from "@/components/ui/base/card";
 import { Badge } from "@/components/ui/base/badge";
-import { Switch } from "@/components/ui/base/switch";
 import { Tabs, TabsContent } from "@/components/ui/base/tabs";
 import { Progress } from "@/components/ui/base/progress";
+import { YellowEnvToggleButton } from "@/components/ui/yellow-env-toggle-button";
 import {
   Check,
   Loader2,
@@ -26,6 +26,7 @@ import {
   X as XIcon,
   LogOut,
   Shield,
+  ShieldCheck,
   Info,
   AlertTriangle,
   Activity,
@@ -37,6 +38,10 @@ import {
   Sparkles,
   Receipt,
   Terminal,
+  Globe,
+  Flame,
+  BadgeDollarSign,
+  CircleDollarSign,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
 import { FinancialDashboard } from "@/components/ui/specialized/financial-dashboard";
@@ -45,7 +50,6 @@ import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { formatAddress } from "@/lib/utils";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
-import { chain } from "@/lib/blockchain/chainConfig";
 import {
   YellowClient,
   YellowConnectionStatus,
@@ -53,27 +57,39 @@ import {
   type ChannelInfo,
   type LedgerBalance,
   type LogLevel,
+  type YellowConnectOptions,
 } from "@/lib/yellow/yellowClient";
 import {
   fetchTokenBalance,
   isLowBalance,
-  YTEST_USD_FAUCET,
-  SEPOLIA_ETH_FAUCET,
+  SANDBOX_FAUCETS,
+  getPublicClientForChain,
+  getPrimaryAssetInfo,
+  getFaucetUrl,
+  getNativeCurrencyInfo,
   type TokenBalance,
 } from "@/lib/yellow/yellowBalances";
+import {
+  type YellowEnvironment,
+  type YellowNetworkConfig,
+  getYellowConfig,
+  getNetworkConfig,
+  getDefaultChainId,
+  getExplorerTxUrl,
+  getSupportedChainIds,
+  getPrimaryAsset,
+} from "@/lib/yellow/yellowConfig";
 import { formatYtest } from "@/hooks/useYellow";
 import { LocationMap } from "@/components/ui/specialized/expand-map";
 import { LimelightNav, type NavItem } from "@/components/ui/specialized/limelight-nav";
 import AnimatedShaderHero from "@/components/ui/animations/animated-shader-hero";
 import type { Address } from "viem";
-import { parseUnits } from "viem";
+import { parseUnits, createWalletClient, custom, http } from "viem";
+import { sepolia, base, mainnet, polygon, bsc, linea, baseSepolia, polygonAmoy } from "viem/chains";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
-const DEFAULT_YTEST_TOKEN = "0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb" as Address;
-const ETHERSCAN_BASE = "https://sepolia.etherscan.io";
-const FAUCET_API_URL = "https://clearnet-sandbox.yellow.com/faucet/requestTokens";
 const PANEL_TABS = ["overview", "channels", "operations", "activity"] as const;
 
 const ease = [0.43, 0.13, 0.23, 0.96] as const;
@@ -122,6 +138,10 @@ interface TxEntry {
   label: string;
   hash: string;
   status: "pending" | "confirmed" | "failed";
+  /** Yellow environment at time of submission (for persistence/backfill) */
+  environment?: YellowEnvironment;
+  /** Chain ID at time of submission (for persistence/backfill) */
+  chainId?: number;
 }
 
 // ── Timeline steps ────────────────────────────────────────────────────────────
@@ -190,7 +210,31 @@ function GlowCard({
 export default function YellowPage() {
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
 
-  const [isTestnet, setIsTestnet] = useState(true);
+  // Environment toggle: true = sandbox (testnet), false = production (mainnet)
+  const [isSandbox, setIsSandbox] = useState(true);
+
+  // Selected chain for Yellow Network operations
+  const [selectedChainId, setSelectedChainId] = useState<number>(11155111); // Default: Sepolia
+
+  // Derive environment and config from toggle
+  const yellowEnvironment: YellowEnvironment = isSandbox ? "sandbox" : "production";
+  const envConfig = useMemo(() => getYellowConfig(yellowEnvironment), [yellowEnvironment]);
+  const currentNetworkConfig = useMemo(
+    () => getNetworkConfig(yellowEnvironment, selectedChainId),
+    [yellowEnvironment, selectedChainId]
+  );
+  const primaryAssetSymbol = useMemo(() => getPrimaryAsset(yellowEnvironment), [yellowEnvironment]);
+
+  // Update selected chain when environment changes - always set to default for new environment
+  const prevEnvironmentRef = useRef(yellowEnvironment);
+  useEffect(() => {
+    if (prevEnvironmentRef.current !== yellowEnvironment) {
+      // Environment changed - set to default chain for new environment
+      const defaultChain = getDefaultChainId(yellowEnvironment);
+      setSelectedChainId(defaultChain);
+      prevEnvironmentRef.current = yellowEnvironment;
+    }
+  }, [yellowEnvironment]);
 
   // Yellow client
   const clientRef = useRef<YellowClient | null>(null);
@@ -206,11 +250,105 @@ export default function YellowPage() {
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ledgerBalances, setLedgerBalances] = useState<LedgerBalance[]>([]);
   const [ethBalance, setEthBalance] = useState<TokenBalance | null>(null);
-  const [ytestBalance, setYtestBalance] = useState<TokenBalance | null>(null);
-  const [ytestTokenAddress, setYtestTokenAddress] = useState<Address>(DEFAULT_YTEST_TOKEN);
+  const [tokenBalance, setTokenBalance] = useState<TokenBalance | null>(null);
+  const [primaryTokenAddress, setPrimaryTokenAddress] = useState<Address>(ZERO_ADDRESS);
 
   // Transactions
   const [transactions, setTransactions] = useState<TxEntry[]>([]);
+  const txStorageKey = useMemo(() => {
+    const wallet = (primaryWallet?.address ?? "").toLowerCase();
+    return `specter.yellow.txs.${wallet}.${yellowEnvironment}.${selectedChainId}`;
+  }, [primaryWallet?.address, yellowEnvironment, selectedChainId]);
+
+  // Load persisted transactions on wallet/env/chain change
+  useEffect(() => {
+    if (!primaryWallet?.address) {
+      setTransactions([]);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(txStorageKey);
+      if (!raw) {
+        setTransactions([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        setTransactions([]);
+        return;
+      }
+      const hydrated: TxEntry[] = parsed
+        .filter((t) => t && typeof t.hash === "string" && typeof t.label === "string")
+        .map((t) => ({
+          id: String(t.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+          timestamp: Number(t.timestamp ?? Date.now()),
+          label: String(t.label),
+          hash: String(t.hash),
+          status: (t.status === "confirmed" || t.status === "failed" || t.status === "pending") ? t.status : "pending",
+          environment: (t.environment === "sandbox" || t.environment === "production") ? t.environment : yellowEnvironment,
+          chainId: typeof t.chainId === "number" ? t.chainId : selectedChainId,
+        }))
+        .slice(0, 50);
+      setTransactions(hydrated);
+    } catch {
+      setTransactions([]);
+    }
+  }, [primaryWallet?.address, txStorageKey, yellowEnvironment, selectedChainId]);
+
+  // Persist transactions for durability across reloads
+  useEffect(() => {
+    if (!primaryWallet?.address) return;
+    try {
+      localStorage.setItem(txStorageKey, JSON.stringify(transactions.slice(0, 50)));
+    } catch {
+      // ignore storage errors (quota, privacy mode)
+    }
+  }, [transactions, txStorageKey, primaryWallet?.address]);
+
+  const updateTxStatusByHash = useCallback((hash: string, status: TxEntry["status"]) => {
+    setTransactions((prev) =>
+      prev.map((t) => (t.hash.toLowerCase() === hash.toLowerCase() ? { ...t, status } : t))
+    );
+  }, []);
+
+  const checkPendingReceipts = useCallback(async () => {
+    // Only check for the currently selected env/chain list (storage is per env/chain)
+    const client = getPublicClientForChain(yellowEnvironment, selectedChainId);
+    const pending = transactions.filter((t) => t.status === "pending");
+    if (pending.length === 0) return;
+
+    await Promise.all(
+      pending.map(async (t) => {
+        try {
+          const receipt = await client.getTransactionReceipt({ hash: t.hash as any });
+          const ok = (receipt as any)?.status === "success";
+          updateTxStatusByHash(t.hash, ok ? "confirmed" : "failed");
+        } catch (err: any) {
+          // Not mined yet -> viem throws. Keep as pending.
+          const msg = String(err?.message ?? "");
+          if (msg.toLowerCase().includes("not found") || msg.toLowerCase().includes("transaction receipt")) return;
+        }
+      })
+    );
+  }, [transactions, yellowEnvironment, selectedChainId, updateTxStatusByHash]);
+
+  // Poll pending receipts (survives reloads because tx list is persisted)
+  useEffect(() => {
+    if (!primaryWallet?.address) return;
+    if (transactions.every((t) => t.status !== "pending")) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      await checkPendingReceipts();
+    };
+    void tick();
+    const id = window.setInterval(() => { void tick(); }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [primaryWallet?.address, transactions, checkPendingReceipts]);
+
   const addTx = useCallback((label: string, hash: string) => {
     const entry: TxEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -218,14 +356,11 @@ export default function YellowPage() {
       label,
       hash,
       status: "pending",
+      environment: yellowEnvironment,
+      chainId: selectedChainId,
     };
-    setTransactions((prev) => [entry, ...prev].slice(0, 20));
-    setTimeout(() => {
-      setTransactions((prev) =>
-        prev.map((t) => (t.id === entry.id ? { ...t, status: "confirmed" } : t))
-      );
-    }, 15000);
-  }, []);
+    setTransactions((prev) => [entry, ...prev].slice(0, 50));
+  }, [yellowEnvironment, selectedChainId]);
 
   // Forms
   const [depositAmount, setDepositAmount] = useState("10");
@@ -233,9 +368,14 @@ export default function YellowPage() {
   const [resizeAmount, setResizeAmount] = useState("10");
   const [transferDest, setTransferDest] = useState("");
   const [transferAmount, setTransferAmount] = useState("1");
-  const [transferAsset, setTransferAsset] = useState("ytest.usd");
+  const [transferAsset, setTransferAsset] = useState(primaryAssetSymbol);
   const [closeChannelId, setCloseChannelId] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("1");
+
+  // Update transfer asset when environment changes
+  useEffect(() => {
+    setTransferAsset(primaryAssetSymbol);
+  }, [primaryAssetSymbol]);
 
   // Custody balance
   const [custodyBalance, setCustodyBalance] = useState<bigint | null>(null);
@@ -260,34 +400,62 @@ export default function YellowPage() {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // Network config display
-  const [networkConfig, setNetworkConfig] = useState<{
+  const [networkConfigDisplay, setNetworkConfigDisplay] = useState<{
     custody: string;
     adjudicator: string;
     wsUrl: string;
+    chainName: string;
+    blockExplorer: string;
   } | null>(null);
 
   // Active panel tab
   const [activeTab, setActiveTab] = useState("overview");
   const [expandedQuickAction, setExpandedQuickAction] = useState<number | null>(null);
 
+  // Helper to get explorer URL for transaction
+  const getExplorerUrl = useCallback(
+    (txHash: string) => {
+      if (currentNetworkConfig) {
+        return `${currentNetworkConfig.blockExplorer}/tx/${txHash}`;
+      }
+      return `https://etherscan.io/tx/${txHash}`;
+    },
+    [currentNetworkConfig]
+  );
+
   // ── Balance polling ────────────────────────────────────────────────────────
 
   const fetchWalletBalances = useCallback(async () => {
     if (!primaryWallet?.address) return;
     const addr = primaryWallet.address as Address;
+    const client = getPublicClientForChain(yellowEnvironment, selectedChainId);
+    const nativeCurrency = getNativeCurrencyInfo(selectedChainId);
+
     try {
-      const eth = await fetchTokenBalance(ZERO_ADDRESS, addr, 18, "ETH");
+      const eth = await fetchTokenBalance(ZERO_ADDRESS, addr, nativeCurrency.decimals, nativeCurrency.symbol, client);
       setEthBalance(eth);
     } catch (err) {
-      console.warn("[Yellow] ETH balance fetch failed:", err);
+      console.warn("[Yellow] Native balance fetch failed:", err);
     }
-    try {
-      const ytest = await fetchTokenBalance(ytestTokenAddress, addr, 6, "ytest.usd");
-      setYtestBalance(ytest);
-    } catch (err) {
-      console.warn("[Yellow] ytest.usd balance fetch failed:", err);
+
+    // Fetch primary token balance
+    const primaryAsset = getPrimaryAssetInfo(yellowEnvironment, selectedChainId);
+    if (primaryAsset && primaryAsset.address !== ZERO_ADDRESS) {
+      try {
+        const tokenBal = await fetchTokenBalance(
+          primaryAsset.address,
+          addr,
+          primaryAsset.decimals,
+          primaryAsset.symbol,
+          client
+        );
+        setTokenBalance(tokenBal);
+        setPrimaryTokenAddress(primaryAsset.address);
+      } catch (err) {
+        console.warn("[Yellow] Token balance fetch failed:", err);
+      }
     }
-  }, [primaryWallet?.address, ytestTokenAddress]);
+  }, [primaryWallet?.address, yellowEnvironment, selectedChainId]);
 
   useEffect(() => {
     fetchWalletBalances();
@@ -295,7 +463,12 @@ export default function YellowPage() {
     return () => clearInterval(interval);
   }, [fetchWalletBalances]);
 
-  // ── Faucet request ─────────────────────────────────────────────────────────
+  // ── Faucet request (Sandbox only) ─────────────────────────────────────────
+
+  const faucetUrl = useMemo(
+    () => getFaucetUrl(yellowEnvironment, selectedChainId, "token"),
+    [yellowEnvironment, selectedChainId]
+  );
 
   const handleRequestFaucet = useCallback(async () => {
     if (!primaryWallet?.address) {
@@ -303,9 +476,14 @@ export default function YellowPage() {
       return;
     }
 
+    if (yellowEnvironment === "production") {
+      toast.info("Faucet is only available in Sandbox mode");
+      return;
+    }
+
     setIsRequestingFaucet(true);
     try {
-      const response = await fetch(FAUCET_API_URL, {
+      const response = await fetch(SANDBOX_FAUCETS.YTEST_USD, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userAddress: primaryWallet.address }),
@@ -319,7 +497,6 @@ export default function YellowPage() {
       const data = await response.json();
       if (data.success) {
         toast.success("🎉 Faucet tokens requested! Check your Yellow balance in ~30 seconds.");
-        // Refresh balances after a short delay
         setTimeout(() => {
           fetchWalletBalances();
           if (clientRef.current) {
@@ -339,7 +516,7 @@ export default function YellowPage() {
     } finally {
       setIsRequestingFaucet(false);
     }
-  }, [primaryWallet?.address, fetchWalletBalances]);
+  }, [primaryWallet?.address, fetchWalletBalances, yellowEnvironment]);
 
   // ── Unified sync helpers ──────────────────────────────────────────────────
 
@@ -350,13 +527,13 @@ export default function YellowPage() {
       await client.getLedgerBalances();
       await client.getChannels();
       // Fetch custody balance
-      const custBal = await client.getCustodyBalance(ytestTokenAddress);
+      const custBal = await client.getCustodyBalance(primaryTokenAddress);
       setCustodyBalance(custBal);
       fetchWalletBalances();
     } catch {
       // Errors are already surfaced via events/logs
     }
-  }, [fetchWalletBalances, ytestTokenAddress]);
+  }, [fetchWalletBalances, primaryTokenAddress]);
 
   const pollYellowAfterTx = useCallback(
     async (retries = 3, intervalMs = 5000) => {
@@ -399,20 +576,21 @@ export default function YellowPage() {
       return;
     }
 
-    const amountWei = parseUnits(depositAmount, 6);
+    const primaryAsset = getPrimaryAssetInfo(yellowEnvironment, selectedChainId);
+    const tokenDecimals = primaryAsset?.decimals ?? 6;
+    const amountWei = parseUnits(depositAmount, tokenDecimals);
 
     setIsDepositing(true);
     try {
       toast.info("Depositing to custody contract...");
-      const { txHash } = await client.deposit(ytestTokenAddress, amountWei);
-      addTx(`Deposit ${depositAmount} ytest.usd`, txHash);
-      toast.success(`Deposited ${depositAmount} ytest.usd to custody!`);
+      const { txHash } = await client.deposit(primaryTokenAddress, amountWei);
+      addTx(`Deposit ${depositAmount} ${primaryAssetSymbol}`, txHash);
+      toast.success(`Deposited ${depositAmount} ${primaryAssetSymbol} to custody!`);
 
-      // Refresh custody balance
       void pollYellowAfterTx(2, 4000);
       setTimeout(async () => {
         if (clientRef.current) {
-          const bal = await clientRef.current.getCustodyBalance(ytestTokenAddress);
+          const bal = await clientRef.current.getCustodyBalance(primaryTokenAddress);
           setCustodyBalance(bal);
         }
       }, 5000);
@@ -422,7 +600,7 @@ export default function YellowPage() {
     } finally {
       setIsDepositing(false);
     }
-  }, [depositAmount, ytestTokenAddress, addTx, pollYellowAfterTx]);
+  }, [depositAmount, primaryTokenAddress, primaryAssetSymbol, yellowEnvironment, selectedChainId, addTx, pollYellowAfterTx]);
 
   // ── Event handler ──────────────────────────────────────────────────────────
 
@@ -448,35 +626,69 @@ export default function YellowPage() {
       setLedgerBalances(event.balances);
     }
     if (event.type === "config" && event.config) {
-      const net = event.config.networks?.find((n) => n.chainId === chain.id);
+      // Update network config display from server response
+      const net = event.config.networks?.find((n) => n.chainId === selectedChainId);
       if (net) {
-        setNetworkConfig({
+        setNetworkConfigDisplay({
           custody: net.custodyAddress,
           adjudicator: net.adjudicatorAddress,
-          wsUrl: isTestnet
-            ? "wss://clearnet-sandbox.yellow.com/ws"
-            : "wss://clearnet.yellow.com/ws",
+          wsUrl: envConfig.wsUrl,
+          chainName: currentNetworkConfig?.chainName ?? "Unknown",
+          blockExplorer: currentNetworkConfig?.blockExplorer ?? "",
         });
       }
-      const chainAsset = event.config.assets?.find((a) => a.chainId === chain.id);
+      // Update primary token address from server assets
+      const chainAsset = event.config.assets?.find((a) => a.chainId === selectedChainId);
       if (chainAsset?.token) {
-        setYtestTokenAddress(chainAsset.token);
+        setPrimaryTokenAddress(chainAsset.token as Address);
       }
     }
-  }, [isTestnet]);
+  }, [selectedChainId, envConfig.wsUrl, currentNetworkConfig]);
 
-  // NOTE: auto-scroll removed — logger is now a sticky footer tray
+  // Update network config display when environment/chain changes
+  useEffect(() => {
+    if (currentNetworkConfig) {
+      setNetworkConfigDisplay({
+        custody: currentNetworkConfig.custody,
+        adjudicator: currentNetworkConfig.adjudicator,
+        wsUrl: envConfig.wsUrl,
+        chainName: currentNetworkConfig.chainName,
+        blockExplorer: currentNetworkConfig.blockExplorer,
+      });
+    }
+  }, [currentNetworkConfig, envConfig.wsUrl]);
 
   // Update step when wallet connects
   useEffect(() => {
     if (primaryWallet?.address && currentStep === 0) setCurrentStep(1);
   }, [primaryWallet?.address, currentStep]);
 
+  // ── Get Viem Chain for selected chain ID ────────────────────────────────────
+
+  const getViemChainForId = useCallback((chainId: number) => {
+    const chainMap = {
+      1: mainnet,
+      11155111: sepolia,
+      8453: base,
+      84532: baseSepolia,
+      137: polygon,
+      80002: polygonAmoy,
+      56: bsc,
+      59144: linea,
+    } as const;
+    return chainMap[chainId as keyof typeof chainMap] ?? mainnet;
+  }, []);
+
   // ── Connect & Auth ─────────────────────────────────────────────────────────
 
   const handleConnectAndAuth = useCallback(async () => {
     if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
       toast.error("Please connect an Ethereum wallet first");
+      return;
+    }
+
+    if (!currentNetworkConfig) {
+      toast.error(`Chain ${selectedChainId} is not supported in ${yellowEnvironment} mode`);
       return;
     }
 
@@ -492,14 +704,83 @@ export default function YellowPage() {
       clientRef.current = client;
       client.onEvent(handleYellowEvent);
 
+      // Switch wallet to the correct chain using Dynamic Labs API
+      try {
+        toast.info(`Switching wallet to ${currentNetworkConfig.chainName}...`, { duration: 3000 });
+        // Try multiple methods to switch network
+        if ((primaryWallet as any).switchNetwork) {
+          await (primaryWallet as any).switchNetwork(selectedChainId);
+        } else if ((primaryWallet as any).connector?.switchNetwork) {
+          await (primaryWallet as any).connector.switchNetwork({ networkChainId: selectedChainId });
+        } else {
+          // Request chain switch via wallet client
+          const tempClient = await (primaryWallet as any).getWalletClient();
+          if (tempClient?.switchChain) {
+            await tempClient.switchChain({ id: selectedChainId });
+          }
+        }
+        // Small delay to let the wallet switch complete
+        await new Promise(r => setTimeout(r, 500));
+      } catch (switchErr: any) {
+        console.warn("Chain switch warning:", switchErr);
+        // If user rejected, don't proceed
+        if (switchErr?.code === 4001 || switchErr?.message?.includes("rejected")) {
+          throw new Error(`Please switch your wallet to ${currentNetworkConfig.chainName} to continue.`);
+        }
+        // For other errors (like chain not added), try to continue
+        toast.warning(
+          `Could not auto-switch to ${currentNetworkConfig.chainName}. ` +
+          `Please manually switch your wallet to this network.`,
+          { duration: 5000 }
+        );
+      }
+
+      // Get wallet client for the selected Yellow chain
       const walletClient = await (primaryWallet as any).getWalletClient(
-        chain.id.toString()
+        selectedChainId.toString()
       );
-      if (!walletClient) throw new Error("Failed to get wallet client from Dynamic Labs");
+      if (!walletClient) {
+        throw new Error(
+          `Failed to get wallet client for chain ${selectedChainId}. ` +
+          `Make sure your wallet supports ${currentNetworkConfig.chainName} and is connected to it.`
+        );
+      }
+
+      // Verify we're on the correct chain
+      const walletChainId = walletClient.chain?.id;
+      if (walletChainId && walletChainId !== selectedChainId) {
+        // One more attempt: try to switch via the wallet client directly
+        try {
+          if (walletClient.switchChain) {
+            await walletClient.switchChain({ id: selectedChainId });
+            await new Promise(r => setTimeout(r, 300));
+          }
+        } catch {
+          // Ignore errors from this fallback attempt
+        }
+        
+        // Re-check
+        const recheckClient = await (primaryWallet as any).getWalletClient(selectedChainId.toString());
+        if (recheckClient?.chain?.id !== selectedChainId) {
+          throw new Error(
+            `Wallet is on chain ${walletChainId} but Yellow requires ${currentNetworkConfig.chainName} (${selectedChainId}). ` +
+            `Please manually switch your wallet to ${currentNetworkConfig.chainName} and try again.`
+          );
+        }
+      }
+
+      const connectOptions: YellowConnectOptions = {
+        environment: yellowEnvironment,
+        chainId: selectedChainId,
+      };
 
       setCurrentStep(2);
-      toast.info("Sign the EIP-712 message in your wallet when prompted", { duration: 6000 });
-      await client.connect(walletClient);
+      toast.info(
+        `Connecting to Yellow ${yellowEnvironment === "production" ? "Mainnet" : "Sandbox"} on ${currentNetworkConfig.chainName}. ` +
+        "Sign the EIP-712 message when prompted.",
+        { duration: 8000 }
+      );
+      await client.connect(walletClient, connectOptions);
 
       setYellowAddress(client.getConnectedAddress());
       setCurrentStep(3);
@@ -540,7 +821,27 @@ export default function YellowPage() {
     } finally {
       setIsConnecting(false);
     }
-  }, [primaryWallet, handleYellowEvent, syncYellowOnce]);
+  }, [primaryWallet, handleYellowEvent, syncYellowOnce, selectedChainId, yellowEnvironment, currentNetworkConfig]);
+
+  // Disconnect when environment or chain changes while connected
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client && client.getStatus() === YellowConnectionStatus.Connected) {
+      const connectedEnv = client.getEnvironment();
+      const connectedChain = client.getChainId();
+      if (connectedEnv !== yellowEnvironment || connectedChain !== selectedChainId) {
+        client.disconnect();
+        clientRef.current = null;
+        setYellowAddress(null);
+        setChannels([]);
+        setLedgerBalances([]);
+        toast.info(
+          `Disconnected from ${connectedEnv === "production" ? "Mainnet" : "Sandbox"}. ` +
+          `Reconnect to use ${yellowEnvironment === "production" ? "Mainnet" : "Sandbox"}.`
+        );
+      }
+    }
+  }, [yellowEnvironment, selectedChainId]);
 
   // ── Refresh data ───────────────────────────────────────────────────────────
 
@@ -564,16 +865,21 @@ export default function YellowPage() {
     const client = clientRef.current;
     if (!client) { toast.error("Not connected to Yellow Network"); return; }
 
+    const nativeCurrency = getNativeCurrencyInfo(selectedChainId);
     if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
-      toast.error("Insufficient Sepolia ETH for gas. Get ETH from the faucet first.", { duration: 6000 });
+      toast.error(
+        isSandbox 
+          ? `Insufficient ${nativeCurrency.symbol} for gas. Get ${nativeCurrency.symbol} from a faucet first.`
+          : `Insufficient ${nativeCurrency.symbol} for gas. Please add ${nativeCurrency.symbol} to your wallet.`, 
+        { duration: 6000 }
+      );
       return;
     }
 
     setIsCreating(true);
     try {
       toast.info("Creating channel on-chain… this may take 30–60 seconds", { duration: 10000 });
-      // Note: Channel funding is done later via Resize from Unified Balance.
-      const result = await client.createChannel(ytestTokenAddress, 0n);
+      const result = await client.createChannel(primaryTokenAddress, 0n);
       addTx("Create Channel", result.txHash);
       toast.success(`Channel created! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 4));
@@ -589,7 +895,7 @@ export default function YellowPage() {
     } finally {
       setIsCreating(false);
     }
-  }, [ytestTokenAddress, currentStep, ethBalance, addTx, pollYellowAfterTx]);
+  }, [primaryTokenAddress, currentStep, ethBalance, selectedChainId, addTx, pollYellowAfterTx]);
 
   // ── Resize Channel ─────────────────────────────────────────────────────────
 
@@ -602,13 +908,16 @@ export default function YellowPage() {
       return;
     }
 
+    const primaryAsset = getPrimaryAssetInfo(yellowEnvironment, selectedChainId);
+    const tokenDecimals = primaryAsset?.decimals ?? 6;
+
     setResizeError(null);
     setIsResizing(true);
     try {
-      const amount = parseUnits(resizeAmount, 6);
+      const amount = parseUnits(resizeAmount, tokenDecimals);
       toast.info("Allocating funds from Unified Balance…", { duration: 8000 });
       const result = await client.resizeChannel(resizeChannelId as `0x${string}`, amount);
-      addTx(`Resize Channel ${resizeAmount} ytest.usd`, result.txHash);
+      addTx(`Resize Channel ${resizeAmount} ${primaryAssetSymbol}`, result.txHash);
       toast.success(`Channel funded! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(Math.max(currentStep, 5));
       setActiveTab("operations");
@@ -625,7 +934,7 @@ export default function YellowPage() {
         );
         void pollYellowAfterTx(2, 4000);
       } else if (msg.includes("insufficient") || msg.includes("balance")) {
-        toast.error("Not enough ytest.usd in your Unified Balance.", { duration: 6000 });
+        toast.error(`Not enough ${primaryAssetSymbol} in your Unified Balance.`, { duration: 6000 });
       } else if (msg.includes("user rejected") || msg.includes("denied")) {
         toast.error("Transaction was rejected in your wallet.");
       } else if (msg.includes("simulation") || msg.includes("contract")) {
@@ -636,7 +945,7 @@ export default function YellowPage() {
     } finally {
       setIsResizing(false);
     }
-  }, [resizeChannelId, resizeAmount, currentStep, addTx, pollYellowAfterTx]);
+  }, [resizeChannelId, resizeAmount, currentStep, primaryAssetSymbol, yellowEnvironment, selectedChainId, addTx, pollYellowAfterTx]);
 
   // ── Transfer ───────────────────────────────────────────────────────────────
 
@@ -659,8 +968,11 @@ export default function YellowPage() {
       if (Number.isNaN(humanAmount) || humanAmount <= 0) {
         throw new Error("Invalid transfer amount");
       }
-      // ytest.usd has 6 decimals; Nitro expects base units for allocations.
-      const rawUnits = BigInt(Math.floor(humanAmount * 1_000_000));
+      // Get decimals for the asset (USDC/ytest.usd = 6 decimals)
+      const primaryAsset = getPrimaryAssetInfo(yellowEnvironment, selectedChainId);
+      const tokenDecimals = primaryAsset?.decimals ?? 6;
+      const multiplier = 10 ** tokenDecimals;
+      const rawUnits = BigInt(Math.floor(humanAmount * multiplier));
       await client.transfer(transferDest as Address, [
         { asset: transferAsset, amount: rawUnits.toString() },
       ]);
@@ -672,7 +984,7 @@ export default function YellowPage() {
     } finally {
       setIsTransferring(false);
     }
-  }, [transferDest, transferAmount, transferAsset, currentStep]);
+  }, [transferDest, transferAmount, transferAsset, currentStep, yellowEnvironment, selectedChainId]);
 
   // ── Close Channel ──────────────────────────────────────────────────────────
 
@@ -681,8 +993,9 @@ export default function YellowPage() {
     if (!client) { toast.error("Not connected"); return; }
     if (!closeChannelId) { toast.error("Select a channel to close"); return; }
 
+    const nativeCurrency = getNativeCurrencyInfo(selectedChainId);
     if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
-      toast.error("Insufficient Sepolia ETH for gas.", { duration: 6000 });
+      toast.error(`Insufficient ${nativeCurrency.symbol} for gas.`, { duration: 6000 });
       return;
     }
 
@@ -706,7 +1019,7 @@ export default function YellowPage() {
     } finally {
       setIsClosing(false);
     }
-  }, [closeChannelId, currentStep, ethBalance, addTx, pollYellowAfterTx]);
+  }, [closeChannelId, currentStep, ethBalance, selectedChainId, addTx, pollYellowAfterTx]);
 
   // ── Close All Channels ────────────────────────────────────────────────────
 
@@ -722,8 +1035,9 @@ export default function YellowPage() {
       return;
     }
 
+    const nativeCurrency = getNativeCurrencyInfo(selectedChainId);
     if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
-      toast.error("Insufficient Sepolia ETH for gas.", { duration: 6000 });
+      toast.error(`Insufficient ${nativeCurrency.symbol} for gas.`, { duration: 6000 });
       return;
     }
 
@@ -746,7 +1060,7 @@ export default function YellowPage() {
     setCurrentStep(Math.max(currentStep, 7));
     void pollYellowAfterTx();
     setIsClosingAll(false);
-  }, [channels, currentStep, ethBalance, addTx, pollYellowAfterTx]);
+  }, [channels, currentStep, ethBalance, selectedChainId, addTx, pollYellowAfterTx]);
 
   // ── Withdraw ───────────────────────────────────────────────────────────────
 
@@ -758,17 +1072,21 @@ export default function YellowPage() {
       return;
     }
 
+    const nativeCurrency = getNativeCurrencyInfo(selectedChainId);
     if (ethBalance && isLowBalance(ethBalance.formatted, 18, 0.005)) {
-      toast.error("Insufficient Sepolia ETH for gas.", { duration: 6000 });
+      toast.error(`Insufficient ${nativeCurrency.symbol} for gas.`, { duration: 6000 });
       return;
     }
 
+    const primaryAsset = getPrimaryAssetInfo(yellowEnvironment, selectedChainId);
+    const tokenDecimals = primaryAsset?.decimals ?? 6;
+
     setIsWithdrawing(true);
     try {
-      const amount = parseUnits(withdrawAmount, 6);
+      const amount = parseUnits(withdrawAmount, tokenDecimals);
       toast.info("Withdrawing from custody contract…", { duration: 8000 });
-      const result = await client.withdraw(ytestTokenAddress, amount);
-      addTx(`Withdraw ${withdrawAmount} ytest.usd`, result.txHash);
+      const result = await client.withdraw(primaryTokenAddress, amount);
+      addTx(`Withdraw ${withdrawAmount} ${primaryAssetSymbol}`, result.txHash);
       toast.success(`Withdrawn! TX: ${result.txHash.slice(0, 10)}...`);
       setCurrentStep(8);
       void pollYellowAfterTx();
@@ -777,7 +1095,7 @@ export default function YellowPage() {
     } finally {
       setIsWithdrawing(false);
     }
-  }, [withdrawAmount, ytestTokenAddress, ethBalance, addTx, pollYellowAfterTx]);
+  }, [withdrawAmount, primaryTokenAddress, primaryAssetSymbol, yellowEnvironment, selectedChainId, ethBalance, addTx, pollYellowAfterTx]);
 
   // ── State reset ────────────────────────────────────────────────────────────
 
@@ -795,18 +1113,26 @@ export default function YellowPage() {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    resetYellowState(true);
-    setCurrentStep(primaryWallet?.address ? 1 : 0);
-    toast.info("Disconnected from Yellow Network");
+    try {
+      resetYellowState(true);
+      setCurrentStep(primaryWallet?.address ? 1 : 0);
+      toast.info("Disconnected from SPECTER YELLOW");
+    } catch (err: any) {
+      toast.error(`Disconnect failed: ${err?.message ?? "Unknown error"}`);
+    }
   }, [primaryWallet?.address, resetYellowState]);
 
   const handleFullDisconnect = useCallback(() => {
-    resetYellowState();
-    setCurrentStep(0);
-    setEthBalance(null);
-    setYtestBalance(null);
-    handleLogOut();
-    toast.info("Wallet disconnected");
+    try {
+      resetYellowState();
+      setCurrentStep(0);
+      setEthBalance(null);
+      setTokenBalance(null);
+      handleLogOut();
+      toast.info("Wallet disconnected");
+    } catch (err: any) {
+      toast.error(`Wallet disconnect failed: ${err?.message ?? "Unknown error"}`);
+    }
   }, [resetYellowState, handleLogOut]);
 
   // Handle wallet disconnection
@@ -819,7 +1145,7 @@ export default function YellowPage() {
       resetYellowState(true);
       setCurrentStep(0);
       setEthBalance(null);
-      setYtestBalance(null);
+      setTokenBalance(null);
     }
     if (!prev && curr) setCurrentStep(1);
   }, [primaryWallet?.address, resetYellowState]);
@@ -840,8 +1166,16 @@ export default function YellowPage() {
   const hasCustodyBalance = custodyBalance !== null && custodyBalance > 0n;
   const confirmedTxCount = transactions.filter((tx) => tx.status === "confirmed").length;
   const pendingTxCount = transactions.filter((tx) => tx.status === "pending").length;
-  const walletYtestNum = ytestBalance ? parseFloat(ytestBalance.formatted) : 0;
+  const walletTokenNum = tokenBalance ? parseFloat(tokenBalance.formatted) : 0;
   const custodyNum = custodyBalance !== null ? Number(custodyBalance) / 1e6 : 0;
+
+  // Supported chains for current environment
+  const supportedChains = useMemo(() => {
+    return envConfig.networks.map((n) => ({
+      id: n.chainId,
+      name: n.chainName,
+    }));
+  }, [envConfig]);
   const opInputClass = "bg-zinc-900/95 border-zinc-700/80 text-zinc-100 placeholder:text-zinc-500 transition-all duration-200 focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25 focus-visible:shadow-[0_0_0_3px_rgba(245,158,11,0.08)]";
   const opSelectClass = "w-full bg-zinc-900/95 border border-zinc-700/80 rounded-md p-2 text-sm text-zinc-100 transition-all duration-200 focus-visible:outline-none focus-visible:border-amber-400/70 focus-visible:ring-2 focus-visible:ring-amber-500/25";
   const opButtonClass = "w-full transition-all duration-200 hover:shadow-[0_8px_20px_rgba(0,0,0,0.3)] hover:-translate-y-[1px] active:translate-y-0";
@@ -889,23 +1223,44 @@ export default function YellowPage() {
                   </div>
                   <div>
                     <HeadingScramble className="text-2xl sm:text-3xl md:text-4xl font-bold text-white">
-                      Yellow Network
+                      SPECTER YELLOW
                     </HeadingScramble>
-                    <p className="text-zinc-300 text-xs sm:text-sm">State channels for instant, off-chain transfers</p>
+                    <p className="text-zinc-300 text-xs sm:text-sm">
+                      Instant settlement rails for payments, off-chain speed, onchain security
+                    </p>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2 bg-black/50 rounded-lg px-3 py-2 border border-zinc-700/70">
-                  <span className={`text-sm ${isTestnet ? "text-amber-400 font-medium" : "text-zinc-500"}`}>Sandbox</span>
-                  <Switch
-                    checked={!isTestnet}
-                    onCheckedChange={(c) => setIsTestnet(!c)}
-                    className="data-[state=checked]:bg-green-600"
-                  />
-                  <span className={`text-sm ${!isTestnet ? "text-green-400 font-medium" : "text-zinc-500"}`}>Mainnet</span>
-                </div>
+                {/* Environment Toggle */}
+                <YellowEnvToggleButton
+                  isSandbox={isSandbox}
+                  onToggle={() => setIsSandbox((v) => !v)}
+                  disabled={isConnecting || isSyncingYellow}
+                />
+
+                {/* Chain Selector */}
+                <select
+                  value={selectedChainId}
+                  onChange={(e) => setSelectedChainId(Number(e.target.value))}
+                  className={[
+                    "appearance-none bg-black/45 backdrop-blur-md",
+                    "border border-zinc-700/70 rounded-xl px-4 py-2.5",
+                    "text-sm text-zinc-100",
+                    "shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_10px_30px_rgba(0,0,0,0.35)]",
+                    "transition-all duration-300",
+                    "hover:border-zinc-500/70 hover:bg-black/55",
+                    "focus:outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20",
+                  ].join(" ")}
+                >
+                  {supportedChains.map((chain) => (
+                    <option key={chain.id} value={chain.id}>
+                      {chain.name}
+                    </option>
+                  ))}
+                </select>
+
                 {isConnected && (
                   <Button
                     variant="outline"
@@ -923,38 +1278,43 @@ export default function YellowPage() {
           </motion.div>
         </motion.div>
 
-        {/* ── Mainnet overlay ── */}
-        <AnimatePresence>
-          {!isTestnet && (
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center backdrop-blur-sm"
-            >
-              <div className="text-center space-y-6 p-8">
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", damping: 15 }}
-                  className="w-20 h-20 rounded-2xl bg-amber-500/20 flex items-center justify-center mx-auto"
-                >
-                  <Lock className="w-10 h-10 text-amber-400" />
-                </motion.div>
-                <h2 className="text-2xl font-bold text-white">Mainnet Coming Soon</h2>
-                <p className="text-zinc-400 max-w-md">
-                  Yellow Network mainnet integration is under development.
-                  Switch to Sandbox (Sepolia) to test the integration.
-                </p>
-                <Button
-                  onClick={() => setIsTestnet(true)}
-                  className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
-                >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Switch to Sandbox
-                </Button>
+        {/* ── Environment Info Banner ── */}
+        <motion.div variants={fadeIn} initial="hidden" animate="visible">
+          <div className={`rounded-lg border p-3 flex items-center justify-between flex-wrap gap-2 ${
+            isSandbox 
+              ? "bg-amber-500/10 border-amber-500/30" 
+              : "bg-orange-500/10 border-orange-500/30"
+          }`}>
+            <div className="flex items-center gap-2">
+              <Badge className={isSandbox ? "bg-amber-500/20 text-amber-400" : "bg-orange-500/20 text-orange-400"}>
+                {isSandbox ? (
+                  <><Droplets className="w-3 h-3 mr-1" />SANDBOX</>
+                ) : (
+                  <><Flame className="w-3 h-3 mr-1" />MAINNET</>
+                )}
+              </Badge>
+              <span className="text-sm text-zinc-300">
+                {currentNetworkConfig?.chainName ?? "Unknown Chain"} ({selectedChainId})
+              </span>
+              <span className="text-xs text-zinc-500">•</span>
+              <span className="text-xs text-zinc-400">
+                Asset: <span className="font-mono">{primaryAssetSymbol.toUpperCase()}</span>
+              </span>
+            </div>
+            {!isSandbox && (
+              <div className="flex items-center gap-2 text-xs">
+                <ShieldCheck className="w-4 h-4 text-orange-400" />
+                <span className="text-orange-400 font-medium">Live Network — real {primaryAssetSymbol.toUpperCase()} on {currentNetworkConfig?.chainName}</span>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            )}
+            {isSandbox && (
+              <div className="flex items-center gap-1 text-xs text-amber-400">
+                <Info className="w-3 h-3" />
+                <span>Test environment — use faucet for test tokens</span>
+              </div>
+            )}
+          </div>
+        </motion.div>
 
         {/* ── Connection Status Bar ── */}
         <motion.div variants={fadeIn} initial="hidden" animate="visible">
@@ -1003,7 +1363,7 @@ export default function YellowPage() {
                 ) : (
                   <div className="flex flex-col gap-1">
                     <span className="text-sm text-zinc-400">No wallet connected</span>
-                    <span className="text-xs text-zinc-600">Connect to start using Yellow Network</span>
+                    <span className="text-xs text-zinc-600">Connect to start using SPECTER YELLOW</span>
                   </div>
                 )}
               </div>
@@ -1011,41 +1371,60 @@ export default function YellowPage() {
               <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 {!primaryWallet?.address && (
                   <Button
-                    onClick={() => setShowAuthFlow(true)}
-                    className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                    onClick={() => {
+                      try {
+                        setShowAuthFlow(true);
+                      } catch (err: any) {
+                        toast.error(`Could not open wallet connect: ${err?.message ?? "Unknown error"}`);
+                      }
+                    }}
+                    className="bg-white/10 hover:bg-white/15 text-zinc-100 border border-white/10 hover:border-white/20 font-medium rounded-full px-5 h-11 transition-all"
                   >
-                    <Wallet className="w-4 h-4 mr-2" />
                     Connect Wallet
                   </Button>
                 )}
                 {primaryWallet?.address && !isConnected && (
                   <>
-                    <Button
-                      onClick={handleConnectAndAuth}
-                      disabled={isConnecting}
-                      className="bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                     >
-                      {isConnecting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          {connectionStatus === YellowConnectionStatus.WaitingForSignature
-                            ? "Sign in wallet…"
-                            : "Connecting…"}
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="w-4 h-4 mr-2" />
-                          Connect Yellow
-                        </>
-                      )}
-                    </Button>
+                      <Button
+                        onClick={handleConnectAndAuth}
+                        disabled={isConnecting}
+                        className={`font-medium relative overflow-hidden transition-all rounded-full px-5 h-11 ${
+                          isSandbox 
+                            ? "bg-amber-500/95 hover:bg-amber-500 text-black" 
+                            : "bg-orange-500/95 hover:bg-orange-500 text-black"
+                        } shadow-[0_10px_30px_rgba(0,0,0,0.35)]`}
+                      >
+                        {isConnecting ? (
+                          <motion.div
+                            className="flex items-center"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                          >
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            <span>
+                              {connectionStatus === YellowConnectionStatus.WaitingForSignature
+                                ? "Sign in wallet…"
+                                : connectionStatus === YellowConnectionStatus.Authenticating
+                                  ? "Authenticating…"
+                                  : "Connecting…"}
+                            </span>
+                          </motion.div>
+                        ) : (
+                          <>Connect {isSandbox ? "Sandbox" : "Mainnet"}</>
+                        )}
+                      </Button>
+                    </motion.div>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={handleFullDisconnect}
-                      className="text-zinc-500 hover:text-zinc-300"
+                      className="text-zinc-400 hover:text-zinc-200 rounded-full"
                     >
-                      <LogOut className="w-4 h-4" />
+                      Disconnect
                     </Button>
                   </>
                 )}
@@ -1055,16 +1434,15 @@ export default function YellowPage() {
                       variant="outline"
                       size="sm"
                       onClick={handleDisconnect}
-                      className="border-zinc-700 text-zinc-400 hover:text-white"
+                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-white hover:border-zinc-500 rounded-full h-11 px-5 transition-all"
                     >
-                      <LogOut className="w-4 h-4 mr-2" />
-                      Disconnect Yellow
+                      Disconnect Session
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={handleFullDisconnect}
-                      className="border-red-700/50 text-red-400 hover:text-red-300 hover:border-red-600"
+                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-white hover:border-zinc-500 rounded-full h-11 px-5 transition-all"
                     >
                       Disconnect Wallet
                     </Button>
@@ -1087,21 +1465,23 @@ export default function YellowPage() {
               <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-amber-300 font-medium">Low Sepolia ETH</p>
+                  <p className="text-sm text-amber-300 font-medium">Low {ethBalance?.symbol ?? "ETH"}</p>
                   <p className="text-xs text-zinc-400">
-                    Balance: {parseFloat(ethBalance?.formatted ?? "0").toFixed(5)} ETH — You need ETH for gas
+                    Balance: {parseFloat(ethBalance?.formatted ?? "0").toFixed(5)} {ethBalance?.symbol ?? "ETH"} — You need gas for transactions
                   </p>
                 </div>
-                <a
-                  href={SEPOLIA_ETH_FAUCET}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="shrink-0"
-                >
-                  <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10">
-                    Get ETH <ExternalLink className="w-3 h-3 ml-1" />
-                  </Button>
-                </a>
+                {isSandbox && getFaucetUrl(yellowEnvironment, selectedChainId, "native") && (
+                  <a
+                    href={getFaucetUrl(yellowEnvironment, selectedChainId, "native") ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0"
+                  >
+                    <Button variant="outline" size="sm" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10">
+                      Get {ethBalance?.symbol ?? "ETH"} <ExternalLink className="w-3 h-3 ml-1" />
+                    </Button>
+                  </a>
+                )}
               </div>
             </motion.div>
           )}
@@ -1116,30 +1496,48 @@ export default function YellowPage() {
                   <div>
                     <h3 className="text-sm font-semibold text-zinc-200">Balances and Access</h3>
                     <p className="text-xs text-zinc-500 mt-1">
-                      Single source of truth for wallet, ledger, and custody. Faucet is embedded here.
+                      {isSandbox 
+                        ? "Single source of truth for wallet, ledger, and custody. Faucet is embedded here."
+                        : `Real-time view of your ${primaryAssetSymbol.toUpperCase()} across wallet, ledger, and custody on ${currentNetworkConfig?.chainName ?? "mainnet"}.`
+                      }
                     </p>
                   </div>
-                  <Badge variant="outline" className="border-zinc-700 text-zinc-400">
-                    Sandbox / Sepolia
+                  <Badge 
+                    variant="outline" 
+                    className={isSandbox ? "border-amber-500/50 text-amber-400" : "border-orange-500/50 text-orange-400"}
+                  >
+                    {isSandbox ? (
+                      <><Droplets className="w-3 h-3 mr-1" />Sandbox</>
+                    ) : (
+                      <><Globe className="w-3 h-3 mr-1" />{currentNetworkConfig?.chainName ?? "Mainnet"}</>
+                    )}
                   </Badge>
                 </div>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ETH</p>
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet {ethBalance?.symbol ?? "ETH"}</p>
                     <p className="text-lg font-mono text-white mt-1">
                       {ethBalance ? `${parseFloat(ethBalance.formatted).toFixed(4)}` : "—"}
                     </p>
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3">
-                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet ytest</p>
+                    <p className="text-[11px] uppercase tracking-wide text-zinc-500">Wallet {primaryAssetSymbol.toUpperCase()}</p>
                     <p className="text-lg font-mono text-white mt-1">
-                      {ytestBalance ? formatYtest(ytestBalance.formatted) : "—"}
+                      {tokenBalance ? formatYtest(tokenBalance.formatted) : "—"}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
-                    <p className="text-[11px] uppercase tracking-wide text-amber-300/80">Unified Balance</p>
-                    <p className="text-lg font-mono text-amber-200 mt-1">
+                  <div className={`rounded-xl border p-3 transition-colors ${
+                    isSandbox 
+                      ? "border-amber-500/30 bg-amber-500/5" 
+                      : "border-orange-500/30 bg-orange-500/5"
+                  }`}>
+                    <p className={`text-[11px] uppercase tracking-wide ${
+                      isSandbox ? "text-amber-300/80" : "text-orange-300/80"
+                    }`}>Unified Balance</p>
+                    <p className={`text-lg font-mono mt-1 ${
+                      isSandbox ? "text-amber-200" : "text-orange-200"
+                    }`}>
                       {totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—"}
                     </p>
                   </div>
@@ -1151,43 +1549,77 @@ export default function YellowPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button
-                    onClick={handleRequestFaucet}
-                    disabled={isRequestingFaucet || !primaryWallet?.address}
-                    size="sm"
-                    className="bg-amber-500 hover:bg-amber-600 text-black"
-                  >
-                    {isRequestingFaucet ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Requesting faucet…
-                      </>
-                    ) : (
-                      <>
-                        <Droplets className="w-4 h-4 mr-2" />
-                        Request Faucet Tokens
-                      </>
-                    )}
-                  </Button>
-                  <a href={YTEST_USD_FAUCET} target="_blank" rel="noopener noreferrer">
-                    <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300">
-                      Open ytest faucet <ExternalLink className="w-3 h-3 ml-1" />
+                {/* Faucet buttons - only in Sandbox mode */}
+                {isSandbox ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      onClick={handleRequestFaucet}
+                      disabled={isRequestingFaucet || !primaryWallet?.address}
+                      size="sm"
+                      className="bg-amber-500 hover:bg-amber-600 text-black"
+                    >
+                      {isRequestingFaucet ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Requesting faucet…
+                        </>
+                      ) : (
+                        <>
+                          <Droplets className="w-4 h-4 mr-2" />
+                          Request Faucet Tokens
+                        </>
+                      )}
                     </Button>
-                  </a>
-                </div>
+                    {faucetUrl && (
+                      <a href={faucetUrl} target="_blank" rel="noopener noreferrer">
+                        <Button size="sm" variant="outline" className="border-zinc-700 text-zinc-300">
+                          Open {primaryAssetSymbol} faucet <ExternalLink className="w-3 h-3 ml-1" />
+                        </Button>
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-4 p-4 rounded-lg bg-gradient-to-r from-orange-500/15 via-yellow-500/10 to-orange-600/5 border border-orange-500/40">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/30 to-yellow-500/20 flex items-center justify-center shrink-0">
+                        <CircleDollarSign className="w-5 h-5 text-orange-400" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-orange-400 flex items-center gap-1.5">
+                          <Flame className="w-3.5 h-3.5" />
+                          Live on {currentNetworkConfig?.chainName ?? "Mainnet"}
+                        </p>
+                        <p className="text-xs text-orange-300/80 mt-0.5">
+                          Trading real {primaryAssetSymbol.toUpperCase()} — transactions are final
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </GlowCard>
 
-            <GlowCard className="p-5">
+            <GlowCard className={`p-5 transition-colors ${!isSandbox ? "border-orange-800/30" : ""}`}>
               <div className="relative z-10">
-                <h3 className="text-sm font-semibold text-zinc-200">Network Pulse</h3>
-                <p className="text-xs text-zinc-500 mt-1">Interactive map for active sandbox route.</p>
+                <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                  {isSandbox ? (
+                    <Activity className="w-4 h-4 text-amber-400" />
+                  ) : (
+                    <Globe className="w-4 h-4 text-orange-400" />
+                  )}
+                  Network Pulse
+                </h3>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {isSandbox 
+                    ? "Sandbox environment — test safely with no real value at risk."
+                    : `Live on ${currentNetworkConfig?.chainName ?? "Mainnet"} — real-time state channel operations.`
+                  }
+                </p>
                 <div className="mt-4 flex justify-center">
                   <LocationMap
                     className="mb-6"
-                    location="Yellow Sandbox Route"
-                    coordinates="Sepolia · wss://clearnet-sandbox.yellow.com/ws"
+                    location={`Yellow ${isSandbox ? "Sandbox" : "Production"}`}
+                    coordinates={`${currentNetworkConfig?.chainName ?? "Unknown"} · ${isSandbox ? "Test Network" : "Live Network"}`}
                   />
                 </div>
               </div>
@@ -1221,13 +1653,19 @@ export default function YellowPage() {
                 {/* ── Overview Tab ── */}
                 <TabsContent value="overview" className="space-y-6">
                   {/* Next Step Guidance */}
-                  <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-xl p-5">
+                  <div className={`rounded-xl p-5 transition-all ${
+                    isSandbox 
+                      ? "bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20" 
+                      : "bg-gradient-to-r from-orange-500/10 via-orange-500/5 to-transparent border border-orange-500/20"
+                  }`}>
                     <div className="flex items-start gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                        isSandbox ? "bg-amber-500/20" : "bg-orange-500/20"
+                      }`}>
                         {currentStep < 4 ? (
-                          <Zap className="w-5 h-5 text-amber-400" />
+                          <Zap className={`w-5 h-5 ${isSandbox ? "text-amber-400" : "text-orange-400"}`} />
                         ) : currentStep < 6 ? (
-                          <ArrowUpRight className="w-5 h-5 text-amber-400" />
+                          <ArrowUpRight className={`w-5 h-5 ${isSandbox ? "text-amber-400" : "text-orange-400"}`} />
                         ) : (
                           <CheckCircle2 className="w-5 h-5 text-green-400" />
                         )}
@@ -1246,18 +1684,22 @@ export default function YellowPage() {
                         </h3>
                         <p className="text-xs text-zinc-400 leading-relaxed">
                           {currentStep < 4
-                            ? "Open a state channel on-chain to start making instant off-chain transfers. You'll need Sepolia ETH for gas and ytest.usd tokens."
+                            ? `Open a state channel on ${currentNetworkConfig?.chainName ?? "the blockchain"} to start making instant off-chain transfers. You'll need ${getNativeCurrencyInfo(selectedChainId).symbol} for gas${isSandbox ? "" : ` and ${primaryAssetSymbol.toUpperCase()} in your wallet`}.`
                             : currentStep < 6
-                              ? "Allocate funds from your Unified Balance into your open channel to enable off-chain transfers."
+                              ? `Allocate funds from your Unified Balance into your open channel to enable off-chain transfers${!isSandbox ? " with real assets" : ""}.`
                               : currentStep < 7
-                                ? "Send an instant, gas-free off-chain transfer to any address on the Yellow Network."
-                                : "You've completed the full state channel lifecycle. You can close channels and withdraw funds."}
+                                ? `Send an instant, gas-free off-chain transfer to any address on Yellow Network${!isSandbox ? " — real value, instant settlement" : ""}.`
+                                : `You've completed the full state channel lifecycle${!isSandbox ? " on mainnet" : ""}. You can close channels and withdraw funds.`}
                         </p>
                         {currentStep < 7 && (
                           <Button
                             onClick={() => setActiveTab("operations")}
                             size="sm"
-                            className="mt-3 bg-amber-500 hover:bg-amber-600 text-black font-medium"
+                            className={`mt-3 font-medium transition-all ${
+                              isSandbox 
+                                ? "bg-amber-500 hover:bg-amber-600 text-black" 
+                                : "bg-orange-500 hover:bg-orange-600 text-black"
+                            }`}
                           >
                             <ArrowRight className="w-3.5 h-3.5 mr-1.5" />
                             Go to Operations
@@ -1268,31 +1710,82 @@ export default function YellowPage() {
                   </div>
 
                   {/* Fund Flow Diagram */}
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-5">
+                  <div className={`rounded-xl border p-5 transition-colors ${
+                    isSandbox 
+                      ? "border-zinc-800 bg-zinc-900/30" 
+                      : "border-orange-800/30 bg-orange-950/20"
+                  }`}>
                     <h3 className="text-sm font-semibold text-zinc-200 mb-4 flex items-center gap-2">
-                      <Coins className="w-4 h-4 text-amber-400" />
+                      {isSandbox ? (
+                        <Coins className="w-4 h-4 text-amber-400" />
+                      ) : (
+                        <CircleDollarSign className="w-4 h-4 text-orange-400" />
+                      )}
                       How Funds Flow
                     </h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
-                        { label: "Wallet", value: walletYtestNum > 0 ? formatYtest(walletYtestNum.toString()) : "—", sub: "ytest.usd", color: "border-zinc-700", highlight: false },
-                        { label: "Unified Balance", value: totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—", sub: "off-chain (faucet)", color: "border-amber-500/40", highlight: totalLedgerBalance > 0 },
-                        { label: "Channel-Locked", value: openChannels.length > 0 ? formatYtest(openChannels.reduce((s, c) => s + parseFloat(c.amount || "0"), 0)) : "—", sub: `${openChannels.length} channel(s)`, color: "border-sky-500/40", highlight: openChannels.length > 0 },
-                        { label: "Custody (L1)", value: custodyNum > 0 ? formatYtest(custodyNum.toString()) : "—", sub: "on-chain", color: "border-zinc-700", highlight: false },
+                        { 
+                          label: "Wallet", 
+                          value: walletTokenNum > 0 ? formatYtest(walletTokenNum.toString()) : "—", 
+                          sub: primaryAssetSymbol.toUpperCase(), 
+                          color: "border-zinc-700", 
+                          highlight: false 
+                        },
+                        { 
+                          label: "Unified Balance", 
+                          value: totalLedgerBalance > 0 ? formatYtest(totalLedgerBalance) : "—", 
+                          sub: "off-chain ledger", 
+                          color: isSandbox ? "border-amber-500/40" : "border-orange-500/40", 
+                          highlight: totalLedgerBalance > 0 
+                        },
+                        { 
+                          label: "Channel-Locked", 
+                          value: openChannels.length > 0 ? formatYtest(openChannels.reduce((s, c) => s + parseFloat(c.amount || "0"), 0)) : "—", 
+                          sub: `${openChannels.length} channel(s)`, 
+                          color: "border-sky-500/40", 
+                          highlight: openChannels.length > 0 
+                        },
+                        { 
+                          label: "Custody (L1)", 
+                          value: custodyNum > 0 ? formatYtest(custodyNum.toString()) : "—", 
+                          sub: currentNetworkConfig?.chainName ?? "on-chain", 
+                          color: "border-zinc-700", 
+                          highlight: false 
+                        },
                       ].map((item) => (
-                        <div key={item.label} className={`rounded-lg border ${item.color} ${item.highlight ? "bg-amber-500/5" : "bg-zinc-900/50"} p-3 text-center`}>
+                        <div key={item.label} className={`rounded-lg border ${item.color} ${
+                          item.highlight 
+                            ? (isSandbox ? "bg-amber-500/5" : "bg-orange-500/5") 
+                            : "bg-zinc-900/50"
+                        } p-3 text-center`}>
                           <p className="text-[11px] uppercase tracking-wide text-zinc-500">{item.label}</p>
-                          <p className={`text-lg font-mono mt-1 ${item.highlight ? "text-amber-200" : "text-white"}`}>{item.value}</p>
+                          <p className={`text-lg font-mono mt-1 ${
+                            item.highlight 
+                              ? (isSandbox ? "text-amber-200" : "text-orange-200") 
+                              : "text-white"
+                          }`}>{item.value}</p>
                           <p className="text-[10px] text-zinc-600 mt-0.5">{item.sub}</p>
                         </div>
                       ))}
                     </div>
-                    <div className="flex items-center justify-center gap-1 mt-3 text-[10px] text-zinc-600">
-                      <span>Faucet → Unified Balance</span>
+                    <div className={`flex items-center justify-center gap-1 mt-3 text-[10px] ${
+                      isSandbox ? "text-zinc-600" : "text-orange-700"
+                    }`}>
+                      {isSandbox ? (
+                        <>
+                          <span>Faucet → Unified Balance</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </>
+                      ) : (
+                        <>
+                          <span>Wallet → Deposit → Unified Balance</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </>
+                      )}
+                      <span>Fund → Channel</span>
                       <ArrowRight className="w-3 h-3" />
-                      <span>Resize → Channel</span>
-                      <ArrowRight className="w-3 h-3" />
-                      <span>Transfer (off-chain)</span>
+                      <span>Transfer (instant)</span>
                       <ArrowRight className="w-3 h-3" />
                       <span>Close → Withdraw</span>
                     </div>
@@ -1301,13 +1794,24 @@ export default function YellowPage() {
                   {/* Channel Status + Quick Actions */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Active Channels Summary */}
-                    <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
+                    <div className={`rounded-xl p-4 border transition-colors ${
+                      isSandbox 
+                        ? "bg-zinc-800/30 border-zinc-700/30" 
+                        : "bg-orange-950/20 border-orange-800/30"
+                    }`}>
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-                          <Network className="w-4 h-4 text-amber-400" />
+                          <Network className={`w-4 h-4 ${isSandbox ? "text-amber-400" : "text-orange-400"}`} />
                           Channels
                         </h3>
-                        <Badge variant="outline" className="border-zinc-700 text-zinc-400 text-xs">
+                        <Badge 
+                          variant="outline" 
+                          className={`text-xs ${
+                            isSandbox 
+                              ? "border-zinc-700 text-zinc-400" 
+                              : "border-orange-700 text-orange-400"
+                          }`}
+                        >
                           {openChannels.length} open
                         </Badge>
                       </div>
@@ -1316,11 +1820,13 @@ export default function YellowPage() {
                       ) : (
                         <div className="space-y-2">
                           {openChannels.slice(0, 3).map((ch) => (
-                            <div key={ch.channelId} className="flex items-center justify-between bg-zinc-800/50 rounded-lg px-3 py-2">
+                            <div key={ch.channelId} className={`flex items-center justify-between rounded-lg px-3 py-2 ${
+                              isSandbox ? "bg-zinc-800/50" : "bg-orange-950/30"
+                            }`}>
                               <span className="font-mono text-xs text-zinc-300">
                                 {ch.channelId?.slice(0, 8)}…{ch.channelId?.slice(-6)}
                               </span>
-                              <span className="text-xs font-mono text-amber-400">
+                              <span className={`text-xs font-mono ${isSandbox ? "text-amber-400" : "text-orange-400"}`}>
                                 {formatYtest(ch.amount ?? "0")}
                               </span>
                             </div>
@@ -1328,7 +1834,11 @@ export default function YellowPage() {
                           {openChannels.length > 3 && (
                             <button
                               onClick={() => setActiveTab("operations")}
-                              className="text-xs text-amber-400 hover:text-amber-300 mt-1"
+                              className={`text-xs mt-1 transition-colors ${
+                                isSandbox 
+                                  ? "text-amber-400 hover:text-amber-300" 
+                                  : "text-orange-400 hover:text-orange-300"
+                              }`}
                             >
                               View all {openChannels.length} channels in Operations →
                             </button>
@@ -1353,19 +1863,31 @@ export default function YellowPage() {
                     </div>
 
                     {/* Quick Actions */}
-                    <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-700/30">
+                    <div className={`rounded-xl p-4 border transition-colors ${
+                      isSandbox 
+                        ? "bg-zinc-800/30 border-zinc-700/30" 
+                        : "bg-orange-950/20 border-orange-800/30"
+                    }`}>
                       <h3 className="text-sm font-semibold text-zinc-300 mb-3 flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-amber-400" />
+                        {isSandbox ? (
+                          <Zap className="w-4 h-4 text-amber-400" />
+                        ) : (
+                          <Flame className="w-4 h-4 text-orange-400" />
+                        )}
                         Quick Actions
                       </h3>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className={`grid gap-2 ${isSandbox ? "grid-cols-2" : "grid-cols-3"}`}>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => { setActiveTab("operations"); setExpandedQuickAction(0); }}
-                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                          className={`justify-start text-xs transition-all ${
+                            isSandbox 
+                              ? "border-zinc-700 text-zinc-300 hover:bg-zinc-800" 
+                              : "border-orange-700/50 text-zinc-300 hover:bg-orange-900/30 hover:border-orange-600/50"
+                          }`}
                         >
-                          <PlusCircle className="w-3.5 h-3.5 mr-1.5 text-green-400" />
+                          <PlusCircle className={`w-3.5 h-3.5 mr-1.5 ${isSandbox ? "text-green-400" : "text-orange-400"}`} />
                           Create
                         </Button>
                         <Button
@@ -1373,30 +1895,41 @@ export default function YellowPage() {
                           size="sm"
                           onClick={() => { setActiveTab("operations"); setExpandedQuickAction(2); }}
                           disabled={!hasOpenChannels}
-                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                          className={`justify-start text-xs transition-all ${
+                            isSandbox 
+                              ? "border-zinc-700 text-zinc-300 hover:bg-zinc-800" 
+                              : "border-orange-700/50 text-zinc-300 hover:bg-orange-900/30 hover:border-orange-600/50"
+                          }`}
                         >
-                          <ArrowUpRight className="w-3.5 h-3.5 mr-1.5 text-blue-400" />
+                          <ArrowUpRight className={`w-3.5 h-3.5 mr-1.5 ${isSandbox ? "text-blue-400" : "text-sky-400"}`} />
                           Fund
                         </Button>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => { setActiveTab("operations"); setExpandedQuickAction(3); }}
-                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                          className={`justify-start text-xs transition-all ${
+                            isSandbox 
+                              ? "border-zinc-700 text-zinc-300 hover:bg-zinc-800" 
+                              : "border-orange-700/50 text-zinc-300 hover:bg-orange-900/30 hover:border-orange-600/50"
+                          }`}
                         >
-                          <Send className="w-3.5 h-3.5 mr-1.5 text-purple-400" />
+                          <Send className={`w-3.5 h-3.5 mr-1.5 ${isSandbox ? "text-purple-400" : "text-violet-400"}`} />
                           Transfer
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleRequestFaucet}
-                          disabled={isRequestingFaucet}
-                          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
-                        >
-                          <Droplets className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
-                          Faucet
-                        </Button>
+                        {/* Faucet button - Sandbox only */}
+                        {isSandbox && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRequestFaucet}
+                            disabled={isRequestingFaucet}
+                            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 justify-start text-xs"
+                          >
+                            <Droplets className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
+                            Faucet
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1406,12 +1939,20 @@ export default function YellowPage() {
                     <div>
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-                          <Activity className="w-4 h-4 text-amber-400" />
+                          {isSandbox ? (
+                            <Activity className="w-4 h-4 text-amber-400" />
+                          ) : (
+                            <Receipt className="w-4 h-4 text-orange-400" />
+                          )}
                           Recent Activity
                         </h3>
                         <button
                           onClick={() => setActiveTab("activity")}
-                          className="text-xs text-amber-400 hover:text-amber-300"
+                          className={`text-xs transition-colors ${
+                            isSandbox 
+                              ? "text-amber-400 hover:text-amber-300" 
+                              : "text-orange-400 hover:text-orange-300"
+                          }`}
                         >
                           View all →
                         </button>
@@ -1437,10 +1978,14 @@ export default function YellowPage() {
                                 {tx.hash.slice(0, 6)}…{tx.hash.slice(-4)}
                               </span>
                               <a
-                                href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                href={getExplorerUrl(tx.hash)}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-zinc-500 hover:text-amber-400"
+                                className={`transition-colors ${
+                                  isSandbox 
+                                    ? "text-zinc-500 hover:text-amber-400" 
+                                    : "text-zinc-500 hover:text-orange-400"
+                                }`}
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
                               </a>
@@ -1487,16 +2032,27 @@ export default function YellowPage() {
 
                   {channels.length === 0 ? (
                     <div className="text-center py-12 space-y-4">
-                      <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto">
-                        <Network className="w-8 h-8 text-zinc-600" />
+                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto ${
+                        isSandbox ? "bg-zinc-800" : "bg-orange-950/50"
+                      }`}>
+                        <Network className={`w-8 h-8 ${isSandbox ? "text-zinc-600" : "text-orange-700"}`} />
                       </div>
                       <div>
                         <p className="text-zinc-400 font-medium">No channels found</p>
-                        <p className="text-zinc-600 text-sm mt-1">Create your first state channel to get started</p>
+                        <p className="text-zinc-600 text-sm mt-1">
+                          {isSandbox 
+                            ? "Create your first state channel to get started" 
+                            : `Create your first channel on ${currentNetworkConfig?.chainName ?? "mainnet"} to begin`
+                          }
+                        </p>
                       </div>
                       <Button
                         onClick={() => setActiveTab("operations")}
-                        className="bg-amber-500 hover:bg-amber-600 text-black"
+                        className={`transition-colors ${
+                          isSandbox 
+                            ? "bg-amber-500 hover:bg-amber-600 text-black" 
+                            : "bg-orange-500 hover:bg-orange-600 text-black"
+                        }`}
                       >
                         <PlusCircle className="w-4 h-4 mr-2" />
                         Create Channel
@@ -1510,12 +2066,18 @@ export default function YellowPage() {
                           variants={slideIn}
                           initial="hidden"
                           animate="visible"
-                          className="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50 hover:border-zinc-600/50 transition-all"
+                          className={`rounded-xl p-4 border transition-all ${
+                            isSandbox 
+                              ? "bg-zinc-800/50 border-zinc-700/50 hover:border-zinc-600/50" 
+                              : "bg-orange-950/20 border-orange-800/30 hover:border-orange-700/50"
+                          }`}
                         >
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-lg bg-zinc-700/50 flex items-center justify-center">
-                                <Network className="w-5 h-5 text-amber-400" />
+                              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                                isSandbox ? "bg-zinc-700/50" : "bg-orange-900/30"
+                              }`}>
+                                <Network className={`w-5 h-5 ${isSandbox ? "text-amber-400" : "text-orange-400"}`} />
                               </div>
                               <div>
                                 <div className="flex items-center gap-2">
@@ -1524,10 +2086,14 @@ export default function YellowPage() {
                                   </span>
                                   <CopyButton text={ch.channelId ?? ""} />
                                   <a
-                                    href={`${ETHERSCAN_BASE}/address/${ch.channelId}`}
+                                    href={`${currentNetworkConfig?.blockExplorer ?? "https://etherscan.io"}/address/${ch.channelId}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-zinc-500 hover:text-amber-400 transition-colors"
+                                    className={`transition-colors ${
+                                      isSandbox 
+                                        ? "text-zinc-500 hover:text-amber-400" 
+                                        : "text-zinc-500 hover:text-orange-400"
+                                    }`}
                                   >
                                     <ExternalLink className="w-3 h-3" />
                                   </a>
@@ -1541,7 +2107,7 @@ export default function YellowPage() {
                           <div className="grid grid-cols-3 gap-4 text-sm">
                             <div>
                               <p className="text-xs text-zinc-500">Amount</p>
-                              <p className="font-mono text-zinc-200">{formatYtest(ch.amount ?? "0")} ytest.usd</p>
+                              <p className="font-mono text-zinc-200">{formatYtest(ch.amount ?? "0")} {primaryAssetSymbol.toUpperCase()}</p>
                             </div>
                             <div>
                               <p className="text-xs text-zinc-500">Token</p>
@@ -1559,7 +2125,11 @@ export default function YellowPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => { setResizeChannelId(ch.channelId); setActiveTab("operations"); }}
-                                className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10"
+                                className={`transition-colors ${
+                                  isSandbox 
+                                    ? "border-amber-500/50 text-amber-400 hover:bg-amber-500/10" 
+                                    : "border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
+                                }`}
                               >
                                 <ArrowUpRight className="w-3 h-3 mr-1" />
                                 Fund
@@ -1599,14 +2169,17 @@ export default function YellowPage() {
                               <span className="font-medium text-zinc-300"> Fund Channel</span> action.
                             </p>
                             {!hasUnifiedBalance && (
-                              <p className="mt-2 text-[11px] text-amber-300">
-                                Tip: Request faucet tokens first so you have Unified Balance to allocate into the channel.
+                              <p className={`mt-2 text-[11px] ${isSandbox ? "text-amber-300" : "text-orange-300"}`}>
+                                {isSandbox 
+                                  ? "Tip: Request faucet tokens first so you have Unified Balance to allocate into the channel."
+                                  : `Tip: Deposit ${primaryAssetSymbol.toUpperCase()} first to get Unified Balance for channel allocation.`
+                                }
                               </p>
                             )}
                             <Button
                               onClick={handleCreateChannel}
                               disabled={isCreating || needsETH}
-                              className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
+                              className={`${opButtonClass} bg-orange-600 hover:bg-orange-700 text-white`}
                               size="sm"
                             >
                               {isCreating ? (
@@ -1624,12 +2197,12 @@ export default function YellowPage() {
                         description: "Optional: move funds into the L1 custody contract",
                         renderForm: () => {
                           const depAmt = parseFloat(depositAmount) || 0;
-                          const exceeds = depAmt > walletYtestNum;
+                          const exceeds = depAmt > walletTokenNum;
                           return (
                             <>
                               <div className="flex items-center justify-between text-xs">
-                                <span className="text-zinc-500">Wallet ytest.usd</span>
-                                <span className="font-mono text-zinc-300">{walletYtestNum > 0 ? formatYtest(walletYtestNum.toString()) : "0.00"}</span>
+                                <span className="text-zinc-500">Wallet {primaryAssetSymbol}</span>
+                                <span className="font-mono text-zinc-300">{walletTokenNum > 0 ? formatYtest(walletTokenNum.toString()) : "0.00"}</span>
                               </div>
                               <div className="flex items-center justify-between text-xs">
                                 <span className="text-zinc-500">Custody balance</span>
@@ -1639,12 +2212,12 @@ export default function YellowPage() {
                                 type="number"
                                 value={depositAmount}
                                 onChange={(e) => setDepositAmount(e.target.value)}
-                                placeholder="Amount (ytest.usd)"
+                                placeholder={`Amount (${primaryAssetSymbol})`}
                                 className={`${opInputClass} ${exceeds ? "!border-red-500/60" : ""}`}
                               />
                               {exceeds && (
                                 <p className="text-[11px] text-red-400">
-                                  Exceeds wallet balance ({formatYtest(walletYtestNum.toString())} available)
+                                  Exceeds wallet balance ({formatYtest(walletTokenNum.toString())} available)
                                 </p>
                               )}
                               <Button
@@ -1689,8 +2262,11 @@ export default function YellowPage() {
                                 <span className="font-mono text-zinc-300">{custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"}</span>
                               </div>
                               {!hasUnifiedBalance && !hasCustodyBalance && (
-                                <p className="text-xs text-amber-300">
-                                  No funds available. Request faucet tokens or deposit first.
+                                <p className={`text-xs ${isSandbox ? "text-amber-300" : "text-orange-300"}`}>
+                                  {isSandbox 
+                                    ? "No funds available. Request faucet tokens or deposit first."
+                                    : `No funds available. Deposit ${primaryAssetSymbol.toUpperCase()} to your wallet first.`
+                                  }
                                 </p>
                               )}
                               {resizeError && (
@@ -1721,7 +2297,7 @@ export default function YellowPage() {
                                 type="number"
                                 value={resizeAmount}
                                 onChange={(e) => { setResizeAmount(e.target.value); setResizeError(null); }}
-                                placeholder="Amount (ytest.usd)"
+                                placeholder={`Amount (${primaryAssetSymbol.toUpperCase()})`}
                                 className={`${opInputClass} ${exceedsFund ? "!border-red-500/60" : ""}`}
                               />
                               {exceedsFund && (
@@ -1780,7 +2356,7 @@ export default function YellowPage() {
                                   type="number"
                                   value={transferAmount}
                                   onChange={(e) => setTransferAmount(e.target.value)}
-                                  placeholder="Amount (ytest.usd)"
+                                  placeholder={`Amount (${primaryAssetSymbol.toUpperCase()})`}
                                   className={`${opInputClass} ${exceedsLedger ? "!border-red-500/60" : ""}`}
                                 />
                               </div>
@@ -1826,7 +2402,7 @@ export default function YellowPage() {
                       return {
                         icon: (
                           <div className={`w-9 h-9 flex items-center justify-center rounded-full text-sm ${tx.status === "confirmed"
-                            ? "bg-emerald-500/15 text-emerald-400"
+                            ? "bg-orange-500/15 text-orange-400"
                             : tx.status === "failed"
                               ? "bg-red-500/15 text-red-400"
                               : "bg-amber-500/15 text-amber-400"
@@ -1887,8 +2463,8 @@ export default function YellowPage() {
                             <>
                               <div className="flex items-center justify-between text-xs">
                                 <span className="text-zinc-500">Custody balance</span>
-                                <span className={`font-mono ${custodyNum > 0 ? "text-emerald-300" : "text-zinc-500"}`}>
-                                  {custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"} ytest.usd
+                                <span className={`font-mono ${custodyNum > 0 ? "text-orange-300" : "text-zinc-500"}`}>
+                                  {custodyNum > 0 ? formatYtest(custodyNum.toString()) : "0.00"} {primaryAssetSymbol.toUpperCase()}
                                 </span>
                               </div>
                               {custodyNum <= 0 && (
@@ -1900,7 +2476,7 @@ export default function YellowPage() {
                                 type="number"
                                 value={withdrawAmount}
                                 onChange={(e) => setWithdrawAmount(e.target.value)}
-                                placeholder="Amount (ytest.usd)"
+                                placeholder={`Amount (${primaryAssetSymbol.toUpperCase()})`}
                                 className={`${opInputClass} ${exceedsW ? "!border-red-500/60" : ""}`}
                               />
                               {exceedsW && (
@@ -1919,7 +2495,7 @@ export default function YellowPage() {
                               <Button
                                 onClick={handleWithdraw}
                                 disabled={isWithdrawing || !withdrawAmount || needsETH || exceedsW || custodyNum <= 0}
-                                className={`${opButtonClass} bg-emerald-600 hover:bg-emerald-700 text-white`}
+                                className={`${opButtonClass} bg-orange-600 hover:bg-orange-700 text-white`}
                                 size="sm"
                               >
                                 {isWithdrawing ? (
@@ -1938,12 +2514,13 @@ export default function YellowPage() {
                         description: `Close all ${openChannels.length} open channel(s) at once`,
                         onClick: handleCloseAllChannels,
                       },
-                      {
+                      // Faucet - only in Sandbox mode
+                      ...(isSandbox ? [{
                         icon: Droplets,
                         title: "Faucet",
                         description: "Request testnet tokens",
                         onClick: handleRequestFaucet,
-                      },
+                      }] : []),
                       {
                         icon: RefreshCw,
                         title: "Sync Balances",
@@ -2037,12 +2614,16 @@ export default function YellowPage() {
                               </td>
                               <td className="py-3 px-3 text-right">
                                 <a
-                                  href={`${ETHERSCAN_BASE}/tx/${tx.hash}`}
+                                  href={getExplorerUrl(tx.hash)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+                                  className={`inline-flex items-center gap-1.5 text-xs transition-colors ${
+                                    isSandbox 
+                                      ? "text-zinc-500 hover:text-amber-400" 
+                                      : "text-zinc-500 hover:text-orange-400"
+                                  }`}
                                 >
-                                  Etherscan <ExternalLink className="w-3 h-3" />
+                                  Explorer <ExternalLink className="w-3 h-3" />
                                 </a>
                               </td>
                             </tr>
@@ -2076,7 +2657,7 @@ export default function YellowPage() {
                                     ? "text-red-400"
                                     : entry.level === "warn"
                                       ? "text-amber-400"
-                                      : "text-emerald-400"
+                                      : "text-orange-400"
                                 }`}
                               >
                                 {entry.level.toUpperCase()}
@@ -2100,7 +2681,7 @@ export default function YellowPage() {
                       <div className="mt-3 space-y-2">
                         <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
                           <span className="text-xs text-zinc-500">Confirmed</span>
-                          <span className="font-mono text-sm text-emerald-400">{confirmedTxCount}</span>
+                          <span className="font-mono text-sm text-orange-400">{confirmedTxCount}</span>
                         </div>
                         <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
                           <span className="text-xs text-zinc-500">Pending</span>
@@ -2155,14 +2736,14 @@ export default function YellowPage() {
                     }}
                     transition={{ duration: 0.25, delay: i * 0.03 }}
                     className={`rounded-lg border p-2 text-center ${isComplete
-                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      ? "border-orange-500/40 bg-orange-500/10"
                       : isActive
                         ? "border-amber-500/40 bg-amber-500/10"
                         : "border-zinc-800 bg-zinc-900/40"
                       }`}
                   >
                     <div className="mx-auto w-7 h-7 rounded-md flex items-center justify-center mb-1 bg-black/30">
-                      {isComplete ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Icon className="w-3.5 h-3.5 text-zinc-400" />}
+                      {isComplete ? <Check className="w-3.5 h-3.5 text-orange-400" /> : <Icon className="w-3.5 h-3.5 text-zinc-400" />}
                     </div>
                     <p className="text-[10px] leading-tight text-zinc-400">{step.label}</p>
                   </motion.div>
@@ -2174,31 +2755,33 @@ export default function YellowPage() {
       )}
 
       {/* ── Network Config ── */}
-      {networkConfig && (
+      {networkConfigDisplay && (
         <motion.div variants={fadeIn} initial="hidden" animate="visible">
           <GlowCard className="p-4">
             <div className="flex items-center gap-2 mb-3">
               <Info className="w-4 h-4 text-zinc-400" />
-              <span className="text-sm font-semibold text-zinc-400">Network Configuration</span>
+              <span className="text-sm font-semibold text-zinc-400">
+                Network Configuration — {networkConfigDisplay.chainName}
+              </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               <div className="bg-zinc-800/50 rounded-lg p-3">
                 <span className="text-zinc-500">Custody Contract</span>
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="font-mono text-zinc-300">{formatAddress(networkConfig.custody)}</span>
-                  <CopyButton text={networkConfig.custody} />
+                  <span className="font-mono text-zinc-300">{formatAddress(networkConfigDisplay.custody)}</span>
+                  <CopyButton text={networkConfigDisplay.custody} />
                 </div>
               </div>
               <div className="bg-zinc-800/50 rounded-lg p-3">
                 <span className="text-zinc-500">Adjudicator</span>
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="font-mono text-zinc-300">{formatAddress(networkConfig.adjudicator)}</span>
-                  <CopyButton text={networkConfig.adjudicator} />
+                  <span className="font-mono text-zinc-300">{formatAddress(networkConfigDisplay.adjudicator)}</span>
+                  <CopyButton text={networkConfigDisplay.adjudicator} />
                 </div>
               </div>
               <div className="bg-zinc-800/50 rounded-lg p-3">
                 <span className="text-zinc-500">WebSocket</span>
-                <p className="font-mono text-zinc-300 mt-1 break-all">{networkConfig.wsUrl}</p>
+                <p className="font-mono text-zinc-300 mt-1 break-all">{networkConfigDisplay.wsUrl}</p>
               </div>
             </div>
           </GlowCard>
@@ -2273,7 +2856,7 @@ export default function YellowPage() {
                                 <>
                                   {entry.message.split(txMatch[0])[0]}
                                   <a
-                                    href={`${ETHERSCAN_BASE}/tx/${txMatch[1]}`}
+                                    href={getExplorerUrl(txMatch[1])}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-amber-400 hover:text-amber-300 underline"
