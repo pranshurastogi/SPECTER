@@ -181,11 +181,13 @@ function StatusBadge({ status }: { status: string }) {
 function GlowCard({
   children,
   className = "",
-  glowColor = "amber"
+  glowColor = "amber",
+  mainnet = false,
 }: {
   children: React.ReactNode;
   className?: string;
   glowColor?: "amber" | "green" | "blue" | "red";
+  mainnet?: boolean;
 }) {
   const glowColors = {
     amber: "hover:shadow-amber-500/20",
@@ -196,9 +198,12 @@ function GlowCard({
 
   return (
     <Card className={`
-      relative overflow-hidden bg-zinc-900/50 border-zinc-800 
-      transition-all duration-300 hover:border-zinc-700 
-      hover:shadow-lg ${glowColors[glowColor]} ${className}
+      relative overflow-hidden transition-all duration-500 
+      hover:shadow-lg ${glowColors[glowColor]}
+      ${mainnet 
+        ? "bg-zinc-900/60 border-orange-800/25 hover:border-orange-700/40 shadow-[0_0_30px_rgba(234,88,12,0.04)]" 
+        : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700"
+      } ${className}
     `}>
       {children}
     </Card>
@@ -1206,27 +1211,43 @@ export default function YellowPage() {
 
         {/* ── Hero Section ── */}
         <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-4">
-          <motion.div variants={fadeIn} className="relative overflow-hidden rounded-2xl border border-zinc-800/80 p-4 sm:p-5">
+          <motion.div variants={fadeIn} className={`relative overflow-hidden rounded-2xl border p-4 sm:p-5 transition-colors duration-500 ${
+            isSandbox ? "border-zinc-800/80" : "border-orange-800/30"
+          }`}>
             <AnimatedShaderHero
               showContent={false}
               headline={{ line1: "", line2: "" }}
               subtitle=""
-              className="absolute inset-0 min-h-0 opacity-35"
+              className={`absolute inset-0 min-h-0 transition-opacity duration-700 ${
+                isSandbox ? "opacity-25" : "opacity-45"
+              }`}
             />
-            <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/55 to-black/75 pointer-events-none" />
+            <div className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
+              isSandbox 
+                ? "bg-gradient-to-r from-black/80 via-black/60 to-black/80" 
+                : "bg-gradient-to-r from-black/70 via-black/45 to-black/70"
+            }`} />
 
             <div className="relative z-10 flex items-center justify-between flex-wrap gap-4">
               <div className="space-y-1">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
+                  <motion.div 
+                    className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-500 ${
+                      isSandbox 
+                        ? "bg-gradient-to-br from-amber-500 to-orange-600" 
+                        : "bg-gradient-to-br from-orange-500 to-red-600 shadow-[0_0_20px_rgba(234,88,12,0.25)]"
+                    }`}
+                    animate={{ rotate: isSandbox ? 0 : 5 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  >
                     <Network className="w-5 h-5 text-black" />
-                  </div>
+                  </motion.div>
                   <div>
                     <HeadingScramble className="text-2xl sm:text-3xl md:text-4xl font-bold text-white">
                       SPECTER YELLOW
                     </HeadingScramble>
                     <p className="text-zinc-300 text-xs sm:text-sm">
-                      Instant settlement rails for payments, off-chain speed, onchain security
+                      Instant settlement · Off-chain speed · Onchain security
                     </p>
                   </div>
                 </div>
@@ -1245,13 +1266,14 @@ export default function YellowPage() {
                   value={selectedChainId}
                   onChange={(e) => setSelectedChainId(Number(e.target.value))}
                   className={[
-                    "appearance-none bg-black/45 backdrop-blur-md",
-                    "border border-zinc-700/70 rounded-xl px-4 py-2.5",
+                    "appearance-none backdrop-blur-xl",
+                    "border rounded-xl px-4 py-2.5",
                     "text-sm text-zinc-100",
-                    "shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_10px_30px_rgba(0,0,0,0.35)]",
-                    "transition-all duration-300",
-                    "hover:border-zinc-500/70 hover:bg-black/55",
-                    "focus:outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20",
+                    "transition-all duration-500",
+                    "focus:outline-none focus:ring-2",
+                    isSandbox
+                      ? "bg-black/40 border-zinc-700/60 hover:border-zinc-500/70 hover:bg-black/55 focus:border-amber-500/50 focus:ring-amber-500/20 shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_10px_30px_rgba(0,0,0,0.35)]"
+                      : "bg-orange-950/30 border-orange-700/30 hover:border-orange-500/50 hover:bg-orange-950/40 focus:border-orange-500/50 focus:ring-orange-500/20 shadow-[0_0_0_1px_rgba(234,88,12,0.05),0_10px_30px_rgba(0,0,0,0.4)]",
                   ].join(" ")}
                 >
                   {supportedChains.map((chain) => (
@@ -1267,7 +1289,11 @@ export default function YellowPage() {
                     size="sm"
                     onClick={handleRefresh}
                     disabled={isRefreshing}
-                    className="border-zinc-700 bg-black/50 text-zinc-200 hover:text-white"
+                    className={`transition-all duration-500 ${
+                      isSandbox 
+                        ? "border-zinc-700 bg-black/50 text-zinc-200 hover:text-white" 
+                        : "border-orange-800/40 bg-orange-950/30 text-zinc-200 hover:text-white hover:border-orange-700/50"
+                    }`}
                   >
                     <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
                     Refresh
@@ -1279,46 +1305,48 @@ export default function YellowPage() {
         </motion.div>
 
         {/* ── Environment Info Banner ── */}
-        <motion.div variants={fadeIn} initial="hidden" animate="visible">
-          <div className={`rounded-lg border p-3 flex items-center justify-between flex-wrap gap-2 ${
-            isSandbox 
-              ? "bg-amber-500/10 border-amber-500/30" 
-              : "bg-orange-500/10 border-orange-500/30"
-          }`}>
-            <div className="flex items-center gap-2">
-              <Badge className={isSandbox ? "bg-amber-500/20 text-amber-400" : "bg-orange-500/20 text-orange-400"}>
-                {isSandbox ? (
-                  <><Droplets className="w-3 h-3 mr-1" />SANDBOX</>
-                ) : (
-                  <><Flame className="w-3 h-3 mr-1" />MAINNET</>
-                )}
-              </Badge>
-              <span className="text-sm text-zinc-300">
-                {currentNetworkConfig?.chainName ?? "Unknown Chain"} ({selectedChainId})
-              </span>
-              <span className="text-xs text-zinc-500">•</span>
-              <span className="text-xs text-zinc-400">
-                Asset: <span className="font-mono">{primaryAssetSymbol.toUpperCase()}</span>
-              </span>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={isSandbox ? "sandbox-banner" : "mainnet-banner"}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.4, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className={`mt-2 rounded-xl border p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all duration-700 ${
+              isSandbox 
+                ? "bg-amber-500/10 border-amber-500/20 shadow-[inset_0_1px_rgba(255,255,255,0.05),0_0_20px_rgba(245,158,11,0.05)]" 
+                : "bg-orange-950/40 border-orange-500/20 shadow-[inset_0_1px_rgba(255,255,255,0.05),0_0_20px_rgba(234,88,12,0.08)]"
+            }`}>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-3">
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className={`text-xs font-bold tracking-widest ${isSandbox ? "text-amber-400" : "text-orange-400"}`}
+                  >
+                    {isSandbox ? "SANDBOX ESP" : "MAINNET LIVE"}
+                  </motion.div>
+                  <div className="w-1 h-1 rounded-full bg-zinc-700" />
+                  <div className="text-sm font-medium text-zinc-200">
+                    {currentNetworkConfig?.chainName ?? "Ethereum Sepolia"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono mt-0.5">
+                  <span>{primaryAssetSymbol.toUpperCase()}</span>
+                  <span>•</span>
+                  <span>{isSandbox ? "Testnet — use faucet for tokens" : "Live — real assets only"}</span>
+                </div>
+              </div>
             </div>
-            {!isSandbox && (
-              <div className="flex items-center gap-2 text-xs">
-                <ShieldCheck className="w-4 h-4 text-orange-400" />
-                <span className="text-orange-400 font-medium">Live Network — real {primaryAssetSymbol.toUpperCase()} on {currentNetworkConfig?.chainName}</span>
-              </div>
-            )}
-            {isSandbox && (
-              <div className="flex items-center gap-1 text-xs text-amber-400">
-                <Info className="w-3 h-3" />
-                <span>Test environment — use faucet for test tokens</span>
-              </div>
-            )}
-          </div>
-        </motion.div>
+          </motion.div>
+        </AnimatePresence>
 
         {/* ── Connection Status Bar ── */}
         <motion.div variants={fadeIn} initial="hidden" animate="visible">
-          <GlowCard className="p-4">
+          <GlowCard className="p-4" mainnet={!isSandbox}>
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-4 min-w-0">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isConnected ? "bg-green-500/20" : "bg-zinc-800"
@@ -1407,14 +1435,14 @@ export default function YellowPage() {
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             <span>
                               {connectionStatus === YellowConnectionStatus.WaitingForSignature
-                                ? "Sign in wallet…"
+                                ? "Waiting for signature…"
                                 : connectionStatus === YellowConnectionStatus.Authenticating
                                   ? "Authenticating…"
                                   : "Connecting…"}
                             </span>
                           </motion.div>
                         ) : (
-                          <>Connect {isSandbox ? "Sandbox" : "Mainnet"}</>
+                          <>Sign to Connect {isSandbox ? "Sandbox" : "Mainnet"}</>
                         )}
                       </Button>
                     </motion.div>
@@ -1422,9 +1450,9 @@ export default function YellowPage() {
                       variant="ghost"
                       size="sm"
                       onClick={handleFullDisconnect}
-                      className="text-zinc-400 hover:text-zinc-200 rounded-full"
+                      className="text-zinc-500 hover:text-red-400 rounded-full hover:bg-red-500/10 transition-colors"
                     >
-                      Disconnect
+                      Disconnect Wallet
                     </Button>
                   </>
                 )}
@@ -1434,15 +1462,15 @@ export default function YellowPage() {
                       variant="outline"
                       size="sm"
                       onClick={handleDisconnect}
-                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-white hover:border-zinc-500 rounded-full h-11 px-5 transition-all"
+                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/50 rounded-full h-11 px-5 transition-all"
                     >
-                      Disconnect Session
+                      End Session
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={handleFullDisconnect}
-                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-white hover:border-zinc-500 rounded-full h-11 px-5 transition-all"
+                      className="border-zinc-700/70 bg-transparent text-zinc-300 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/50 rounded-full h-11 px-5 transition-all"
                     >
                       Disconnect Wallet
                     </Button>
@@ -1490,7 +1518,7 @@ export default function YellowPage() {
         {/* ── Account + Faucet Deck ── */}
         <motion.div variants={fadeIn} initial="hidden" animate="visible">
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <GlowCard className="p-5 xl:col-span-2">
+            <GlowCard className="p-5 xl:col-span-2" mainnet={!isSandbox}>
               <div className="relative z-10">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
@@ -1599,7 +1627,7 @@ export default function YellowPage() {
               </div>
             </GlowCard>
 
-            <GlowCard className={`p-5 transition-colors ${!isSandbox ? "border-orange-800/30" : ""}`}>
+            <GlowCard className="p-5" mainnet={!isSandbox}>
               <div className="relative z-10">
                 <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
                   {isSandbox ? (
@@ -1630,7 +1658,7 @@ export default function YellowPage() {
         {/* ── Main Panel ── */}
         {isConnected && (
           <motion.div variants={fadeIn} initial="hidden" animate="visible">
-            <GlowCard className="p-6">
+            <GlowCard className="p-6" mainnet={!isSandbox}>
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                 {isSyncingYellow && (
                   <div className="flex items-center gap-2 mb-4 text-xs text-zinc-500 bg-zinc-800/50 rounded-lg px-3 py-2">
@@ -2712,52 +2740,91 @@ export default function YellowPage() {
         )}
 
       {(isConnected || primaryWallet?.address) && (
-        <motion.div variants={fadeIn} initial="hidden" animate="visible">
-          <GlowCard className="p-4">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <p className="text-sm font-semibold text-zinc-300">Workflow Progress</p>
-              <Badge variant="outline" className="border-zinc-700 text-zinc-400">
-                Step {currentStep + 1}/{TIMELINE_STEPS.length}
-              </Badge>
+        <motion.div variants={fadeIn} initial="hidden" animate="visible" className="mt-8">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h3 className="text-lg font-medium text-zinc-200 tracking-tight">Workflow Progress</h3>
+              <div className="px-2.5 py-1 rounded-full bg-zinc-800/50 border border-zinc-700/50 text-xs font-medium text-zinc-400">
+                Step {currentStep + 1} of {TIMELINE_STEPS.length}
+              </div>
             </div>
-            <Progress value={(currentStep / (TIMELINE_STEPS.length - 1)) * 100} className="h-1.5 mb-4" />
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2">
-              {TIMELINE_STEPS.map((step, i) => {
-                const isComplete = currentStep > i;
-                const isActive = currentStep === i;
-                const Icon = step.icon;
-                return (
-                  <motion.div
-                    key={step.label}
-                    initial={{ opacity: 0.5, y: 8 }}
-                    animate={{
-                      opacity: isComplete || isActive ? 1 : 0.5,
-                      y: 0,
-                    }}
-                    transition={{ duration: 0.25, delay: i * 0.03 }}
-                    className={`rounded-lg border p-2 text-center ${isComplete
-                      ? "border-orange-500/40 bg-orange-500/10"
-                      : isActive
-                        ? "border-amber-500/40 bg-amber-500/10"
-                        : "border-zinc-800 bg-zinc-900/40"
+            
+            <GlowCard className="p-6 relative overflow-hidden" mainnet={!isSandbox}>
+              {/* Animated Progress Bar Background */}
+              <div className="absolute top-0 left-0 right-0 h-1 bg-zinc-800/80">
+                <motion.div 
+                  className={`h-full ${isSandbox ? "bg-amber-500" : "bg-orange-500"}`}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${(currentStep / (TIMELINE_STEPS.length - 1)) * 100}%` }}
+                  transition={{ duration: 0.8, ease: "easeInOut" }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-4 pt-2">
+                {TIMELINE_STEPS.map((step, i) => {
+                  const isComplete = currentStep > i;
+                  const isActive = currentStep === i;
+                  const Icon = step.icon;
+                  return (
+                    <motion.div
+                      key={step.label}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{
+                        opacity: isComplete || isActive ? 1 : 0.4,
+                        y: 0,
+                        scale: isActive ? 1.05 : 1
+                      }}
+                      transition={{ 
+                        duration: 0.4, 
+                        delay: i * 0.05,
+                        scale: { type: "spring", stiffness: 300, damping: 20 }
+                      }}
+                      className={`relative flex flex-col items-center gap-3 p-3 rounded-xl transition-colors duration-500 ${
+                        isActive
+                          ? isSandbox 
+                            ? "bg-amber-500/10 ring-1 ring-amber-500/30" 
+                            : "bg-orange-500/10 ring-1 ring-orange-500/30"
+                          : "hover:bg-zinc-800/30"
                       }`}
-                  >
-                    <div className="mx-auto w-7 h-7 rounded-md flex items-center justify-center mb-1 bg-black/30">
-                      {isComplete ? <Check className="w-3.5 h-3.5 text-orange-400" /> : <Icon className="w-3.5 h-3.5 text-zinc-400" />}
-                    </div>
-                    <p className="text-[10px] leading-tight text-zinc-400">{step.label}</p>
-                  </motion.div>
-                );
-              })}
-            </div>
-          </GlowCard>
+                    >
+                      <div className={`
+                        w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 shadow-sm
+                        ${isComplete
+                          ? isSandbox ? "bg-amber-500/20 text-amber-400" : "bg-orange-500/20 text-orange-400"
+                          : isActive
+                            ? isSandbox ? "bg-amber-400 text-black shadow-[0_0_15px_rgba(251,191,36,0.5)]" : "bg-orange-500 text-black shadow-[0_0_15px_rgba(249,115,22,0.5)]"
+                            : "bg-zinc-800 text-zinc-500"
+                        }
+                      `}>
+                        {isComplete ? <Check className="w-5 h-5" /> : <Icon className="w-5 h-5" />}
+                      </div>
+                      <p className={`text-xs text-center leading-tight font-medium ${
+                        isActive ? "text-zinc-200" : "text-zinc-500"
+                      }`}>
+                        {step.label}
+                      </p>
+                      
+                      {/* Connecting line for active step */}
+                      {isActive && i < TIMELINE_STEPS.length - 1 && (
+                        <motion.div 
+                          className="absolute -right-2 top-8 w-4 h-[2px] bg-zinc-700 hidden xl:block"
+                          initial={{ scaleX: 0 }}
+                          animate={{ scaleX: 1 }}
+                        />
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </GlowCard>
+          </div>
         </motion.div>
       )}
 
       {/* ── Network Config ── */}
       {networkConfigDisplay && (
         <motion.div variants={fadeIn} initial="hidden" animate="visible">
-          <GlowCard className="p-4">
+          <GlowCard className="p-4" mainnet={!isSandbox}>
             <div className="flex items-center gap-2 mb-3">
               <Info className="w-4 h-4 text-zinc-400" />
               <span className="text-sm font-semibold text-zinc-400">
