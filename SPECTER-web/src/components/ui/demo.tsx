@@ -1,6 +1,5 @@
-import ButtonWithIconDemo from "@/components/ui/button-witn-icon";
+import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 
 export default function DemoOne() {
-  return <ButtonWithIconDemo />;
+  return <CoreSpinLoader />;
 }
-

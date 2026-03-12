@@ -52,6 +52,7 @@ import {
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
 import { formatAddress } from "@/lib/utils";
 import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
+import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 
 type SetupStep = 1 | 2 | 3 | 4;
 
@@ -241,13 +242,13 @@ export default function GenerateKeys() {
 
   const keysJson = keys
     ? {
-        spending_pk: keys.spending_pk,
-        spending_sk: keys.spending_sk,
-        viewing_pk: keys.viewing_pk,
-        viewing_sk: keys.viewing_sk,
-        meta_address: keys.meta_address,
-        view_tag: keys.view_tag,
-      }
+      spending_pk: keys.spending_pk,
+      spending_sk: keys.spending_sk,
+      viewing_pk: keys.viewing_pk,
+      viewing_sk: keys.viewing_sk,
+      meta_address: keys.meta_address,
+      view_tag: keys.view_tag,
+    }
     : null;
 
   const steps: { num: SetupStep; label: string }[] = [
@@ -287,13 +288,12 @@ export default function GenerateKeys() {
                       setCurrentStep(s.num);
                     }
                   }}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                    currentStep === s.num
-                      ? "bg-primary text-primary-foreground"
-                      : s.num < currentStep
-                        ? "bg-primary/20 text-primary"
-                        : "bg-muted text-muted-foreground"
-                  }`}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${currentStep === s.num
+                    ? "bg-primary text-primary-foreground"
+                    : s.num < currentStep
+                      ? "bg-primary/20 text-primary"
+                      : "bg-muted text-muted-foreground"
+                    }`}
                 >
                   {s.num}
                 </button>
@@ -335,10 +335,7 @@ export default function GenerateKeys() {
                     )}
 
                     {step1Status === "generating" && (
-                      <div className="flex flex-col items-center py-8">
-                        <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
-                        <p className="text-sm text-muted-foreground">Generating keys…</p>
-                      </div>
+                      <CoreSpinLoader />
                     )}
 
                     {step1Status === "complete" && keys && (

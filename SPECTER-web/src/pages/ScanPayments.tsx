@@ -30,6 +30,7 @@ import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
+import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
 import { type DecryptedKeys } from "@/lib/crypto/keyVault";
 
@@ -310,19 +311,14 @@ export default function ScanPayments() {
                   disabled={!keys || scanState === "scanning"}
                   className="w-full"
                 >
-                  {scanState === "scanning" ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Scanning…
-                    </>
-                  ) : (
-                    <>
-                      <Scan className="h-4 w-4 mr-2" />
-                      Start scan
-                    </>
-                  )}
+                  <Scan className="h-4 w-4 mr-2" />
+                  Start scan
                 </Button>
               </div>
+
+              {scanState === "scanning" && (
+                <CoreSpinLoader />
+              )}
 
               <AnimatePresence mode="wait">
                 {(scanState === "complete" || scanState === "error") && (
@@ -483,13 +479,12 @@ export default function ScanPayments() {
                       <span className="text-xs text-muted-foreground">Amount</span>
                       <p className="font-medium mt-1">
                         {selectedPayment.amount
-                          ? `${formatCryptoAmount(selectedPayment.amount)} ${
-                              selectedPayment.chain === "sui"
-                                ? "SUI"
-                                : selectedPayment.channel_id
-                                  ? "USDC"
-                                  : "ETH"
-                            }`
+                          ? `${formatCryptoAmount(selectedPayment.amount)} ${selectedPayment.chain === "sui"
+                            ? "SUI"
+                            : selectedPayment.channel_id
+                              ? "USDC"
+                              : "ETH"
+                          }`
                           : "—"}
                       </p>
                     </div>
@@ -536,11 +531,10 @@ export default function ScanPayments() {
                         </code>
                         {derivedAddress && (
                           <div
-                            className={`p-3 rounded-lg border text-xs ${
-                              addressMatch
+                            className={`p-3 rounded-lg border text-xs ${addressMatch
                                 ? "bg-success/10 border-success/30 text-success"
                                 : "bg-destructive/10 border-destructive/30 text-destructive"
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center gap-2">
                               {addressMatch ? (

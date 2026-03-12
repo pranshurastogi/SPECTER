@@ -1,92 +1,72 @@
-import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/base/button";
 import { Link } from "react-router-dom";
-import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
-import { ShutterText } from "@/components/ui/animations/hero-shutter-text";
-
-const HEADLINE_PREFIX = "Privacy that survives ";
-const HEADLINE_LINES = ["Quantum", "Computers"];
+import { SpiralAnimation } from "@/components/ui/spiral-animation";
+import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
 
 export function HeroSection() {
-  const [hoverTrigger, setHoverTrigger] = useState(0);
-
   return (
-    <section className="relative min-h-screen flex items-center justify-center pt-24 pb-20 px-4">
-      <div className="container mx-auto max-w-5xl text-center">
+    <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+      {/* Spiral canvas background */}
+      <div className="absolute inset-0 z-0">
+        <SpiralAnimation />
+      </div>
+
+      {/* Subtle grid pattern overlay — ties into the rest of the page */}
+      <AnimatedGridPattern
+        numSquares={80}
+        maxOpacity={0.06}
+        duration={12}
+        className="absolute inset-0 z-[1] [mask-image:radial-gradient(ellipse_70%_70%_at_50%_80%,white,transparent)]"
+      />      {/* Content overlay */}
+      <div className="relative z-10 container mx-auto max-w-5xl px-4">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="py-8"
+          className="text-center py-8"
         >
-          {/*
-            Outer wrapper is a div — HeadingScramble renders the real <h1> tag.
-            Nesting <h1> inside <h1> is invalid HTML; the browser would auto-close
-            the outer one early, breaking the layout entirely.
-          */}
-          <div className="font-display font-bold tracking-tight mb-8 leading-[1.12]">
-            {/* Line 1 – scramble on hover; HeadingScramble owns the <h1> tag */}
-            <div
-              className="cursor-default"
-              onMouseEnter={() => setHoverTrigger((t) => t + 1)}
-            >
-              <HeadingScramble
-                as="h1"
-                trigger={hoverTrigger}
-                className="block text-5xl md:text-7xl lg:text-8xl font-semibold text-foreground"
-              >
-                {HEADLINE_PREFIX}
-              </HeadingScramble>
-            </div>
+          <h1
+            className="font-display text-white leading-[1.05] tracking-tight text-5xl md:text-7xl lg:text-8xl font-bold"
+            style={{ textShadow: "0 0 40px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.6)" }}
+          >
+            <span className="block">Privacy that</span>
+            <span className="block">survives</span>
+            <span className="block text-white/40">Quantum Computers</span>
+          </h1>
 
-            {/* Lines 2 & 3 – shutter plays once on mount, never re-triggered by hover */}
-            <div className="relative">
-              {/* ambient glow */}
-              <span
-                aria-hidden
-                className="pointer-events-none absolute left-1/2 top-1/2 -z-10 h-[200%] w-[110%] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[80px]"
-                style={{
-                  background:
-                    "radial-gradient(ellipse 65% 65% at 25% 50%, hsl(263 70% 52% / 0.5), transparent 65%), radial-gradient(ellipse 65% 65% at 75% 50%, hsl(188 80% 44% / 0.4), transparent 65%)",
-                }}
-              />
-              {HEADLINE_LINES.map((word, lineIdx) => (
-                <div key={word}>
-                  <ShutterText
-                    text={word}
-                    trigger={lineIdx}
-                    className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
+          <div className="mb-12" />
 
           <motion.p
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-            className="text-muted-foreground text-2xl md:text-3xl lg:text-4xl mb-12 max-w-2xl mx-auto"
+            transition={{ delay: 0.3, duration: 0.5 }}
+            className="text-white/70 text-lg md:text-xl lg:text-2xl mb-10 max-w-2xl mx-auto"
+            style={{ textShadow: "0 0 30px rgba(0,0,0,0.8)" }}
           >
-            Send to any name. Recipient stays hidden.
+            Send to anyone. Know no one.
           </motion.p>
 
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.5 }}
+            transition={{ delay: 0.4, duration: 0.5 }}
           >
-            <Button variant="quantum" size="xl" asChild>
-              <Link to="/setup">
-                Get Started
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Link>
-            </Button>
+            <Link
+              to="/setup"
+              className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm text-white text-lg font-display font-medium tracking-wide transition-all duration-500 hover:border-white/40 hover:bg-white/10 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] hover:scale-105"
+            >
+              Enter the Void
+              <ArrowRight className="h-5 w-5 transition-transform duration-300 group-hover:translate-x-1" />
+            </Link>
           </motion.div>
         </motion.div>
       </div>
+      {/* Bottom gradient blend into page background */}
+      <div
+        className="absolute bottom-0 left-0 right-0 z-[5] h-48 pointer-events-none"
+        style={{ background: "linear-gradient(to bottom, transparent, hsl(var(--background)))" }}
+      />
     </section>
   );
 }

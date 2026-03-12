@@ -39,7 +39,7 @@ export function Footer() {
               </span>
             </Link>
             <a
-              href="https://specter-38cd5a51.mintlify.app/"
+              href="https://docs.specterpq.com/"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
