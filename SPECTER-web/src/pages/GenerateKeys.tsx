@@ -17,6 +17,7 @@ import {
 import { SuinsClient } from "@mysten/suins";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
+import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { Button } from "@/components/ui/base/button";
 import { Card, CardContent } from "@/components/ui/base/card";
 import {
@@ -50,6 +51,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/specialized/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
+import { saveSetupProgress, clearSetupProgress } from "@/lib/setupProgress";
 import { formatAddress } from "@/lib/utils";
 import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
@@ -67,6 +69,7 @@ export default function GenerateKeys() {
   const [step1Status, setStep1Status] = useState<"idle" | "generating" | "complete">("idle");
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
   const [keysDownloaded, setKeysDownloaded] = useState(false);
+  const [keySavedToDevice, setKeySavedToDevice] = useState(false);
   const [showContinueWithoutDownloadWarning, setShowContinueWithoutDownloadWarning] = useState(false);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [ensUploading, setEnsUploading] = useState(false);
@@ -114,12 +117,14 @@ export default function GenerateKeys() {
     setStep1Status("generating");
     setKeys(null);
     setKeysDownloaded(false);
+    setKeySavedToDevice(false);
     setEnsUploadResult(null);
     setSuinsUploadResult(null);
     try {
       const response = await api.generateKeys();
       setKeys(response);
       setStep1Status("complete");
+      saveSetupProgress({ keysGenerated: true });
       toast.success("Keys generated successfully");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to generate keys";
@@ -173,6 +178,7 @@ export default function GenerateKeys() {
 
       setEnsUploadResult({ cid: res.cid, text_record: textRecordValue, ensName });
       setEnsTxHash(null);
+      saveSetupProgress({ ensAttached: true });
       toast.success("Meta address attached to ENS.");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
@@ -230,6 +236,7 @@ export default function GenerateKeys() {
 
       setSuinsUploadResult({ cid: res.cid, text_record: textRecordValue, suinsName: primarySuiName });
       setSuinsTxDigest(null);
+      saveSetupProgress({ suinsAttached: true });
       toast.success("Meta address attached to SuiNS.");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
@@ -269,11 +276,14 @@ export default function GenerateKeys() {
       <main className="flex-1 pt-48 pb-12 flex flex-col items-center">
         <div className="w-full max-w-lg mx-auto px-4 flex flex-col items-center">
           <div className="text-center mb-8">
-            <h1 className="font-display text-2xl md:text-3xl font-bold text-foreground">
+            <HeadingScramble
+              as="h1"
+              className="font-display text-2xl md:text-3xl font-bold text-foreground"
+            >
               Setup
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Quantum-safe SPECTER identity for private payments
+            </HeadingScramble>
+            <p className="text-sm text-muted-foreground mt-2">
+              One setup. Untraceable payments. Your keys, your rules.
             </p>
           </div>
 
@@ -326,7 +336,7 @@ export default function GenerateKeys() {
                           <Key className="h-7 w-7 text-primary" />
                         </div>
                         <p className="text-sm text-muted-foreground mb-6 max-w-sm">
-                          Generate a new set of cryptographic keys for receiving private payments.
+                          Derive your stealth keypair. No one else can trace or see what&apos;s sent to you.
                         </p>
                         <Button variant="quantum" size="lg" onClick={handleGenerate}>
                           Generate Keys
@@ -340,15 +350,15 @@ export default function GenerateKeys() {
 
                     {step1Status === "complete" && keys && (
                       <div className="space-y-5">
-                        <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                          <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
-                          <span className="text-sm font-medium text-success">Keys generated</span>
+                        <div className="specter-confirm">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span className="specter-confirm-text">Keypair confirmed</span>
                         </div>
 
                         <div className="flex gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
                           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
                           <p className="text-sm text-amber-800 dark:text-amber-200">
-                            Store this file safely. You need it to scan and claim payments. Once lost, it cannot be recovered.
+                            Back this up. Lose it and your stealth payments are unrecoverable — no second chances.
                           </p>
                         </div>
 
@@ -365,20 +375,34 @@ export default function GenerateKeys() {
                           />
                         )}
 
-                        <Button
-                          variant="outline"
-                          size="default"
-                          className="w-full"
-                          onClick={() => setShowSaveDialog(true)}
-                        >
-                          <HardDrive className="h-4 w-4 mr-2" />
-                          Save to this device (optional)
-                        </Button>
+                        <div className={`relative rounded-lg overflow-hidden ${!keySavedToDevice ? "p-[1.5px]" : ""}`}>
+                          {/* Snake flowing border — only when not yet saved */}
+                          {!keySavedToDevice && (
+                            <div
+                              className="absolute w-[200%] h-[200%] top-[-50%] left-[-50%] pointer-events-none"
+                              style={{
+                                background: "conic-gradient(from 0deg, transparent 0%, transparent 55%, hsl(263 70% 52% / 0.9) 68%, hsl(263 70% 52% / 0.5) 74%, transparent 78%)",
+                                animation: "snake-border-spin 3s linear infinite",
+                              }}
+                            />
+                          )}
+                          <Button
+                            variant="outline"
+                            size="default"
+                            className={`relative w-full ${!keySavedToDevice ? "bg-card border-transparent hover:bg-primary/5" : ""}`}
+                            onClick={() => setShowSaveDialog(true)}
+                          >
+                            <HardDrive className="h-4 w-4 mr-2" />
+                            {keySavedToDevice ? "Saved to device" : "Save to this device"}
+                            {!keySavedToDevice && <span className="ml-auto text-xs text-primary/70 font-medium">Recommended</span>}
+                          </Button>
+                        </div>
 
                         {keysJson && (
                           <SaveToDeviceDialog
                             open={showSaveDialog}
                             onOpenChange={setShowSaveDialog}
+                            onSaved={() => setKeySavedToDevice(true)}
                             keys={{
                               spending_pk: keysJson.spending_pk,
                               spending_sk: keysJson.spending_sk,
@@ -414,7 +438,7 @@ export default function GenerateKeys() {
                           <div className="flex gap-2 p-2.5 mt-2 rounded-lg bg-primary/5 border border-primary/10">
                             <Info className="h-4 w-4 text-primary shrink-0 mt-0.5" />
                             <p className="text-xs text-muted-foreground">
-                              Safe to share: give this to anyone who wants to send you private payments.
+                              Your public handle — share it freely. Senders use it to reach you in stealth.
                             </p>
                           </div>
                         </div>
@@ -423,12 +447,13 @@ export default function GenerateKeys() {
                           variant="quantum"
                           className="w-full"
                           onClick={() => {
-                            if (keysDownloaded) {
+                            if (keysDownloaded || keySavedToDevice) {
                               setCurrentStep(2);
                             } else {
                               setShowContinueWithoutDownloadWarning(true);
                             }
                           }}
+
                         >
                           Continue
                           <ArrowRight className="ml-2 h-4 w-4" />
@@ -559,11 +584,11 @@ export default function GenerateKeys() {
                                 )}
                               </div>
                             ) : (
-                              <div className="p-3 rounded-lg bg-success/10 border border-success/20">
-                                <p className="text-xs font-medium text-success mb-2 flex items-center gap-1.5">
+                              <div className="space-y-2">
+                                <div className="specter-confirm">
                                   <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Meta address attached to ENS.
-                                </p>
+                                  <span className="specter-confirm-text">ENS record locked in</span>
+                                </div>
                                 <Button variant="outline" size="sm" className="w-full" asChild>
                                   <a
                                     href={useTestnet ? `https://sepolia.app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}` : `https://app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}`}
@@ -636,7 +661,7 @@ export default function GenerateKeys() {
                           variant="ghost"
                           size="sm"
                           className="w-full text-muted-foreground"
-                          onClick={() => setCurrentStep(4)}
+                          onClick={() => { clearSetupProgress(); setCurrentStep(4); }}
                         >
                           Skip
                         </Button>
@@ -703,11 +728,11 @@ export default function GenerateKeys() {
                                 )}
                               </div>
                             ) : (
-                              <div className="p-3 rounded-lg bg-success/10 border border-success/20">
-                                <p className="text-xs font-medium text-success mb-2 flex items-center gap-1.5">
+                              <div className="space-y-2">
+                                <div className="specter-confirm">
                                   <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Meta address attached to SuiNS.
-                                </p>
+                                  <span className="specter-confirm-text">SuiNS record locked in</span>
+                                </div>
                                 <Button variant="outline" size="sm" className="w-full" asChild>
                                   <a
                                     href={useTestnet ? `https://testnet.suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}` : `https://suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}`}
@@ -737,7 +762,7 @@ export default function GenerateKeys() {
                           <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(2)}>
                             Back
                           </Button>
-                          <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(4)}>
+                          <Button variant="quantum" className="flex-1" onClick={() => { clearSetupProgress(); setCurrentStep(4); }}>
                             {suinsCompleted ? "Continue" : "Skip"}
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Button>
@@ -759,12 +784,12 @@ export default function GenerateKeys() {
                     <h2 className="font-display text-lg font-semibold text-foreground">
                       Step 4 — All done
                     </h2>
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                      <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
-                      <span className="text-sm font-medium text-success">You’re all set</span>
+                    <div className="specter-confirm">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span className="specter-confirm-text">Identity active — you&apos;re in the dark</span>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Senders can now send you private payments using:
+                      You&apos;re live. Anyone can now reach you in stealth via:
                     </p>
                     <ul className="space-y-2 text-sm">
                       {ensUploadResult && (

@@ -40,6 +40,13 @@ import { validateSuinsName, SuinsResolverError } from "@/lib/blockchain/suinsRes
 import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { Link } from "react-router-dom";
+import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
+import { getRecentRecipients, addRecentRecipient } from "@/lib/recentRecipients";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/base/tooltip";
 
 // Wallet imports
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
@@ -80,6 +87,9 @@ export default function SendPayment() {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [suiConnectOpen, setSuiConnectOpen] = useState(false);
+  const [recentRecipients, setRecentRecipients] = useState(() => {
+    try { return getRecentRecipients(); } catch { return []; }
+  });
 
   // Wallet hooks
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
@@ -176,6 +186,8 @@ export default function SendPayment() {
       }
       setResolvedENS(resolved);
       setResolveError(null);
+      addRecentRecipient(resolved.ens_name);
+      setRecentRecipients(getRecentRecipients());
       toast.success(`Resolved ${resolved.ens_name}`);
 
       // Auto-generate stealth address
@@ -408,6 +420,25 @@ export default function SendPayment() {
                     }}
                     variant="minimal"
                   />
+
+                  {/* Recent recipients chips */}
+                  {recentRecipients.length > 0 && step === "input" && !isResolving && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {recentRecipients.map((r) => (
+                        <button
+                          key={r.name}
+                          type="button"
+                          onClick={() => {
+                            setEnsName(r.name);
+                            handleResolve(r.name);
+                          }}
+                          className="inline-flex items-center px-2.5 py-1 rounded-full border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] hover:border-white/[0.14] text-xs text-white/50 hover:text-white/80 font-display transition-colors"
+                        >
+                          {r.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {resolveError && step === "input" && (
                     <div className="mt-2 space-y-2">
                       {resolveError === "no-specter-setup" ? (
@@ -442,12 +473,7 @@ export default function SendPayment() {
                       exit={{ opacity: 0 }}
                       className="space-y-6"
                     >
-                      {isResolving && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {resolveStatus || "Resolving…"}
-                        </div>
-                      )}
+                      {isResolving && <CoreSpinLoader />}
                     </motion.div>
                   )}
 
@@ -459,28 +485,49 @@ export default function SendPayment() {
                       exit={{ opacity: 0 }}
                       className="space-y-6"
                     >
-                      {/* SPECTER Enabled info card */}
-                      <div className="p-4 rounded-lg bg-success/10 border border-success/20">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Check className="h-4 w-4 text-success" />
-                          <span className="font-medium text-success">
+                      {/* Batman dark knight tactical ID card */}
+                      <div className="rounded-xl overflow-hidden border border-white/[0.06] bg-black/65 backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.04)]">
+                        {/* Header strip */}
+                        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/[0.05] bg-white/[0.02]">
+                          <span className="relative flex h-2 w-2 shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
+                          </span>
+                          <span className="font-display text-[10px] font-bold tracking-[0.2em] uppercase text-white/30">
+                            Target identified
+                          </span>
+                          <span className="ml-auto font-display text-sm font-semibold text-white/90 truncate max-w-[180px]">
                             {resolvedENS.ens_name}
                           </span>
                         </div>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">SPECTER</span>
-                            <span className="text-xs font-medium text-success">Enabled</span>
+                        {/* Data rows */}
+                        <div className="px-4 py-3 space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-display text-[10px] font-semibold tracking-[0.16em] uppercase text-white/28 shrink-0" style={{ color: "rgba(255,255,255,0.28)" }}>
+                              Protocol
+                            </span>
+                            <div className="flex-1 border-b border-dashed border-white/[0.06]" />
+                            <span className="font-display text-xs font-bold text-emerald-400/90 tracking-wide shrink-0">
+                              SPECTER ● ACTIVE
+                            </span>
                           </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Security</span>
-                            <span className="text-xs font-medium text-success">Post-Quantum Safe</span>
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-display text-[10px] font-semibold tracking-[0.16em] uppercase shrink-0" style={{ color: "rgba(255,255,255,0.28)" }}>
+                              Security
+                            </span>
+                            <div className="flex-1 border-b border-dashed border-white/[0.06]" />
+                            <span className="font-display text-xs font-semibold text-primary/90 shrink-0">
+                              Post-Quantum Safe
+                            </span>
                           </div>
                           {resolvedENS.spending_pk && (
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Spending PK</span>
-                              <span className="font-mono text-xs truncate max-w-[180px]">
-                                {resolvedENS.spending_pk.slice(0, 16)}...
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-display text-[10px] font-semibold tracking-[0.16em] uppercase shrink-0" style={{ color: "rgba(255,255,255,0.28)" }}>
+                                Spending Key
+                              </span>
+                              <div className="flex-1 border-b border-dashed border-white/[0.06]" />
+                              <span className="font-mono text-[10px] text-white/50 shrink-0">
+                                {resolvedENS.spending_pk.slice(0, 10)}···{resolvedENS.spending_pk.slice(-6)}
                               </span>
                             </div>
                           )}
@@ -531,8 +578,16 @@ export default function SendPayment() {
 
                               {/* Stealth address (read-only + copy) */}
                               <div>
-                                <Label className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                                <Label className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
                                   Stealth address (send {publishChain === "sui" ? <SuiIcon size={14} /> : <EthereumIcon size={14} />} here)
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button type="button" className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/20 text-[9px] text-white/30 hover:text-white/60 hover:border-white/40 transition-colors leading-none">?</button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs text-xs">
+                                      One-time address derived from an ephemeral secret — mathematically unlinkable to the recipient on-chain. Only they can discover it by scanning with their private viewing key.
+                                    </TooltipContent>
+                                  </Tooltip>
                                 </Label>
                                 <div className="flex items-center gap-2 mt-1">
                                   <Input
@@ -591,8 +646,8 @@ export default function SendPayment() {
                               >
                                 {isPublishing ? (
                                   <>
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    Verifying & publishing...
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Routing in stealth...
                                   </>
                                 ) : (
                                   "Publish Payment"
@@ -661,7 +716,17 @@ export default function SendPayment() {
 
                               {/* To (read-only stealth address) */}
                               <div>
-                                <Label className="text-xs text-muted-foreground">To (stealth address)</Label>
+                                <Label className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
+                                  To (stealth address)
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button type="button" className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/20 text-[9px] text-white/30 hover:text-white/60 hover:border-white/40 transition-colors leading-none">?</button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs text-xs">
+                                      One-time address derived from an ephemeral secret — mathematically unlinkable to the recipient on-chain. Only they can discover it by scanning with their private viewing key.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </Label>
                                 <Input
                                   readOnly
                                   value={
@@ -679,7 +744,7 @@ export default function SendPayment() {
                                   {evmConnected ? (
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                        <Wallet className="h-4 w-4 text-success" />
+                                        <Wallet className="h-4 w-4 text-primary/70" />
                                         <span className="font-mono text-xs truncate max-w-[240px]">
                                           {primaryWallet?.address}
                                         </span>
@@ -711,8 +776,8 @@ export default function SendPayment() {
                                   >
                                     {isSending ? (
                                       <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Sending & publishing...
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Routing in stealth...
                                       </>
                                     ) : (
                                       "Send & Publish"
@@ -724,7 +789,7 @@ export default function SendPayment() {
                                   {suiConnected ? (
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                        <Wallet className="h-4 w-4 text-success" />
+                                        <Wallet className="h-4 w-4 text-primary/70" />
                                         <span className="font-mono text-xs truncate max-w-[240px]">
                                           {suiAccount?.address}
                                         </span>
@@ -762,8 +827,8 @@ export default function SendPayment() {
                                   >
                                     {isSending ? (
                                       <>
-                                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                        Sending & publishing...
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        Routing in stealth...
                                       </>
                                     ) : (
                                       "Send & Publish"
@@ -779,14 +844,13 @@ export default function SendPayment() {
                                 </div>
                               )}
 
-                              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                              <div className="rounded-lg border border-white/[0.05] bg-black/40 backdrop-blur-sm shadow-[inset_3px_0_0_rgba(124,58,237,0.4)] px-4 py-3">
                                 <div className="flex items-start gap-3">
-                                  <Lock className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+                                  <Lock className="h-4 w-4 text-primary/70 mt-0.5 shrink-0" />
                                   <div>
-                                    <h4 className="font-medium text-sm mb-1">Privacy</h4>
-                                    <p className="text-xs text-muted-foreground">
-                                      Only {resolvedENS.ens_name} can find this payment. On-chain observers
-                                      cannot link it to the recipient.
+                                    <p className="font-display text-[10px] font-bold tracking-[0.18em] uppercase text-primary/60 mb-1">Zero-Knowledge Route</p>
+                                    <p className="text-xs text-white/40">
+                                      Only {resolvedENS.ens_name} can find this payment. On-chain observers see nothing.
                                     </p>
                                   </div>
                                 </div>

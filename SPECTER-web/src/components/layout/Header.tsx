@@ -66,15 +66,13 @@ export function Header() {
   }, [mobileMenuOpen]);
 
   const logoElement = (
-    <Link to="/" className="flex items-center gap-2 group">
-      <div className="h-7 w-auto flex items-center justify-center">
-        <img
-          src="/dark-logo-large.png"
-          alt="SPECTER logo"
-          className="h-full w-auto object-contain"
-        />
-      </div>
-      <span className="font-cursive text-lg sm:text-xl font-medium tracking-wide">
+    <Link to="/" className="flex items-center gap-2.5 group">
+      <img
+        src="/dark-logo-large.png"
+        alt="SPECTER"
+        className="h-7 w-7 shrink-0 object-contain"
+      />
+      <span className="font-display text-sm font-bold tracking-[0.18em] uppercase bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70 bg-clip-text text-transparent">
         SPECTER
       </span>
       <Tooltip>

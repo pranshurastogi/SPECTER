@@ -6,6 +6,7 @@ import { Secp256k1Keypair } from "@mysten/sui/keypairs/secp256k1";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
+import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { Button } from "@/components/ui/base/button";
 import { Input } from "@/components/ui/base/input";
 import { Card, CardContent } from "@/components/ui/base/card";
@@ -32,6 +33,7 @@ import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
+import { listVaultEntries, unlockEntry, type VaultEntry } from "@/lib/crypto/keyVault";
 import { type DecryptedKeys } from "@/lib/crypto/keyVault";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
@@ -47,6 +49,17 @@ export default function ScanPayments() {
   const [scanState, setScanState] = useState<ScanState>("idle");
   const [keys, setKeys] = useState<KeysFromFile | null>(null);
   const [keysPaste, setKeysPaste] = useState("");
+
+  // Quick unlock & scan state
+  const [vaultEntries] = useState<VaultEntry[]>(() => {
+    try { return listVaultEntries(); } catch { return []; }
+  });
+  const [quickSelectedId, setQuickSelectedId] = useState<string>(() => {
+    try { return listVaultEntries()[0]?.id ?? ""; } catch { return ""; }
+  });
+  const [quickPassword, setQuickPassword] = useState("");
+  const [quickUnlocking, setQuickUnlocking] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
   const [stats, setStats] = useState<ScanStatsDto | null>(null);
   const [discoveries, setDiscoveries] = useState<DiscoveryDto[]>([]);
   const [selectedPayment, setSelectedPayment] = useState<DiscoveryDto | null>(null);
@@ -153,8 +166,9 @@ export default function ScanPayments() {
     }
   };
 
-  const handleScan = async () => {
-    if (!keys) {
+  const handleScan = async (keysOverride?: KeysFromFile) => {
+    const scanKeys = keysOverride ?? keys;
+    if (!scanKeys) {
       toast.error("Load keys first");
       return;
     }
@@ -164,9 +178,9 @@ export default function ScanPayments() {
     const stripHex = (s: string) => s.replace(/^0x/i, "").trim();
     try {
       const scanRes = await api.scanPayments({
-        viewing_sk: stripHex(keys.viewing_sk),
-        spending_pk: stripHex(keys.spending_pk),
-        spending_sk: stripHex(keys.spending_sk),
+        viewing_sk: stripHex(scanKeys.viewing_sk),
+        spending_pk: stripHex(scanKeys.spending_pk),
+        spending_sk: stripHex(scanKeys.spending_sk),
       });
       setDiscoveries([...scanRes.discoveries].sort((a, b) => b.timestamp - a.timestamp));
       setStats(scanRes.stats);
@@ -181,6 +195,32 @@ export default function ScanPayments() {
       const isNetwork = err instanceof ApiError && (message.includes("reach") || message.includes("fetch") || message.includes("Failed to fetch"));
       toast.error(isNetwork ? "Cannot reach SPECTER backend." : message);
       setScanState("error");
+    }
+  };
+
+  const handleQuickUnlockAndScan = async () => {
+    if (!quickSelectedId || !quickPassword) return;
+    setQuickUnlocking(true);
+    setQuickError(null);
+    try {
+      const dk = await unlockEntry(quickSelectedId, quickPassword);
+      const k: KeysFromFile = {
+        viewing_sk: dk.viewing_sk,
+        spending_pk: dk.spending_pk,
+        spending_sk: dk.spending_sk,
+        view_tag: dk.view_tag,
+      };
+      setKeys(k);
+      setQuickPassword("");
+      toast.success("Keys unlocked — scanning…");
+      await handleScan(k);
+    } catch (err) {
+      const msg = err instanceof Error && err.message.includes("decrypt")
+        ? "Wrong password"
+        : "Wrong password or corrupted data";
+      setQuickError(msg);
+    } finally {
+      setQuickUnlocking(false);
     }
   };
 
@@ -202,13 +242,96 @@ export default function ScanPayments() {
         <div className="w-full max-w-lg mx-auto px-4 flex flex-col items-center">
           {/* Title */}
           <div className="text-center mb-8">
-            <h1 className="font-display text-2xl md:text-3xl font-bold text-foreground">
+            <HeadingScramble
+              as="h1"
+              className="font-display text-2xl md:text-3xl font-bold text-foreground"
+            >
               Scan for Payments
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Find stealth payments sent to you
+            </HeadingScramble>
+            <p className="text-sm text-muted-foreground mt-2">
+              Scan the chain. Claim what&apos;s yours.
             </p>
           </div>
+
+          {/* Quick Unlock & Scan — only when vault has keys and none loaded yet */}
+          {vaultEntries.length > 0 && !keys && scanState === "idle" && (
+            <div className="w-full mb-4 rounded-xl overflow-hidden border border-white/[0.06] bg-black/60 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-white/[0.05] bg-primary/[0.04]">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                </span>
+                <span className="font-display text-[10px] font-bold tracking-[0.2em] uppercase text-white/30">
+                  Saved identity detected
+                </span>
+              </div>
+              <div className="px-4 py-3 space-y-3">
+                {/* Entry picker — only show if multiple */}
+                {vaultEntries.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {vaultEntries.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => { setQuickSelectedId(e.id); setQuickError(null); setQuickPassword(""); }}
+                        className={`px-2.5 py-1 rounded-md text-xs font-medium font-display transition-colors border ${
+                          quickSelectedId === e.id
+                            ? "border-primary/50 bg-primary/10 text-primary"
+                            : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10"
+                        }`}
+                      >
+                        {e.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {vaultEntries.length === 1 && (
+                  <p className="text-xs text-white/40 font-display">
+                    <span className="text-white/70 font-medium">{vaultEntries[0].label}</span>
+                    {" · "}saved {new Date(vaultEntries[0].createdAt).toLocaleDateString()}
+                  </p>
+                )}
+
+                {/* Password + button */}
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder="Enter vault password"
+                    value={quickPassword}
+                    onChange={(e) => { setQuickPassword(e.target.value); setQuickError(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && quickPassword && !quickUnlocking) handleQuickUnlockAndScan(); }}
+                    className="flex-1 h-10 px-3 rounded-lg bg-white/[0.04] border border-white/10 text-sm text-white/80 placeholder:text-white/25 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/30 transition-colors font-display"
+                    autoComplete="current-password"
+                    disabled={quickUnlocking}
+                  />
+                  <Button
+                    variant="quantum"
+                    size="default"
+                    disabled={!quickPassword || quickUnlocking}
+                    onClick={handleQuickUnlockAndScan}
+                    className="shrink-0"
+                  >
+                    {quickUnlocking ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Scan className="h-4 w-4 mr-1.5" />
+                        Unlock & Scan
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {quickError && (
+                  <div className="flex items-center gap-1.5 text-xs text-destructive">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                    {quickError}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Load keys + Scan */}
           <Card className="w-full border-border bg-card/50 shadow-lg rounded-xl">
@@ -291,9 +414,9 @@ export default function ScanPayments() {
                 </div>
               </div>
               {keys && (
-                <div className="mt-3 flex items-center gap-2 text-sm text-success p-3 rounded-lg bg-success/10 border border-success/20">
-                  <Lock className="h-4 w-4 shrink-0 text-success" />
-                  Secret data loaded
+                <div className="specter-confirm mt-3">
+                  <Lock className="h-3.5 w-3.5" />
+                  <span className="specter-confirm-text">Keys loaded — ready to scan</span>
                 </div>
               )}
               {loadError && (
@@ -329,10 +452,10 @@ export default function ScanPayments() {
                     exit={{ opacity: 0 }}
                     className="space-y-4 mt-6"
                   >
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                      <Check className="h-4 w-4 text-success shrink-0" />
-                      <span className="text-sm font-medium text-success">
-                        {discoveries.length} payment(s) found
+                    <div className="specter-confirm">
+                      <Check className="h-3.5 w-3.5" />
+                      <span className="specter-confirm-text">
+                        {discoveries.length} stealth payment{discoveries.length !== 1 ? "s" : ""} detected
                       </span>
                     </div>
                     <div className="space-y-2">
@@ -530,24 +653,20 @@ export default function ScanPayments() {
                             : selectedPayment.eth_private_key}
                         </code>
                         {derivedAddress && (
-                          <div
-                            className={`p-3 rounded-lg border text-xs ${addressMatch
-                                ? "bg-success/10 border-success/30 text-success"
-                                : "bg-destructive/10 border-destructive/30 text-destructive"
-                              }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              {addressMatch ? (
-                                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                              ) : (
-                                <XCircle className="h-4 w-4 shrink-0" />
-                              )}
-                              {addressMatch ? "Address verified" : "Address mismatch"}
+                          addressMatch ? (
+                            <div className="specter-confirm">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span className="specter-confirm-text">Address verified</span>
                             </div>
-                            {!addressMatch && (
+                          ) : (
+                            <div className="p-3 rounded-lg border text-xs bg-destructive/10 border-destructive/30 text-destructive">
+                              <div className="flex items-center gap-2">
+                                <XCircle className="h-4 w-4 shrink-0" />
+                                Address mismatch
+                              </div>
                               <code className="block mt-1 break-all font-mono">{derivedAddress}</code>
-                            )}
-                          </div>
+                            </div>
+                          )
                         )}
                         <div className="flex gap-2 flex-wrap">
                           <CopyButton

@@ -33,6 +33,7 @@ interface SaveToDeviceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   keys: DecryptedKeys;
+  onSaved?: () => void;
 }
 
 type Step = "label" | "password" | "done";
@@ -43,6 +44,7 @@ export function SaveToDeviceDialog({
   open,
   onOpenChange,
   keys,
+  onSaved,
 }: SaveToDeviceDialogProps) {
   const [step, setStep] = useState<Step>("label");
   const [label, setLabel] = useState("");
@@ -96,6 +98,7 @@ export function SaveToDeviceDialog({
       await saveToVault(keys, label || "My Keys", password);
       setStep("done");
       toast.success("Keys saved to this device");
+      onSaved?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save keys");
     } finally {

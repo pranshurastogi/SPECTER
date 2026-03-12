@@ -122,6 +122,133 @@
   }
 }
 
+@keyframes snake-border-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Batman / SPECTER confirm badges ────────────────────────────────── */
+
+.specter-confirm {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.52);
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.55), 0 4px 20px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.specter-confirm-text {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(110, 231, 183, 0.92);
+}
+
+.specter-confirm svg {
+  color: rgba(52, 211, 153, 0.85);
+  flex-shrink: 0;
+}
+
+/* Address-verified variant */
+.specter-verify-ok {
+  background: rgba(0, 0, 0, 0.52) !important;
+  border: 1px solid rgba(52, 211, 153, 0.18) !important;
+  box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.55) !important;
+  color: rgba(110, 231, 183, 0.92) !important;
+}
+
+/* ─── SPECTER Toast Theme ─────────────────────────────────────────────── */
+
+[data-sonner-toast] {
+  background: rgba(4, 4, 16, 0.97) !important;
+  border: 1px solid rgba(255, 255, 255, 0.055) !important;
+  border-left: 3px solid rgba(124, 58, 237, 0.55) !important;
+  border-radius: 10px !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  box-shadow:
+    0 16px 56px rgba(0, 0, 0, 0.92),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3) !important;
+  color: hsl(210 40% 92%) !important;
+  font-family: var(--font-display) !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+  border-left-color: rgba(52, 211, 153, 0.75) !important;
+  box-shadow:
+    0 16px 56px rgba(0, 0, 0, 0.92),
+    0 0 32px rgba(52, 211, 153, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+  border-left-color: rgba(248, 113, 113, 0.75) !important;
+  box-shadow:
+    0 16px 56px rgba(0, 0, 0, 0.92),
+    0 0 32px rgba(248, 113, 113, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-sonner-toast][data-type="info"] {
+  border-left-color: rgba(124, 58, 237, 0.8) !important;
+  box-shadow:
+    0 16px 56px rgba(0, 0, 0, 0.92),
+    0 0 32px rgba(124, 58, 237, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-sonner-toast][data-type="warning"] {
+  border-left-color: rgba(251, 191, 36, 0.75) !important;
+  box-shadow:
+    0 16px 56px rgba(0, 0, 0, 0.92),
+    0 0 32px rgba(251, 191, 36, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+[data-sonner-toast] [data-title] {
+  font-weight: 600 !important;
+  font-size: 0.875rem !important;
+  color: hsl(210 40% 96%) !important;
+  letter-spacing: 0.01em !important;
+  font-family: var(--font-display) !important;
+}
+
+[data-sonner-toast] [data-description] {
+  font-size: 0.75rem !important;
+  color: hsl(215 16% 52%) !important;
+  font-family: var(--font-display) !important;
+}
+
+[data-sonner-toast] [data-icon] svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+[data-sonner-toast] [data-close-button] {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  border-radius: 6px !important;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+
 @layer components {
   /* Transparent cards – no fill, border + blur only */
   .glass-card,
