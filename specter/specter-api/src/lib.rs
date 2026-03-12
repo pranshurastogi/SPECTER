@@ -32,9 +32,18 @@ pub struct ApiServer {
 
 impl ApiServer {
     /// Creates a new API server with the given configuration.
+    ///
+    /// Uses synchronous in-memory registry. For SQLite support, use `new_async`.
     pub fn new(config: ApiConfig) -> Self {
         Self {
-            state: Arc::new(AppState::new(config)),
+            state: Arc::new(AppState::new_sync(config)),
+        }
+    }
+
+    /// Creates a new API server with async initialization (supports SQLite backend).
+    pub async fn new_async(config: ApiConfig) -> Self {
+        Self {
+            state: Arc::new(AppState::new(config).await),
         }
     }
 
@@ -104,7 +113,7 @@ impl ApiServer {
 /// Starts the API server with default configuration.
 pub async fn start_server(port: u16) -> std::io::Result<()> {
     let config = ApiConfig::from_env();
-    let server = ApiServer::new(config);
+    let server = ApiServer::new_async(config).await;
     server.run(([0, 0, 0, 0], port)).await
 }
 

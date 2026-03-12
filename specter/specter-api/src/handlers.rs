@@ -115,7 +115,7 @@ pub async fn scan_payments(
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else {
-        state.registry.all_announcements()
+        state.registry.all_announcements().await
     };
 
     let total_scanned = announcements.len() as u64;
@@ -326,7 +326,7 @@ pub async fn list_announcements(
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
     } else {
-        state.registry.all_announcements()
+        state.registry.all_announcements().await
     };
 
     let total = announcements.len() as u64;
@@ -351,7 +351,7 @@ pub async fn list_announcements(
 pub async fn get_registry_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RegistryStatsResponse>> {
-    let stats = state.registry.stats();
+    let stats = state.registry.stats().await;
 
     let distribution: Vec<ViewTagCount> = stats
         .view_tag_distribution
@@ -486,7 +486,7 @@ pub async fn yellow_discover_channels(
 
     info!("Scanning for private Yellow channels...");
 
-    let announcements = state.registry.all_announcements();
+    let announcements = state.registry.all_announcements().await;
 
     let discoveries = specter_stealth::discovery::scan_with_context(
         &announcements,
@@ -559,7 +559,7 @@ pub async fn yellow_close_channel(
     info!(channel_id = %req.channel_id, "Closing Yellow channel");
 
     // Look up the channel announcement to get the funded amount
-    let announcements = state.registry.all_announcements();
+    let announcements = state.registry.all_announcements().await;
     let channel_id_bytes = hex::decode(strip_hex_prefix(&req.channel_id)).unwrap_or_default();
     let mut channel_id_arr = [0u8; 32];
     if channel_id_bytes.len() == 32 {
@@ -597,7 +597,7 @@ pub async fn yellow_channel_status(
     Path(channel_id): Path<String>,
 ) -> Result<Json<YellowChannelStatusResponse>> {
     // Look for announcements with this channel_id
-    let announcements = state.registry.all_announcements();
+    let announcements = state.registry.all_announcements().await;
 
     let channel_id_bytes = hex::decode(strip_hex_prefix(&channel_id))
         .map_err(|e| ApiError::bad_request(format!("Invalid channel_id: {}", e)))?;

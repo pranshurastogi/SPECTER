@@ -64,6 +64,7 @@ bs58 = "0.5"                     # Base58 encoding for display
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WEB API (Axum)
@@ -103,6 +104,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 parking_lot = "0.12"             # Better mutexes
 dashmap = "5.5"                  # Concurrent HashMap
 bytes = "1.5"
+lru = "0.12"                     # LRU cache
 url = "2.5"                      # URL parsing
 
 # ═══════════════════════════════════════════════════════════════════════════════

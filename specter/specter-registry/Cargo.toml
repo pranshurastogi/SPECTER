@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "Announcement registry storage for SPECTER"
 
+[features]
+default = []
+sqlite = ["sqlx", "lru", "hex"]
+
 [dependencies]
 specter-core = { path = "../specter-core" }
 
@@ -29,6 +33,13 @@ tracing = { workspace = true }
 # Time
 chrono = { workspace = true }
 
+# SQLite (optional, behind "sqlite" feature)
+sqlx = { workspace = true, optional = true }
+lru = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
+sqlx = { workspace = true }
+hex = { workspace = true }
