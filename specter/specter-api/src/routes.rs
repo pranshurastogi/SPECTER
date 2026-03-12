@@ -44,7 +44,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_app() -> Router {
-        let state = Arc::new(AppState::new(ApiConfig::default()));
+        let state = Arc::new(AppState::new_sync(ApiConfig::default()));
         create_router(state)
     }
 

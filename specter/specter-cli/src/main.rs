@@ -356,7 +356,7 @@ async fn cmd_serve(port: u16, bind: &str) -> Result<()> {
     println!("\n   Press Ctrl+C to stop.\n");
 
     let config = ApiConfig::from_env();
-    let server = ApiServer::new(config);
+    let server = ApiServer::new_async(config).await;
 
     let addr: SocketAddr = format!("{}:{}", bind, port).parse()?;
     server.run(addr).await?;

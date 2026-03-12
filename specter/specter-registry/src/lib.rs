@@ -6,6 +6,7 @@
 //!
 //! - **Memory**: Fast in-memory storage for development and testing
 //! - **File**: Persistent file-based storage for single-node deployments
+//! - **SQLite**: Production-grade durable storage (enable `sqlite` feature)
 //!
 //! ## Example
 //!
@@ -27,6 +28,9 @@
 
 mod file;
 mod memory;
+
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 pub use file::FileRegistry;
 pub use memory::MemoryRegistry;
