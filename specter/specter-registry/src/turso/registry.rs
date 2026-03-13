@@ -138,14 +138,14 @@ impl TursoRegistry {
             let now = unix_now();
 
             conn.execute(
-                "INSERT INTO registry_metadata (key, value) VALUES (?1, ?2)",
+                "INSERT OR IGNORE INTO registry_metadata (key, value) VALUES (?1, ?2)",
                 params![schema::SCHEMA_VERSION.to_string(), schema::SCHEMA_VERSION.to_string()],
             )
             .await
             .map_err(|e| SpecterError::RegistryError(format!("seed version: {e}")))?;
 
             conn.execute(
-                "INSERT INTO registry_metadata (key, value) VALUES (?1, ?2)",
+                "INSERT OR IGNORE INTO registry_metadata (key, value) VALUES (?1, ?2)",
                 params!["db_initialized_at", now.to_string()],
             )
             .await
