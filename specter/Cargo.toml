@@ -64,7 +64,8 @@ bs58 = "0.5"                     # Base58 encoding for display
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+# Turso (libSQL) — remote-only, no C library in release builds
+libsql = { version = "0.9", default-features = false, features = ["remote"] }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WEB API (Axum)

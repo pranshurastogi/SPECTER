@@ -8,7 +8,7 @@ description = "Announcement registry storage for SPECTER"
 
 [features]
 default = []
-sqlite = ["sqlx", "lru", "hex"]
+turso = ["libsql", "lru", "hex"]
 
 [dependencies]
 specter-core = { path = "../specter-core" }
@@ -33,13 +33,14 @@ tracing = { workspace = true }
 # Time
 chrono = { workspace = true }
 
-# SQLite (optional, behind "sqlite" feature)
-sqlx = { workspace = true, optional = true }
+# Turso / libSQL (optional, behind "turso" feature)
+libsql = { workspace = true, optional = true }
 lru = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
-tempfile = { workspace = true }
-sqlx = { workspace = true }
 hex = { workspace = true }
+tempfile = { workspace = true }
+# "core" adds local in-memory SQLite for tests (no network required)
+libsql = { workspace = true, features = ["core"] }

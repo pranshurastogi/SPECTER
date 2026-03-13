@@ -1,16 +1,17 @@
-//! SQLite schema definition and migration logic.
+//! Turso (libSQL) schema definition and migration logic.
 
 /// Current schema version. Increment on breaking changes.
 pub const SCHEMA_VERSION: i32 = 1;
 
-/// All DDL statements to execute, in order.
+/// DDL statements executed in order on startup.
+/// libSQL is SQLite-compatible so the SQL is identical to SQLite DDL.
 pub const SCHEMA_STATEMENTS: &[&str] = &[
     // ── announcements ──────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS announcements (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         view_tag      INTEGER NOT NULL,
         timestamp     INTEGER NOT NULL,
-        ephemeral_key BLOB NOT NULL,
+        ephemeral_key BLOB    NOT NULL,
         channel_id    BLOB,
         block_number  INTEGER,
         tx_hash       TEXT UNIQUE,
@@ -26,7 +27,7 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     // ── scan_positions ─────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS scan_positions (
         id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-        wallet_id             TEXT NOT NULL UNIQUE,
+        wallet_id             TEXT    NOT NULL UNIQUE,
         last_announcement_id  INTEGER NOT NULL DEFAULT 0,
         last_timestamp        INTEGER NOT NULL DEFAULT 0,
         total_scanned         INTEGER NOT NULL DEFAULT 0,
@@ -43,15 +44,15 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     // ── yellow_channels ────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS yellow_channels (
         id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id        BLOB NOT NULL UNIQUE,
-        status            TEXT NOT NULL DEFAULT 'open',
+        channel_id        BLOB    NOT NULL UNIQUE,
+        status            TEXT    NOT NULL DEFAULT 'open',
         created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         closed_at         INTEGER,
         creator_wallet    TEXT,
         chain             TEXT,
         asset_address     TEXT,
         asset_symbol      TEXT,
-        amount            TEXT NOT NULL,
+        amount            TEXT    NOT NULL,
         announcement_id   INTEGER,
         funding_tx_hash   TEXT UNIQUE,
         closing_tx_hash   TEXT UNIQUE,
@@ -65,8 +66,8 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
 
     // ── registry_metadata ──────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS registry_metadata (
-        key        TEXT PRIMARY KEY,
-        value      TEXT NOT NULL,
+        key        TEXT    PRIMARY KEY,
+        value      TEXT    NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
 

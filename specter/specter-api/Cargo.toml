@@ -10,7 +10,7 @@ description = "REST API server for SPECTER protocol"
 specter-core = { path = "../specter-core" }
 specter-crypto = { path = "../specter-crypto" }
 specter-stealth = { path = "../specter-stealth" }
-specter-registry = { path = "../specter-registry", features = ["sqlite"] }
+specter-registry = { path = "../specter-registry", features = ["turso"] }
 specter-scanner = { path = "../specter-scanner" }
 specter-ens = { path = "../specter-ens" }
 specter-suins = { path = "../specter-suins" }

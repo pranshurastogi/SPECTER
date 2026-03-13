@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use specter_ens::{ResolverConfig, SpecterResolver};
-use specter_registry::sqlite::{ScanPositionStore, SqliteRegistry, YellowChannelStore};
+use specter_registry::turso::{ScanPositionStore, TursoRegistry, YellowChannelStore};
 use specter_registry::MemoryRegistry;
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
 use specter_yellow::types::YellowConfig;
@@ -13,24 +13,26 @@ use specter_core::error::Result;
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, AnnouncementStats};
 
-#[derive(Clone, Debug)]
+// ── ApiConfig ─────────────────────────────────────────────────────────────
+
 /// Configuration for the API service.
+#[derive(Clone, Debug)]
 pub struct ApiConfig {
     /// Ethereum RPC URL.
     pub rpc_url: String,
-    /// When true, use Sepolia ENS (Sepolia RPC default)
+    /// When true, use Sepolia ENS (Sepolia RPC default).
     pub use_testnet: bool,
     /// Optional Pinata JWT used for pinning.
     pub pinata_jwt: Option<String>,
-    /// Dedicated Pinata gateway (required for IPFS retrieves)
+    /// Dedicated Pinata gateway (required for IPFS retrieves).
     pub pinata_gateway_url: String,
-    /// Gateway token (required for IPFS retrieves)
+    /// Gateway token (required for IPFS retrieves).
     pub pinata_gateway_token: String,
     /// Sui RPC URL.
     pub sui_rpc_url: String,
     /// Enables IPFS download caching where safe.
     pub enable_cache: bool,
-    /// Security configuration
+    /// Security configuration.
     pub security: SecurityConfig,
 }
 
@@ -61,7 +63,7 @@ impl Default for SecurityConfig {
             allowed_origins: vec!["*".into()],
             rate_limit_rps: 10,
             rate_limit_burst: 30,
-            max_body_size: 1024 * 1024, // 1 MB
+            max_body_size: 1024 * 1024,
         }
     }
 }
@@ -126,17 +128,15 @@ impl ApiConfig {
     /// Loads API configuration from environment variables (optionally via `.env`).
     pub fn from_env() -> Self {
         let _ = dotenvy::dotenv();
-        // If running via cargo from repo root, cwd has no .env; try crate root (specter/.env)
+        // If running via cargo from repo root, cwd has no .env; try crate root
         if std::env::var("PINATA_GATEWAY_URL").is_err() {
             if let Ok(exe) = std::env::current_exe() {
-                // exe is e.g. .../specter/target/debug/specter -> parent 3 times = .../specter
                 if let Some(crate_root) = exe
                     .parent()
                     .and_then(|p| p.parent())
                     .and_then(|p| p.parent())
                 {
-                    let env_path = crate_root.join(".env");
-                    let _ = dotenvy::from_path(env_path);
+                    let _ = dotenvy::from_path(crate_root.join(".env"));
                 }
             }
         }
@@ -145,8 +145,6 @@ impl ApiConfig {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
-        // ETH_RPC_URL is the primary env var for both testnet and mainnet;
-        // the user sets the appropriate URL based on USE_TESTNET.
         let default_rpc = if use_testnet {
             DEFAULT_ETH_SEPOLIA_RPC
         } else {
@@ -188,16 +186,12 @@ impl ApiConfig {
 // Registry backend abstraction
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Polymorphic registry backend — wraps either Memory or SQLite.
-///
-/// This enum provides the non-trait methods (`all_announcements`, `stats`)
-/// that handlers depend on, while delegating the `AnnouncementRegistry` trait
-/// calls to the underlying implementation.
+/// Polymorphic registry backend — wraps either Memory or Turso.
 pub enum RegistryBackend {
-    /// In-memory (ephemeral, for dev/testing).
+    /// In-memory (ephemeral, for local dev/testing).
     Memory(MemoryRegistry),
-    /// SQLite (durable, for production).
-    Sqlite(SqliteRegistry),
+    /// Turso remote database (durable, for production).
+    Turso(TursoRegistry),
 }
 
 impl RegistryBackend {
@@ -205,7 +199,7 @@ impl RegistryBackend {
     pub async fn all_announcements(&self) -> Vec<Announcement> {
         match self {
             Self::Memory(m) => m.all_announcements(),
-            Self::Sqlite(s) => s.all_announcements().await,
+            Self::Turso(t) => t.all_announcements().await,
         }
     }
 
@@ -213,7 +207,7 @@ impl RegistryBackend {
     pub async fn stats(&self) -> AnnouncementStats {
         match self {
             Self::Memory(m) => m.stats(),
-            Self::Sqlite(s) => s.stats().await,
+            Self::Turso(t) => t.stats().await,
         }
     }
 
@@ -221,15 +215,15 @@ impl RegistryBackend {
     pub async fn health_check(&self) -> Result<()> {
         match self {
             Self::Memory(_) => Ok(()),
-            Self::Sqlite(s) => s.health_check().await,
+            Self::Turso(t) => t.health_check().await,
         }
     }
 
-    /// Flush to disk (SQLite: PRAGMA optimize; Memory: no-op).
+    /// Flush / optimize (no-op for both backends currently).
     pub async fn flush(&self) -> Result<()> {
         match self {
             Self::Memory(_) => Ok(()),
-            Self::Sqlite(s) => s.flush().await,
+            Self::Turso(t) => t.flush().await,
         }
     }
 }
@@ -239,42 +233,42 @@ impl AnnouncementRegistry for RegistryBackend {
     async fn publish(&self, announcement: Announcement) -> Result<u64> {
         match self {
             Self::Memory(m) => m.publish(announcement).await,
-            Self::Sqlite(s) => s.publish(announcement).await,
+            Self::Turso(t) => t.publish(announcement).await,
         }
     }
 
     async fn get_by_view_tag(&self, view_tag: u8) -> Result<Vec<Announcement>> {
         match self {
             Self::Memory(m) => m.get_by_view_tag(view_tag).await,
-            Self::Sqlite(s) => s.get_by_view_tag(view_tag).await,
+            Self::Turso(t) => t.get_by_view_tag(view_tag).await,
         }
     }
 
     async fn get_by_time_range(&self, start: u64, end: u64) -> Result<Vec<Announcement>> {
         match self {
             Self::Memory(m) => m.get_by_time_range(start, end).await,
-            Self::Sqlite(s) => s.get_by_time_range(start, end).await,
+            Self::Turso(t) => t.get_by_time_range(start, end).await,
         }
     }
 
     async fn get_by_id(&self, id: u64) -> Result<Option<Announcement>> {
         match self {
             Self::Memory(m) => m.get_by_id(id).await,
-            Self::Sqlite(s) => s.get_by_id(id).await,
+            Self::Turso(t) => t.get_by_id(id).await,
         }
     }
 
     async fn count(&self) -> Result<u64> {
         match self {
             Self::Memory(m) => m.count().await,
-            Self::Sqlite(s) => s.count().await,
+            Self::Turso(t) => t.count().await,
         }
     }
 
     async fn next_id(&self) -> Result<u64> {
         match self {
             Self::Memory(m) => m.next_id().await,
-            Self::Sqlite(s) => s.next_id().await,
+            Self::Turso(t) => t.next_id().await,
         }
     }
 }
@@ -287,11 +281,11 @@ impl AnnouncementRegistry for RegistryBackend {
 pub struct AppState {
     /// API configuration.
     pub config: ApiConfig,
-    /// Announcement registry (memory or SQLite).
+    /// Announcement registry (memory or Turso).
     pub registry: RegistryBackend,
-    /// Scanner checkpoint persistence (only when using SQLite).
+    /// Scanner checkpoint persistence (only when using Turso).
     pub scan_store: Option<Arc<ScanPositionStore>>,
-    /// Yellow channel persistence (only when using SQLite).
+    /// Yellow channel persistence (only when using Turso).
     pub yellow_store: Option<Arc<YellowChannelStore>>,
     /// ENS resolver (Ethereum).
     pub resolver: SpecterResolver,
@@ -304,139 +298,107 @@ pub struct AppState {
 impl AppState {
     /// Creates a new [`AppState`] from a provided [`ApiConfig`].
     ///
-    /// The registry backend is selected via `REGISTRY_BACKEND` env var:
-    /// - `"sqlite"` — durable SQLite (requires `REGISTRY_SQLITE_PATH`)
-    /// - anything else — ephemeral in-memory (default)
+    /// Registry backend is selected via `REGISTRY_BACKEND` env var:
+    /// - `"turso"` — durable Turso cloud DB (requires `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`)
+    /// - anything else — ephemeral in-memory (default, for local dev)
     pub async fn new(config: ApiConfig) -> Self {
         let backend = std::env::var("REGISTRY_BACKEND").unwrap_or_default();
 
-        let (registry, scan_store, yellow_store) = if backend == "sqlite" {
-            let db_path = std::env::var("REGISTRY_SQLITE_PATH")
-                .expect("REGISTRY_BACKEND=sqlite requires REGISTRY_SQLITE_PATH");
-            info!("Initializing SQLite registry at {db_path}");
+        let (registry, scan_store, yellow_store) = if backend == "turso" {
+            let url = std::env::var("TURSO_DATABASE_URL")
+                .expect("REGISTRY_BACKEND=turso requires TURSO_DATABASE_URL");
+            let token = std::env::var("TURSO_AUTH_TOKEN")
+                .expect("REGISTRY_BACKEND=turso requires TURSO_AUTH_TOKEN");
 
-            let sqlite = SqliteRegistry::new(&db_path)
+            info!("Initializing Turso registry at {url}");
+
+            let turso = TursoRegistry::new(&url, &token)
                 .await
-                .expect("Failed to open SQLite database");
+                .expect("Failed to connect to Turso database");
 
-            let pool = sqlite.pool();
-            let scan = Arc::new(ScanPositionStore::new(pool.clone()));
-            let yellow = Arc::new(YellowChannelStore::new(pool));
+            let db = turso.database();
+            let scan = Arc::new(ScanPositionStore::new(db.clone()));
+            let yellow = Arc::new(YellowChannelStore::new(db));
 
-            (RegistryBackend::Sqlite(sqlite), Some(scan), Some(yellow))
+            (RegistryBackend::Turso(turso), Some(scan), Some(yellow))
         } else {
-            info!("Initializing in-memory registry (ephemeral)");
+            info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
             (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
         };
 
-        let mut resolver_config = ResolverConfig::new(
-            &config.rpc_url,
-            &config.pinata_gateway_url,
-            &config.pinata_gateway_token,
-        );
-        if let Some(jwt) = &config.pinata_jwt {
-            resolver_config = resolver_config.with_pinata_jwt(jwt);
-        }
-        // IPFS download cache (content-addressed = safe to cache)
-        if !config.enable_cache {
-            resolver_config.ipfs = resolver_config.ipfs.no_cache();
-        }
-
-        // SuiNS resolver (reuses same IPFS gateway config)
-        let mut suins_config = SuinsResolverConfig::new(
-            &config.sui_rpc_url,
-            config.use_testnet,
-            &config.pinata_gateway_url,
-            &config.pinata_gateway_token,
-        );
-        if let Some(jwt) = &config.pinata_jwt {
-            suins_config = suins_config.with_pinata_jwt(jwt);
-        }
-        if !config.enable_cache {
-            suins_config.ipfs = suins_config.ipfs.no_cache();
-        }
-
-        // Yellow Network config
-        let yellow_config = YellowConfig {
-            ws_url: std::env::var("YELLOW_WS_URL")
-                .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
-            rpc_url: std::env::var("ALCHEMY_RPC_URL")
-                .or_else(|_| std::env::var("ETH_RPC_URL"))
-                .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
-            chain_id: std::env::var("YELLOW_CHAIN_ID")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(11155111),
-            custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
-                .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
-            adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
-                .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
-            challenge_duration: 3600,
-        };
-
         Self {
-            config,
+            config: config.clone(),
             registry,
             scan_store,
             yellow_store,
-            resolver: SpecterResolver::with_config(resolver_config),
-            suins_resolver: SuinsResolver::with_config(suins_config),
-            yellow_config,
+            resolver: build_resolver(&config),
+            suins_resolver: build_suins_resolver(&config),
+            yellow_config: build_yellow_config(),
         }
     }
 
-    /// Synchronous constructor (uses in-memory registry). For backward compat.
+    /// Synchronous constructor (always uses in-memory registry). For backward compat / tests.
     pub fn new_sync(config: ApiConfig) -> Self {
-        let mut resolver_config = ResolverConfig::new(
-            &config.rpc_url,
-            &config.pinata_gateway_url,
-            &config.pinata_gateway_token,
-        );
-        if let Some(jwt) = &config.pinata_jwt {
-            resolver_config = resolver_config.with_pinata_jwt(jwt);
-        }
-        if !config.enable_cache {
-            resolver_config.ipfs = resolver_config.ipfs.no_cache();
-        }
-
-        let mut suins_config = SuinsResolverConfig::new(
-            &config.sui_rpc_url,
-            config.use_testnet,
-            &config.pinata_gateway_url,
-            &config.pinata_gateway_token,
-        );
-        if let Some(jwt) = &config.pinata_jwt {
-            suins_config = suins_config.with_pinata_jwt(jwt);
-        }
-        if !config.enable_cache {
-            suins_config.ipfs = suins_config.ipfs.no_cache();
-        }
-
-        let yellow_config = YellowConfig {
-            ws_url: std::env::var("YELLOW_WS_URL")
-                .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
-            rpc_url: std::env::var("ALCHEMY_RPC_URL")
-                .or_else(|_| std::env::var("ETH_RPC_URL"))
-                .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
-            chain_id: std::env::var("YELLOW_CHAIN_ID")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(11155111),
-            custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
-                .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
-            adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
-                .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
-            challenge_duration: 3600,
-        };
-
         Self {
+            resolver: build_resolver(&config),
+            suins_resolver: build_suins_resolver(&config),
+            yellow_config: build_yellow_config(),
             config,
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
             yellow_store: None,
-            resolver: SpecterResolver::with_config(resolver_config),
-            suins_resolver: SuinsResolver::with_config(suins_config),
-            yellow_config,
         }
+    }
+}
+
+// ── builder helpers ───────────────────────────────────────────────────────
+
+fn build_resolver(config: &ApiConfig) -> SpecterResolver {
+    let mut rc = ResolverConfig::new(
+        &config.rpc_url,
+        &config.pinata_gateway_url,
+        &config.pinata_gateway_token,
+    );
+    if let Some(jwt) = &config.pinata_jwt {
+        rc = rc.with_pinata_jwt(jwt);
+    }
+    if !config.enable_cache {
+        rc.ipfs = rc.ipfs.no_cache();
+    }
+    SpecterResolver::with_config(rc)
+}
+
+fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
+    let mut sc = SuinsResolverConfig::new(
+        &config.sui_rpc_url,
+        config.use_testnet,
+        &config.pinata_gateway_url,
+        &config.pinata_gateway_token,
+    );
+    if let Some(jwt) = &config.pinata_jwt {
+        sc = sc.with_pinata_jwt(jwt);
+    }
+    if !config.enable_cache {
+        sc.ipfs = sc.ipfs.no_cache();
+    }
+    SuinsResolver::with_config(sc)
+}
+
+fn build_yellow_config() -> YellowConfig {
+    YellowConfig {
+        ws_url: std::env::var("YELLOW_WS_URL")
+            .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
+        rpc_url: std::env::var("ALCHEMY_RPC_URL")
+            .or_else(|_| std::env::var("ETH_RPC_URL"))
+            .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
+        chain_id: std::env::var("YELLOW_CHAIN_ID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(11155111),
+        custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
+            .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
+        adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
+            .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
+        challenge_duration: 3600,
     }
 }
