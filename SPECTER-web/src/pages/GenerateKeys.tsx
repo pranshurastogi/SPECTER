@@ -180,8 +180,20 @@ export default function GenerateKeys() {
       setEnsTxHash(null);
       saveSetupProgress({ ensAttached: true });
       toast.success("Meta address attached to ENS.");
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
+    } catch (err: unknown) {
+      const anyErr = err as { name?: string; code?: string } | ApiError | Error | unknown;
+
+      let message: string;
+      if ((anyErr as { name?: string }).name === "ChainMismatchError" || (anyErr as { code?: string }).code === "CHAIN_MISMATCH") {
+        message = `Wrong network selected in wallet. Please switch your wallet to ${chain.name} (chain id ${chain.id}) and try again.`;
+      } else if (anyErr instanceof ApiError) {
+        message = anyErr.message;
+      } else if (anyErr instanceof Error) {
+        message = anyErr.message || "Attach failed";
+      } else {
+        message = "Attach failed";
+      }
+
       toast.error(message);
       setEnsTxHash(null);
     } finally {
@@ -605,9 +617,39 @@ export default function GenerateKeys() {
                             )}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground">
-                            No ENS name found. Connect a wallet with an ENS name.
-                          </p>
+                          <div className="space-y-3">
+                            {/* Dark Knight themed ENS not-found card */}
+                            <div className="rounded-xl overflow-hidden border border-amber-500/20 bg-black/70 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(251,191,36,0.06)]">
+                              <div className="px-4 py-3 border-b border-amber-500/10 bg-amber-500/[0.04]">
+                                <div className="flex items-center gap-2">
+                                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                                  </span>
+                                  <span className="font-display text-[10px] font-bold tracking-[0.18em] uppercase text-amber-400/80">
+                                    No ENS Domain Detected
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="px-4 py-3 space-y-3">
+                                <p className="text-sm text-white/50">
+                                  This wallet has no ENS name. You need one so senders can reach you via a human‑readable identifier like <span className="font-mono text-amber-400/70">yourname.eth</span>.
+                                </p>
+                                <a
+                                  href={useTestnet ? "https://sepolia.app.ens.domains/" : "https://app.ens.domains/"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="group flex items-center justify-center gap-2 w-full rounded-lg border border-amber-500/25 bg-amber-500/[0.08] hover:bg-amber-500/[0.14] px-4 py-2.5 text-sm font-medium text-amber-300 transition-all duration-200 hover:border-amber-500/40 hover:shadow-[0_0_16px_rgba(251,191,36,0.12)]"
+                                >
+                                  <Globe className="h-4 w-4 text-amber-400/70 group-hover:text-amber-400 transition-colors" />
+                                  Get an ENS Domain
+                                  <ExternalLink className="h-3 w-3 text-amber-400/50 group-hover:text-amber-400/80 transition-colors" />
+                                </a>
+                                <p className="text-[11px] text-white/25 text-center">
+                                  {useTestnet ? "Sepolia testnet" : "Ethereum mainnet"} · reconnect once you have a name
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         )}
 
                         <div className="flex gap-3">

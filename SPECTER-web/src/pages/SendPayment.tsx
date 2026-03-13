@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -13,6 +13,10 @@ import {
   AlertCircle,
   User,
   Wallet,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
@@ -35,6 +39,19 @@ import { Label } from "@/components/ui/base/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/base/tabs";
 
 const CARD_PIXEL_COLORS = ["#8b5cf618", "#a78bfa14", "#7c3aed12", "#c4b5fd10"];
+
+/** Human-readable relative timestamp. */
+function getRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
 import { validateEnsName, EnsResolverError } from "@/lib/blockchain/ensResolver";
 import { validateSuinsName, SuinsResolverError } from "@/lib/blockchain/suinsResolver";
 import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
@@ -47,6 +64,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/base/tooltip";
+import { getPaymentHistory, addPaymentEntry, type PaymentEntry } from "@/lib/paymentHistory";
+import { useTestnet } from "@/lib/blockchain/chainConfig";
 
 // Wallet imports
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
@@ -90,6 +109,15 @@ export default function SendPayment() {
   const [recentRecipients, setRecentRecipients] = useState(() => {
     try { return getRecentRecipients(); } catch { return []; }
   });
+  const [paymentHistory, setPaymentHistory] = useState<PaymentEntry[]>(() => {
+    try { return getPaymentHistory(); } catch { return []; }
+  });
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  const logPayment = useCallback((entry: Omit<PaymentEntry, "timestamp">) => {
+    addPaymentEntry(entry);
+    setPaymentHistory(getPaymentHistory());
+  }, []);
 
   // Wallet hooks
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
@@ -245,6 +273,13 @@ export default function SendPayment() {
         chain: publishChain,
       });
       setAnnouncementId(res.id);
+      logPayment({
+        recipient: resolvedENS?.ens_name ?? "unknown",
+        chain: publishChain,
+        amount: verified.amountFormatted,
+        txHash: verified.txHash,
+        announcementId: res.id,
+      });
       toast.success(
         `Verified ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
       );
@@ -320,6 +355,13 @@ export default function SendPayment() {
         chain: publishChain,
       });
       setAnnouncementId(res.id);
+      logPayment({
+        recipient: resolvedENS?.ens_name ?? "unknown",
+        chain: publishChain,
+        amount: verified.amountFormatted,
+        txHash: verified.txHash,
+        announcementId: res.id,
+      });
       toast.success(
         `Sent ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
       );
@@ -900,6 +942,127 @@ export default function SendPayment() {
               </div>
             </div>
           </div>
+
+          {/* ─── Recent Transactions (Dark Knight theme) ─── */}
+          {paymentHistory.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="w-full max-w-2xl mt-8"
+            >
+              <div className="rounded-xl overflow-hidden border border-amber-500/15 bg-black/60 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(251,191,36,0.04)]">
+                {/* Header */}
+                <button
+                  type="button"
+                  onClick={() => setHistoryExpanded((p) => !p)}
+                  className="w-full flex items-center justify-between px-4 py-3 border-b border-amber-500/10 bg-amber-500/[0.03] hover:bg-amber-500/[0.06] transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-500/10 border border-amber-500/15">
+                      <Clock className="h-3 w-3 text-amber-400/80" />
+                    </span>
+                    <span className="font-display text-[10px] font-bold tracking-[0.16em] uppercase text-amber-400/70">
+                      Recent Transactions
+                    </span>
+                    <span className="ml-1 inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-full bg-amber-500/15 text-[9px] font-bold text-amber-400/80">
+                      {paymentHistory.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded text-[9px] font-medium tracking-wide uppercase text-white/20 bg-white/[0.04] border border-white/[0.06]">
+                      session only
+                    </span>
+                    {historyExpanded ? (
+                      <ChevronUp className="h-3.5 w-3.5 text-amber-400/50" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-amber-400/50" />
+                    )}
+                  </div>
+                </button>
+
+                {/* Transaction list */}
+                <AnimatePresence>
+                  {historyExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2, ease: "easeInOut" }}
+                      className="overflow-hidden"
+                    >
+                      <div className="divide-y divide-white/[0.04]">
+                        {paymentHistory.map((tx, i) => {
+                          const isEth = tx.chain === "ethereum";
+                          const explorerBase = isEth
+                            ? useTestnet
+                              ? "https://sepolia.etherscan.io/tx/"
+                              : "https://etherscan.io/tx/"
+                            : useTestnet
+                              ? "https://suiscan.xyz/testnet/tx/"
+                              : "https://suiscan.xyz/mainnet/tx/";
+                          const ago = getRelativeTime(tx.timestamp);
+                          return (
+                            <div
+                              key={`${tx.txHash}-${i}`}
+                              className="flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.02] transition-colors"
+                            >
+                              {/* Chain icon */}
+                              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.06] shrink-0">
+                                {isEth ? (
+                                  <EthereumIcon size={14} />
+                                ) : (
+                                  <SuiIcon size={14} className="text-[#4DA2FF]" />
+                                )}
+                              </span>
+
+                              {/* Details */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono text-xs text-white/70 truncate max-w-[120px]">
+                                    {tx.recipient}
+                                  </span>
+                                  <span className="text-[10px] text-white/20">·</span>
+                                  <span className="font-mono text-xs font-medium text-amber-400/80">
+                                    {formatCryptoAmount(tx.amount)} {isEth ? "ETH" : "SUI"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="font-mono text-[10px] text-white/25 truncate max-w-[100px]">
+                                    {tx.txHash.slice(0, 10)}…{tx.txHash.slice(-6)}
+                                  </span>
+                                  <a
+                                    href={`${explorerBase}${tx.txHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-amber-400/40 hover:text-amber-400/70 transition-colors"
+                                  >
+                                    <ExternalLink className="h-2.5 w-2.5" />
+                                  </a>
+                                </div>
+                              </div>
+
+                              {/* Timestamp */}
+                              <span className="text-[10px] text-white/20 shrink-0 whitespace-nowrap">
+                                {ago}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Disclaimer */}
+                      <div className="px-4 py-2 border-t border-white/[0.04] bg-white/[0.01]">
+                        <p className="text-[10px] text-white/20 text-center">
+                          Stored in session — clears when you close this tab
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
         </div>
       </main>
 
