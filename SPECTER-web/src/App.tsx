@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/base/tooltip";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { WalletProvider } from "@/components/features/wallet/WalletProvider";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
+import { Analytics } from "@vercel/analytics/react";
 import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
@@ -23,7 +24,7 @@ const App = () => (
             numSquares={124}
             maxOpacity={0.09}
             duration={10}
-            className="absolute inset-0 z-0 [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%,white,transparent)]"
+            className="absolute inset-0 z-0 [mask-image:radial-gradient(ellipse_80%_80%_at_50%_50%_at_50%_50%,white,transparent)]"
           />
           <div className="relative z-10">
             <Routes>
@@ -37,6 +38,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </div>
+          <Analytics />
         </div>
       </BrowserRouter>
     </TooltipProvider>
