@@ -430,7 +430,7 @@ export default function ScanPayments() {
                 <Button
                   variant="quantum"
                   size="lg"
-                  onClick={handleScan}
+                  onClick={() => handleScan()}
                   disabled={!keys || scanState === "scanning"}
                   className="w-full"
                 >
