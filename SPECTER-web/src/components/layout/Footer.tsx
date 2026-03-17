@@ -1,13 +1,14 @@
 import { Link } from "react-router-dom";
-import { X, Github, BookOpen } from "lucide-react";
+import { Github, BookOpen, Rss } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
+import { XLogo } from "@/components/features/insights/XLogo";
 
 export function Footer() {
   const socialLinks = [
     {
-      icon: <X className="h-5 w-5" />,
+      icon: <XLogo className="h-4 w-4" />,
       href: "https://x.com/specter_PQ",
-      label: "X (Twitter)",
+      label: "X (formerly Twitter)",
     },
     {
       icon: <Github className="h-5 w-5" />,
@@ -47,6 +48,13 @@ export function Footer() {
               <BookOpen className="h-4 w-4" />
               <span>Documentation</span>
             </a>
+            <Link
+              to="/insights"
+              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Rss className="h-4 w-4" />
+              <span>Insights</span>
+            </Link>
           </div>
           <ul className="flex list-none mt-6 md:mt-0 gap-3">
             {socialLinks.map((link, i) => (

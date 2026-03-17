@@ -11,6 +11,7 @@ import SendPayment from "./pages/SendPayment";
 import ScanPayments from "./pages/ScanPayments";
 import YellowPage from "./pages/YellowPage";
 import UseCasesPage from "./pages/UseCasesPage";
+import InsightsPage from "./pages/InsightsPage";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
@@ -34,6 +35,7 @@ const App = () => (
               <Route path="/scan" element={<ScanPayments />} />
               <Route path="/yellow" element={<YellowPage />} />
               <Route path="/usecases" element={<UseCasesPage />} />
+              <Route path="/insights" element={<InsightsPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
