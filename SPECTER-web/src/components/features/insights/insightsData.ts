@@ -36,6 +36,19 @@ export const MEDIUM_POSTS: MediumPost[] = [
     tags: ["Post-Quantum", "Ethereum", "Cryptography"],
     readTime: "8 min read",
   },
+  {
+    id: "pq-day-ethereum-p2",
+    title: "What Breaks When Q-Day Arrives on Ethereum — P2: ZK Proofs",
+    summary:
+      "ZK proofs are celebrated as the future of Ethereum scaling and privacy. But most of them rely on the same elliptic curve assumptions that quantum computers will shatter. A deep dive into which proof systems survive Q-Day and which don't.",
+    url: "https://pranshurastogi.medium.com/what-breaks-when-the-q-day-arrives-on-ethereum-p2-zk-proofs-0505ebbce2d6",
+    coverImage:
+      "https://images.unsplash.com/photo-1518770660439-4636190af475?w=900&q=80",
+    author: "Pranshu Rastogi",
+    publishedDate: "Mar 2026",
+    tags: ["Post-Quantum", "ZK Proofs", "Ethereum"],
+    readTime: "9 min read",
+  },
 ];
 
 export const TWITTER_THREADS: TwitterThread[] = [
