@@ -1,0 +1,26 @@
+name: Security Audit
+
+on:
+  push:
+    branches: ["main", "staging", "production"]
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/security-audit.yml"
+  pull_request:
+    branches: ["staging", "production"]
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies
+        working-directory: specter
+        run: cargo audit

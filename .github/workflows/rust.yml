@@ -1,13 +1,14 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main", "staging", "production"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main", "staging", "production"]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
   fmt:

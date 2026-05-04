@@ -204,9 +204,9 @@ SPECTER/
 | Backend | Use case | Config |
 |---------|----------|--------|
 | Memory | Development, testing | `REGISTRY_BACKEND=memory` (default) |
-| SQLite (WAL mode) | Production | `REGISTRY_BACKEND=sqlite` + `REGISTRY_SQLITE_PATH=/data/specter.db` |
+| Turso (libSQL) | Staging / Production | `REGISTRY_BACKEND=turso` + `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` |
 
-The SQLite backend runs in WAL mode with a 256-slot LRU cache per view tag, scanner checkpoints for incremental restarts, and Yellow channel lifecycle tracking.
+The Turso backend uses libSQL (SQLite-compatible) with a 256-slot LRU cache per view tag, scanner checkpoints for incremental restarts, and Yellow channel lifecycle tracking.
 
 ---
 
@@ -307,9 +307,12 @@ cp .env.example .env
 # Development (in-memory registry)
 cargo run -p specter-cli -- serve --port 3001
 
-# Production (SQLite persistence)
-REGISTRY_BACKEND=sqlite \
-REGISTRY_SQLITE_PATH=/data/specter.db \
+# Staging (Turso, Sepolia testnet)
+cp .env.staging.example .env   # fill in real credentials
+cargo run --release -p specter-cli -- serve --port 3001
+
+# Production (Turso, mainnet)
+cp .env.production.example .env   # fill in real credentials
 cargo run --release -p specter-cli -- serve --port 3001
 ```
 
@@ -366,12 +369,24 @@ COPY . .
 RUN cargo build --release -p specter-api
 
 FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/specter-api /usr/local/bin/
-VOLUME ["/data"]
-ENV REGISTRY_BACKEND=sqlite
-ENV REGISTRY_SQLITE_PATH=/data/specter.db
 EXPOSE 8080
 CMD ["specter-api"]
+```
+
+Run with environment variables (no volume needed — Turso is remote):
+
+```bash
+docker run -p 8080:8080 \
+  -e ETH_RPC_URL=https://... \
+  -e PINATA_JWT=... \
+  -e PINATA_GATEWAY_URL=... \
+  -e PINATA_GATEWAY_TOKEN=... \
+  -e REGISTRY_BACKEND=turso \
+  -e TURSO_DATABASE_URL=libsql://your-db.turso.io \
+  -e TURSO_AUTH_TOKEN=... \
+  specter-api
 ```
 
 ---
@@ -386,13 +401,17 @@ CMD ["specter-api"]
 | `PINATA_JWT` | Yes | Pinata JWT for IPFS uploads |
 | `PINATA_GATEWAY_URL` | Yes | Pinata dedicated gateway URL |
 | `PINATA_GATEWAY_TOKEN` | Yes | Pinata gateway access token |
-| `REGISTRY_BACKEND` | No | `sqlite` for production, `memory` for dev (default) |
-| `REGISTRY_SQLITE_PATH` | If SQLite | Path to `.db` file |
+| `SUI_RPC_URL` | No | Sui RPC endpoint (mainnet or testnet) |
+| `REGISTRY_BACKEND` | No | `turso` for staging/prod, `memory` for dev (default) |
+| `TURSO_DATABASE_URL` | If Turso | libSQL URL: `libsql://your-db.turso.io` |
+| `TURSO_AUTH_TOKEN` | If Turso | Turso auth token |
+| `USE_TESTNET` | No | `true` for Sepolia, `false` for mainnet (default) |
+| `API_KEY` | No | Bearer token to protect write endpoints |
 | `RATE_LIMIT_RPS` | No | Requests per second per IP (default: 10) |
 | `RATE_LIMIT_BURST` | No | Burst cap per IP (default: 30) |
-| `ALLOWED_ORIGINS` | No | CORS origins (comma-separated) |
-| `YELLOW_WS_URL` | No | Yellow Network WebSocket URL |
-| `YELLOW_CHAIN_ID` | No | Chain ID for Yellow settlement |
+| `ALLOWED_ORIGINS` | No | CORS origins, comma-separated (default: `*`) |
+| `MAX_BODY_SIZE` | No | Max request body bytes (default: 1048576) |
+| `ENABLE_CACHE` | No | Enable LRU announcement cache (default: true) |
 
 ### Frontend (`SPECTER-web/.env`)
 
@@ -431,6 +450,22 @@ SPECTER is grounded in published cryptographic research:
 - [**Post-Quantum Stealth Address Protocols**](https://arxiv.org/pdf/2501.13733v1) — arXiv 2501.13733
 - [**NIST FIPS 203 — ML-KEM Standard**](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf) — the post-quantum KEM standard SPECTER is built on
 - [**ERC-5564: Stealth Addresses**](https://eips.ethereum.org/EIPS/eip-5564) — Ethereum stealth address standard (SPECTER extends this with post-quantum cryptography)
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for branch strategy, commit conventions, and PR checklist.
+
+**Branch layout:**
+
+| Branch | Environment | Network |
+|--------|-------------|---------|
+| `main` | Development | Sepolia testnet |
+| `staging` | Staging | Sepolia testnet |
+| `production` | Production | Ethereum mainnet |
+
+Flow: `feat/*` → PR → `main` → PR → `staging` → PR (with review) → `production`
 
 ---
 
