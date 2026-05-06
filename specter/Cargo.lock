@@ -5564,15 +5564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "specter-cache"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "serde",
- "specter-core",
-]
-
-[[package]]
 name = "specter-cli"
 version = "0.1.0"
 dependencies = [

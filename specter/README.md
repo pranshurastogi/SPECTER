@@ -38,10 +38,9 @@ specter/
 ├── specter-crypto/     # ML-KEM-768, SHAKE256, stealth key derivation
 ├── specter-stealth/    # Payment creation (encapsulate + derive)
 ├── specter-scanner/    # Batch announcement scanning with view tag filtering
-├── specter-registry/   # In-memory announcement storage
-├── specter-cache/      # Lock-free concurrent caching (dashmap)
-├── specter-ipfs/       # Pinata IPFS client (upload + fetch)
-├── specter-ens/        # ENS resolution (alloy + IPFS)
+├── specter-registry/   # In-memory, file, and Turso announcement storage
+├── specter-ipfs/       # Pinata IPFS client (upload + fetch; CID download cache)
+├── specter-ens/        # ENS resolution (JSON-RPC + IPFS)
 ├── specter-suins/      # SuiNS resolution (Sui JSON-RPC + IPFS)
 ├── specter-yellow/     # Yellow Network state channel integration
 ├── specter-api/        # REST API server (Axum)
