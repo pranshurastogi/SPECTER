@@ -150,7 +150,11 @@ impl YellowChannelStore {
         closing_tx_hash: Option<&str>,
         error_reason: Option<&str>,
     ) -> Result<()> {
-        let status = if error_reason.is_some() { "error" } else { "closed" };
+        let status = if error_reason.is_some() {
+            "error"
+        } else {
+            "closed"
+        };
         let conn = self.conn()?;
 
         conn.execute(
@@ -161,8 +165,12 @@ impl YellowChannelStore {
              WHERE channel_id = ?4",
             vec![
                 Value::Text(status.to_string()),
-                closing_tx_hash.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
-                error_reason.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                closing_tx_hash
+                    .map(|s| Value::Text(s.to_string()))
+                    .unwrap_or(Value::Null),
+                error_reason
+                    .map(|s| Value::Text(s.to_string()))
+                    .unwrap_or(Value::Null),
                 Value::Blob(channel_id.to_vec()),
             ],
         )
@@ -217,21 +225,21 @@ impl YellowChannelStore {
 ///   12=closing_tx_hash  13=error_reason  14=metadata
 fn row_to_channel(row: &libsql::Row) -> YellowChannelRecord {
     YellowChannelRecord {
-        id:           row.get::<i64>(0).unwrap_or(0) as u64,
-        channel_id:   row.get::<Vec<u8>>(1).unwrap_or_default(),
-        status:       row.get::<String>(2).unwrap_or_default(),
-        created_at:   row.get::<i64>(3).unwrap_or(0) as u64,
-        closed_at:    opt_int_col(row, 4).map(|v| v as u64),
+        id: row.get::<i64>(0).unwrap_or(0) as u64,
+        channel_id: row.get::<Vec<u8>>(1).unwrap_or_default(),
+        status: row.get::<String>(2).unwrap_or_default(),
+        created_at: row.get::<i64>(3).unwrap_or(0) as u64,
+        closed_at: opt_int_col(row, 4).map(|v| v as u64),
         creator_wallet: opt_text_col(row, 5),
-        chain:          opt_text_col(row, 6),
-        asset_address:  opt_text_col(row, 7),
-        asset_symbol:   opt_text_col(row, 8),
-        amount:         row.get::<String>(9).unwrap_or_default(),
+        chain: opt_text_col(row, 6),
+        asset_address: opt_text_col(row, 7),
+        asset_symbol: opt_text_col(row, 8),
+        amount: row.get::<String>(9).unwrap_or_default(),
         announcement_id: opt_int_col(row, 10).map(|v| v as u64),
         funding_tx_hash: opt_text_col(row, 11),
         closing_tx_hash: opt_text_col(row, 12),
-        error_reason:    opt_text_col(row, 13),
-        metadata:        opt_text_col(row, 14),
+        error_reason: opt_text_col(row, 13),
+        metadata: opt_text_col(row, 14),
     }
 }
 
@@ -278,7 +286,10 @@ mod tests {
     async fn test_create_and_get() {
         let (_reg, store) = setup().await;
         let ch = vec![0xAAu8; 32];
-        let id = store.create(&ch, "0xwallet", "ethereum", None, None, "1000000", None).await.unwrap();
+        let id = store
+            .create(&ch, "0xwallet", "ethereum", None, None, "1000000", None)
+            .await
+            .unwrap();
         assert!(id > 0);
         let r = store.get(&ch).await.unwrap().unwrap();
         assert_eq!(r.status, "open");
@@ -295,7 +306,10 @@ mod tests {
     async fn test_status_lifecycle() {
         let (_reg, store) = setup().await;
         let ch = vec![0xBBu8; 32];
-        store.create(&ch, "0xwallet", "ethereum", None, None, "500", None).await.unwrap();
+        store
+            .create(&ch, "0xwallet", "ethereum", None, None, "500", None)
+            .await
+            .unwrap();
         store.update_status(&ch, "closing").await.unwrap();
         assert_eq!(store.get(&ch).await.unwrap().unwrap().status, "closing");
         store.close(&ch, Some("0xtx123"), None).await.unwrap();
@@ -308,7 +322,10 @@ mod tests {
     async fn test_close_with_error() {
         let (_reg, store) = setup().await;
         let ch = vec![0xCCu8; 32];
-        store.create(&ch, "0xwallet", "ethereum", None, None, "100", None).await.unwrap();
+        store
+            .create(&ch, "0xwallet", "ethereum", None, None, "100", None)
+            .await
+            .unwrap();
         store.close(&ch, None, Some("timeout")).await.unwrap();
         let r = store.get(&ch).await.unwrap().unwrap();
         assert_eq!(r.status, "error");
@@ -318,8 +335,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_open() {
         let (_reg, store) = setup().await;
-        store.create(&[0x01; 32], "w1", "eth", None, None, "10", None).await.unwrap();
-        store.create(&[0x02; 32], "w2", "eth", None, None, "20", None).await.unwrap();
+        store
+            .create(&[0x01; 32], "w1", "eth", None, None, "10", None)
+            .await
+            .unwrap();
+        store
+            .create(&[0x02; 32], "w2", "eth", None, None, "20", None)
+            .await
+            .unwrap();
         store.close(&[0x01; 32], None, None).await.unwrap();
         let open = store.list_open().await.unwrap();
         assert_eq!(open.len(), 1);
@@ -330,7 +353,10 @@ mod tests {
     async fn test_set_funding_tx() {
         let (_reg, store) = setup().await;
         let ch = vec![0xDDu8; 32];
-        store.create(&ch, "w1", "eth", None, None, "100", None).await.unwrap();
+        store
+            .create(&ch, "w1", "eth", None, None, "100", None)
+            .await
+            .unwrap();
         store.set_funding_tx(&ch, "0xfund123").await.unwrap();
         let r = store.get(&ch).await.unwrap().unwrap();
         assert_eq!(r.funding_tx_hash, Some("0xfund123".into()));

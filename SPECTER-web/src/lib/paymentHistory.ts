@@ -42,5 +42,7 @@ export function addPaymentEntry(entry: Omit<PaymentEntry, "timestamp">): void {
 export function clearPaymentHistory(): void {
   try {
     sessionStorage.removeItem(STORAGE_KEY);
-  } catch {}
+  } catch {
+    // storage unavailable — silently skip
+  }
 }
