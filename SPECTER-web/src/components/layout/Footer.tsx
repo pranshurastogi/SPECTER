@@ -1,9 +1,34 @@
 import { Link } from "react-router-dom";
-import { Github, BookOpen, Rss } from "lucide-react";
+import { Github, BookOpen, MonitorPlay, Rss } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { XLogo } from "@/components/features/insights/XLogo";
+import { getAppDeployment } from "@/lib/appEnv";
+import { cn } from "@/lib/utils";
+
+/** npm brand mark (Simple Icons), inherits `currentColor` for theme consistency */
+function NpmLogo({ className }: { className?: string }) {
+  return (
+    <svg
+      role="img"
+      viewBox="0 0 24 24"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+      className={cn("shrink-0", className)}
+    >
+      <path
+        fill="currentColor"
+        d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.832h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z"
+      />
+    </svg>
+  );
+}
+
+const devLinkClass =
+  "flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors";
 
 export function Footer() {
+  const deployment = getAppDeployment();
+  const isStaging = deployment === "staging";
   const socialLinks = [
     {
       icon: <XLogo className="h-4 w-4" />,
@@ -43,45 +68,77 @@ export function Footer() {
               href="https://docs.specterpq.com/"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className={devLinkClass}
             >
-              <BookOpen className="h-4 w-4" />
+              <BookOpen className="h-4 w-4 shrink-0" />
               <span>Documentation</span>
             </a>
-            <Link
-              to="/insights"
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Rss className="h-4 w-4" />
+            <Link to="/insights" className={devLinkClass}>
+              <Rss className="h-4 w-4 shrink-0" />
               <span>Insights</span>
             </Link>
           </div>
-          <ul className="flex list-none mt-6 md:mt-0 gap-3">
-            {socialLinks.map((link, i) => (
-              <li key={i}>
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="h-10 w-10 rounded-full"
-                  asChild
-                >
-                  <a
-                    href={link.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={link.label}
+          <div className="flex flex-col gap-4 mt-6 md:mt-0 md:items-end">
+            <ul className="flex list-none gap-3 md:justify-end">
+              {socialLinks.map((link, i) => (
+                <li key={i}>
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-10 w-10 rounded-full"
+                    asChild
                   >
-                    {link.icon}
-                  </a>
-                </Button>
-              </li>
-            ))}
-          </ul>
+                    <a
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={link.label}
+                    >
+                      {link.icon}
+                    </a>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-2 w-full md:w-auto md:items-end">
+              <a
+                href="https://www.npmjs.com/package/@specterpq/sdk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={devLinkClass}
+              >
+                <NpmLogo className="h-4 w-4" />
+                <span>@specterpq/sdk</span>
+              </a>
+              <a
+                href="https://play.specterpq.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={devLinkClass}
+              >
+                <MonitorPlay className="h-4 w-4 shrink-0" />
+                <span>Playground</span>
+              </a>
+            </div>
+          </div>
         </div>
         <div className="border-t border-border mt-6 pt-6 md:mt-4 md:pt-8">
-          <div className="mt-6 text-sm leading-6 text-muted-foreground lg:mt-0">
+          <p className="mt-6 text-sm leading-6 text-muted-foreground lg:mt-0">
             © 2026. All rights reserved.
-          </div>
+            <span
+              className={
+                isStaging
+                  ? "text-amber-200/55"
+                  : "text-muted-foreground/40"
+              }
+              aria-label={
+                isStaging ? "Staging deployment" : "Production deployment"
+              }
+            >
+              {" "}
+              · {isStaging ? "staging" : "prod"}
+            </span>
+          </p>
         </div>
       </div>
     </footer>
