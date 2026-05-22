@@ -30,5 +30,7 @@ export function addRecentRecipient(name: string): void {
 export function clearRecentRecipients(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
-  } catch {}
+  } catch {
+    // storage unavailable — silently skip
+  }
 }

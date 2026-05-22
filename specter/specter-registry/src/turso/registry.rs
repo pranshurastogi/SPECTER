@@ -111,11 +111,9 @@ impl TursoRegistry {
         let conn = self.conn()?;
 
         for statement in schema::SCHEMA_STATEMENTS {
-            conn.execute(statement, ())
-                .await
-                .map_err(|e| {
-                    SpecterError::RegistryError(format!("Schema init: {e}\nSQL: {statement}"))
-                })?;
+            conn.execute(statement, ()).await.map_err(|e| {
+                SpecterError::RegistryError(format!("Schema init: {e}\nSQL: {statement}"))
+            })?;
         }
 
         // Seed metadata on first run
@@ -139,7 +137,10 @@ impl TursoRegistry {
 
             conn.execute(
                 "INSERT OR IGNORE INTO registry_metadata (key, value) VALUES (?1, ?2)",
-                params![schema::SCHEMA_VERSION.to_string(), schema::SCHEMA_VERSION.to_string()],
+                params![
+                    schema::SCHEMA_VERSION.to_string(),
+                    schema::SCHEMA_VERSION.to_string()
+                ],
             )
             .await
             .map_err(|e| SpecterError::RegistryError(format!("seed version: {e}")))?;
@@ -322,12 +323,15 @@ impl TursoRegistry {
     // `db.connect()` call would get a blank DB. We use a unique temp file so
     // all connections share the same persistent schema.
 
+    /// Creates an isolated on-disk SQLite instance for unit tests.
     #[cfg(test)]
     pub async fn new_test() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("specter_test_{n}.db"));
+        // Remove any stale file from a previous run so each test starts clean.
+        let _ = std::fs::remove_file(&path);
 
         let db = Builder::new_local(&path)
             .build()
@@ -335,9 +339,7 @@ impl TursoRegistry {
             .expect("local test DB");
         let registry = Self {
             db: Arc::new(db),
-            cache: Arc::new(RwLock::new(LruCache::new(
-                NonZeroUsize::new(256).unwrap(),
-            ))),
+            cache: Arc::new(RwLock::new(LruCache::new(NonZeroUsize::new(256).unwrap()))),
         };
         registry.init_schema().await.expect("schema init");
         registry
@@ -546,7 +548,11 @@ async fn collect_announcements(rows: &mut libsql::Rows) -> Result<Vec<Announceme
 }
 
 /// Execute a query that returns a single `i64` from column 0.
-async fn query_i64(conn: &Connection, sql: &str, params: impl libsql::params::IntoParams) -> Result<i64> {
+async fn query_i64(
+    conn: &Connection,
+    sql: &str,
+    params: impl libsql::params::IntoParams,
+) -> Result<i64> {
     let mut rows = conn
         .query(sql, params)
         .await

@@ -892,7 +892,7 @@ export default function SendPayment() {
                                   <div>
                                     <p className="font-display text-[10px] font-bold tracking-[0.18em] uppercase text-primary/60 mb-1">Zero-Knowledge Route</p>
                                     <p className="text-xs text-white/40">
-                                      Only {resolvedENS.ens_name} can find this payment. On-chain observers see nothing.
+                                      Only {resolvedENS.ens_name} can find this payment. Onchain observers see nothing.
                                     </p>
                                   </div>
                                 </div>

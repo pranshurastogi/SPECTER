@@ -76,7 +76,7 @@ export default function ReactorKnob({
       const x = e.clientX - centerX;
       const y = e.clientY - centerY;
 
-      let rads = Math.atan2(y, x);
+      const rads = Math.atan2(y, x);
       let degs = rads * (180 / Math.PI) + 90;
 
       if (degs > 180) degs -= 360;

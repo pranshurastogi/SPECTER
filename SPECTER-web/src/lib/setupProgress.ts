@@ -38,7 +38,9 @@ export function saveSetupProgress(update: Partial<SetupProgress>): void {
 export function clearSetupProgress(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
-  } catch {}
+  } catch {
+    // storage unavailable — silently skip
+  }
 }
 
 export function isSetupInProgress(): boolean {

@@ -69,13 +69,13 @@ impl ScanPositionStore {
 
         Ok(row.map(|r| ScanPosition {
             last_announcement_id: r.get::<i64>(0).unwrap_or(0) as u64,
-            last_timestamp:       r.get::<i64>(1).unwrap_or(0) as u64,
-            total_scanned:        r.get::<i64>(2).unwrap_or(0) as u64,
-            total_discoveries:    r.get::<i64>(3).unwrap_or(0) as u64,
+            last_timestamp: r.get::<i64>(1).unwrap_or(0) as u64,
+            total_scanned: r.get::<i64>(2).unwrap_or(0) as u64,
+            total_discoveries: r.get::<i64>(3).unwrap_or(0) as u64,
             scan_duration_ms: opt_int_col(&r, 4).map(|v| v as u64),
-            error_count:      r.get::<i64>(5).unwrap_or(0) as u64,
-            last_error:       opt_text_col(&r, 6),
-            last_scan_at:     opt_int_col(&r, 7).map(|v| v as u64),
+            error_count: r.get::<i64>(5).unwrap_or(0) as u64,
+            last_error: opt_text_col(&r, 6),
+            last_scan_at: opt_int_col(&r, 7).map(|v| v as u64),
         }))
     }
 
@@ -165,13 +165,13 @@ impl ScanPositionStore {
             let wallet_id: String = r.get(0).unwrap_or_default();
             let pos = ScanPosition {
                 last_announcement_id: r.get::<i64>(1).unwrap_or(0) as u64,
-                last_timestamp:       r.get::<i64>(2).unwrap_or(0) as u64,
-                total_scanned:        r.get::<i64>(3).unwrap_or(0) as u64,
-                total_discoveries:    r.get::<i64>(4).unwrap_or(0) as u64,
+                last_timestamp: r.get::<i64>(2).unwrap_or(0) as u64,
+                total_scanned: r.get::<i64>(3).unwrap_or(0) as u64,
+                total_discoveries: r.get::<i64>(4).unwrap_or(0) as u64,
                 scan_duration_ms: opt_int_col(&r, 5).map(|v| v as u64),
-                error_count:      r.get::<i64>(6).unwrap_or(0) as u64,
-                last_error:       opt_text_col(&r, 7),
-                last_scan_at:     opt_int_col(&r, 8).map(|v| v as u64),
+                error_count: r.get::<i64>(6).unwrap_or(0) as u64,
+                last_error: opt_text_col(&r, 7),
+                last_scan_at: opt_int_col(&r, 8).map(|v| v as u64),
             };
             out.push((wallet_id, pos));
         }
@@ -245,11 +245,26 @@ mod tests {
     async fn test_upsert() {
         let (_reg, store) = setup().await;
         store
-            .save("w", &ScanPosition { last_announcement_id: 50, total_scanned: 50, ..Default::default() })
+            .save(
+                "w",
+                &ScanPosition {
+                    last_announcement_id: 50,
+                    total_scanned: 50,
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         store
-            .save("w", &ScanPosition { last_announcement_id: 100, total_scanned: 100, total_discoveries: 5, ..Default::default() })
+            .save(
+                "w",
+                &ScanPosition {
+                    last_announcement_id: 100,
+                    total_scanned: 100,
+                    total_discoveries: 5,
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         let loaded = store.load("w").await.unwrap().unwrap();
