@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
@@ -19,6 +19,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { Button } from "@/components/ui/base/button";
+import { Input } from "@/components/ui/base/input";
 import { Card, CardContent } from "@/components/ui/base/card";
 import {
   Key,
@@ -34,6 +35,7 @@ import {
   Globe,
   Wallet,
   HardDrive,
+  ShieldCheck,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/base/sonner";
@@ -50,13 +52,293 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/specialized/alert-dialog";
-import { api, ApiError, type GenerateKeysResponse } from "@/lib/api";
+import { api, ApiError, type GenerateKeysResponse, type ResolveEnsResponse } from "@/lib/api";
 import { saveSetupProgress, clearSetupProgress } from "@/lib/setupProgress";
 import { formatAddress } from "@/lib/utils";
 import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
+import { listVaultEntries, unlockEntry, type VaultEntry } from "@/lib/crypto/keyVault";
 
 type SetupStep = 1 | 2 | 3 | 4;
+type EnsMode = "select" | "keep" | "attach-new";
+
+type VerifyStep = "pick-method" | "upload" | "vault" | "result";
+
+function EnsExistingRecordPanel({
+  existingRecord,
+  onConfirmKeep,
+  onSwitchToReplace,
+  onBack,
+  useTestnet,
+}: {
+  existingRecord: ResolveEnsResponse;
+  onConfirmKeep: () => void;
+  onSwitchToReplace: () => void;
+  onBack: () => void;
+  useTestnet: boolean;
+}) {
+  const [verifyStep, setVerifyStep] = useState<VerifyStep>("pick-method");
+  const [result, setResult] = useState<"match" | "mismatch" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [vaultEntries] = useState<VaultEntry[]>(() => listVaultEntries());
+  const [selectedEntry, setSelectedEntry] = useState<string>(() => listVaultEntries()[0]?.id ?? "");
+  const [password, setPassword] = useState("");
+  const [unlocking, setUnlocking] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const compare = (candidateMeta: string) => {
+    setResult(candidateMeta.trim() === existingRecord.meta_address.trim() ? "match" : "mismatch");
+    setVerifyStep("result");
+  };
+
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (typeof parsed.meta_address !== "string") {
+        throw new Error("Invalid file — meta_address not found");
+      }
+      compare(parsed.meta_address);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read file");
+    }
+    e.target.value = "";
+  };
+
+  const onUnlock = async () => {
+    if (!selectedEntry || !password) return;
+    setUnlocking(true);
+    setError(null);
+    try {
+      const decrypted = await unlockEntry(selectedEntry, password);
+      compare(decrypted.meta_address);
+    } catch {
+      setError("Wrong password — try again");
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Always-visible: what's on ENS */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-0.5">
+            Meta-address on ENS
+          </p>
+          <code className="text-xs text-foreground break-all">
+            {existingRecord.meta_address.slice(0, 20)}…{existingRecord.meta_address.slice(-10)}
+          </code>
+        </div>
+        <a
+          href={
+            useTestnet
+              ? `https://sepolia.app.ens.domains/${encodeURIComponent(existingRecord.ens_name)}`
+              : `https://app.ens.domains/${encodeURIComponent(existingRecord.ens_name)}`
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+        >
+          <ExternalLink className="h-3 w-3" />
+          ENS
+        </a>
+      </div>
+
+      {/* ── Step: pick verification method ── */}
+      {verifyStep === "pick-method" && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">How would you like to verify ownership?</p>
+          <button
+            type="button"
+            onClick={() => { setError(null); setVerifyStep("upload"); }}
+            className="flex items-center gap-3 w-full p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+          >
+            <Upload className="h-4 w-4 text-primary shrink-0" />
+            <div>
+              <p className="text-xs font-medium text-foreground">Upload key file</p>
+              <p className="text-[11px] text-muted-foreground">Compare using your specter-keys.json backup</p>
+            </div>
+          </button>
+          {vaultEntries.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => { setError(null); setVerifyStep("vault"); }}
+              className="flex items-center gap-3 w-full p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+            >
+              <HardDrive className="h-4 w-4 text-primary shrink-0" />
+              <div>
+                <p className="text-xs font-medium text-foreground">Use saved keys</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {vaultEntries.length} encrypted {vaultEntries.length === 1 ? "entry" : "entries"} on this device
+                </p>
+              </div>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border bg-muted/20 text-muted-foreground">
+              <HardDrive className="h-4 w-4 shrink-0 opacity-40" />
+              <p className="text-[11px]">No keys saved on this device</p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onBack}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-center pt-1"
+          >
+            ← Back to options
+          </button>
+        </div>
+      )}
+
+      {/* ── Step: upload file ── */}
+      {verifyStep === "upload" && (
+        <div className="space-y-2">
+          <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={onFileChange} />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="w-full flex flex-col items-center gap-2 p-6 rounded-lg border border-dashed border-border hover:border-primary/40 bg-muted/10 hover:bg-muted/20 transition-colors"
+          >
+            <Upload className="h-5 w-5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Click to select <span className="font-mono">specter-keys.json</span></span>
+          </button>
+          {error && (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              {error}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => { setError(null); setVerifyStep("pick-method"); }}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-center pt-1"
+          >
+            ← Back
+          </button>
+        </div>
+      )}
+
+      {/* ── Step: vault unlock ── */}
+      {verifyStep === "vault" && (
+        <div className="space-y-2">
+          {vaultEntries.length > 1 && (
+            <div className="space-y-1">
+              <p className="text-[11px] text-muted-foreground">Select key entry:</p>
+              {vaultEntries.map((entry) => (
+                <label
+                  key={entry.id}
+                  className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                    selectedEntry === entry.id
+                      ? "border-primary/40 bg-primary/5"
+                      : "border-border bg-card hover:bg-muted/30"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    className="accent-primary"
+                    checked={selectedEntry === entry.id}
+                    onChange={() => setSelectedEntry(entry.id)}
+                  />
+                  <span className="text-xs font-medium text-foreground truncate">{entry.label}</span>
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">
+                    {new Date(entry.createdAt).toLocaleDateString()}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <Input
+            type="password"
+            placeholder="Vault password"
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); setError(null); }}
+            onKeyDown={(e) => e.key === "Enter" && onUnlock()}
+            autoComplete="current-password"
+          />
+          {error && (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              {error}
+            </p>
+          )}
+          <Button
+            variant="quantum"
+            size="sm"
+            className="w-full"
+            onClick={onUnlock}
+            disabled={!password || unlocking}
+          >
+            {unlocking ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
+                Unlock & compare
+              </>
+            )}
+          </Button>
+          <button
+            type="button"
+            onClick={() => { setError(null); setPassword(""); setVerifyStep("pick-method"); }}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-center pt-1"
+          >
+            ← Back
+          </button>
+        </div>
+      )}
+
+      {/* ── Step: result ── */}
+      {verifyStep === "result" && result === "match" && (
+        <div className="space-y-2.5">
+          <div className="specter-confirm">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            <span className="specter-confirm-text">Verified — these keys are yours</span>
+          </div>
+          <Button variant="quantum" size="sm" className="w-full" onClick={onConfirmKeep}>
+            <ArrowRight className="h-3.5 w-3.5 mr-1.5" />
+            Confirmed, keep this setup
+          </Button>
+        </div>
+      )}
+
+      {verifyStep === "result" && result === "mismatch" && (
+        <div className="space-y-2.5">
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-medium text-amber-700 dark:text-amber-300">Keys don&apos;t match</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                The backup you provided differs from the ENS record. Try a different backup, or replace the record with your new keys.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => { setResult(null); setPassword(""); setError(null); setVerifyStep("pick-method"); }}
+            >
+              Try another
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={onSwitchToReplace}
+            >
+              Replace keys
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const securityTips = [
   { icon: Lock, text: "Your keys, your control" },
@@ -75,6 +357,7 @@ export default function GenerateKeys() {
   const [ensUploading, setEnsUploading] = useState(false);
   const [ensTxHash, setEnsTxHash] = useState<string | null>(null);
   const [ensUploadResult, setEnsUploadResult] = useState<{ cid: string; text_record: string; ensName: string } | null>(null);
+  const [ensMode, setEnsMode] = useState<EnsMode>("select");
 
   // SuiNS state
   const [suinsUploading, setSuinsUploading] = useState(false);
@@ -93,6 +376,27 @@ export default function GenerateKeys() {
     enabled: !!evmAddress,
     staleTime: 2 * 60 * 1000,
   });
+
+  const {
+    data: existingEnsRecord,
+    isLoading: checkingExistingEns,
+    error: existingEnsCheckError,
+  } = useQuery({
+    queryKey: ["ens-existing-specter", primaryEnsName],
+    queryFn: () => api.resolveEns(primaryEnsName!),
+    enabled: !!primaryEnsName && !ensUploadResult,
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+
+  const isNoRecordError =
+    existingEnsCheckError instanceof ApiError &&
+    (existingEnsCheckError.code === "NO_SPECTER_RECORD" ||
+      (existingEnsCheckError.status != null && existingEnsCheckError.status >= 400 && existingEnsCheckError.status < 500));
+
+  useEffect(() => {
+    setEnsMode("select");
+  }, [evmAddress, primaryEnsName]);
 
   // Sui wallet (dapp-kit)
   const suiAccount = useCurrentAccount();
@@ -510,12 +814,13 @@ export default function GenerateKeys() {
                     <h2 className="font-display text-lg font-semibold text-foreground">
                       Step 2 — Attach to ENS
                     </h2>
-                    <p className="text-sm text-muted-foreground">
-                      Connect your wallet to link your ENS name to your meta-address.
-                    </p>
 
                     {!evmConnected ? (
-                      <div className="flex flex-col gap-3">
+                      <div className="space-y-3">
+                        <p className="text-sm text-muted-foreground">
+                          Connect your Ethereum wallet to link your ENS name to your meta-address.
+                        </p>
+                        <div className="flex flex-col gap-3">
                         <Button
                           variant="outline"
                           size="lg"
@@ -533,6 +838,7 @@ export default function GenerateKeys() {
                         >
                           Skip
                         </Button>
+                        </div>
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -560,11 +866,155 @@ export default function GenerateKeys() {
                           </div>
                         ) : primaryEnsName ? (
                           <div className="space-y-3">
-                            <p className="text-sm">
-                              ENS name: <span className="font-mono font-medium text-primary">{primaryEnsName}</span>
-                            </p>
-                            {!ensUploadResult ? (
+                            {/* ENS name badge */}
+                            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/15">
+                              <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
+                              <span className="text-sm font-mono text-primary">{primaryEnsName}</span>
+                            </div>
+
+                            {/* ── Already attached this session ── */}
+                            {ensUploadResult ? (
                               <div className="space-y-2">
+                                <div className="specter-confirm">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  <span className="specter-confirm-text">ENS record locked in</span>
+                                </div>
+                                <Button variant="outline" size="sm" className="w-full" asChild>
+                                  <a
+                                    href={useTestnet ? `https://sepolia.app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}` : `https://app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center justify-center gap-1.5"
+                                  >
+                                    <Globe className="h-3.5 w-3.5" />
+                                    Open ENS App
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </Button>
+                              </div>
+                            ) : checkingExistingEns ? (
+                              /* ── Checking for prior setup ── */
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Checking existing setup…
+                              </div>
+                            ) : existingEnsRecord ? (
+                              /* ── Prior SPECTER record found ── */
+                              ensMode === "select" ? (
+                                <div className="space-y-3">
+                                  <div className="flex items-start gap-2.5 p-3 rounded-lg bg-primary/5 border border-primary/15">
+                                    <ShieldCheck className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                                    <div>
+                                      <p className="text-xs font-medium text-foreground mb-0.5">
+                                        Existing SPECTER setup detected
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        This ENS name already has a meta-address. Choose how to proceed.
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEnsMode("keep")}
+                                      className="flex flex-col items-start gap-1.5 p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                                        <span className="text-xs font-medium text-foreground">Keep existing</span>
+                                      </div>
+                                      <span className="text-[11px] text-muted-foreground leading-relaxed">
+                                        Verify the record is yours and skip re-upload
+                                      </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEnsMode("attach-new")}
+                                      className="flex flex-col items-start gap-1.5 p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        <Upload className="h-3.5 w-3.5 text-primary" />
+                                        <span className="text-xs font-medium text-foreground">Replace keys</span>
+                                      </div>
+                                      <span className="text-[11px] text-muted-foreground leading-relaxed">
+                                        Overwrite with your newly generated keys
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : ensMode === "keep" ? (
+                                <EnsExistingRecordPanel
+                                  existingRecord={existingEnsRecord}
+                                  useTestnet={useTestnet}
+                                  onConfirmKeep={() => {
+                                    setEnsUploadResult({
+                                      cid: existingEnsRecord.ipfs_cid ?? "",
+                                      text_record: existingEnsRecord.meta_address,
+                                      ensName: existingEnsRecord.ens_name,
+                                    });
+                                    saveSetupProgress({ ensAttached: true });
+                                    toast.success("Existing ENS record confirmed.");
+                                  }}
+                                  onSwitchToReplace={() => setEnsMode("attach-new")}
+                                  onBack={() => setEnsMode("select")}
+                                />
+                              ) : (
+                                /* attach-new / overwrite */
+                                <div className="space-y-2">
+                                  <div className="flex gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                                      This overwrites the existing record on{" "}
+                                      <span className="font-mono font-medium">{primaryEnsName}</span>.
+                                    </p>
+                                  </div>
+                                  {ensTxHash ? (
+                                    <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
+                                      <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                                      <p className="text-sm">Waiting for transaction confirmation…</p>
+                                    </div>
+                                  ) : (
+                                    <Button
+                                      variant="quantum"
+                                      size="default"
+                                      onClick={handleAttachToEns}
+                                      disabled={ensUploading}
+                                      className="w-full"
+                                    >
+                                      {ensUploading ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <>
+                                          <Upload className="h-4 w-4 mr-2" />
+                                          Overwrite ENS record
+                                        </>
+                                      )}
+                                    </Button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setEnsMode("select")}
+                                    className="text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-center py-1"
+                                  >
+                                    ← Back to options
+                                  </button>
+                                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Info className="h-3 w-3 shrink-0" />
+                                    Meta address uploaded to IPFS and set as ENS text record.
+                                  </p>
+                                </div>
+                              )
+                            ) : (
+                              /* ── No prior record (or check error — show attach) ── */
+                              <div className="space-y-2">
+                                {existingEnsCheckError && !isNoRecordError && (
+                                  <div className="flex gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+                                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                                      Could not check for existing record. You can still attach below.
+                                    </p>
+                                  </div>
+                                )}
                                 {ensTxHash ? (
                                   <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -594,25 +1044,6 @@ export default function GenerateKeys() {
                                     </p>
                                   </>
                                 )}
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
-                                <div className="specter-confirm">
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  <span className="specter-confirm-text">ENS record locked in</span>
-                                </div>
-                                <Button variant="outline" size="sm" className="w-full" asChild>
-                                  <a
-                                    href={useTestnet ? `https://sepolia.app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}` : `https://app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center justify-center gap-1.5"
-                                  >
-                                    <Globe className="h-3.5 w-3.5" />
-                                    Open ENS App
-                                    <ExternalLink className="h-3 w-3" />
-                                  </a>
-                                </Button>
                               </div>
                             )}
                           </div>
@@ -828,7 +1259,7 @@ export default function GenerateKeys() {
                     </h2>
                     <div className="specter-confirm">
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      <span className="specter-confirm-text">Identity active — you&apos;re in the dark</span>
+                      <span className="specter-confirm-text">Identity activated — SPECTER mode on</span>
                     </div>
                     <p className="text-sm text-muted-foreground">
                       You&apos;re live. Anyone can now reach you in stealth via:
