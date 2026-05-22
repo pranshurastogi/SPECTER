@@ -108,7 +108,7 @@ export function Header() {
             </p>
             {!apiOk && !apiLoading && (
               <p className="text-xs text-muted-foreground mt-1">
-                Start backend: cargo run --bin specter -- serve --port 3001
+                Service may be temporarily unavailable. Please try again shortly.
               </p>
             )}
           </TooltipContent>

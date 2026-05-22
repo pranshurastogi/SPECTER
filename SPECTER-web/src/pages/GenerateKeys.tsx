@@ -36,6 +36,7 @@ import {
   Wallet,
   HardDrive,
   ShieldCheck,
+  RefreshCcw,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "@/components/ui/base/sonner";
@@ -54,6 +55,7 @@ import {
 } from "@/components/ui/specialized/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse, type ResolveEnsResponse } from "@/lib/api";
 import { saveSetupProgress, clearSetupProgress } from "@/lib/setupProgress";
+import { analytics } from "@/lib/analytics";
 import { formatAddress } from "@/lib/utils";
 import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
@@ -142,10 +144,10 @@ function EnsExistingRecordPanel({
           }
           target="_blank"
           rel="noopener noreferrer"
-          className="shrink-0 text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+          className="shrink-0 text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
         >
+          <img src="/ens-logo.png" alt="ENS" className="w-3.5 h-3.5 rounded-sm object-contain opacity-70" />
           <ExternalLink className="h-3 w-3" />
-          ENS
         </a>
       </div>
 
@@ -418,6 +420,7 @@ export default function GenerateKeys() {
   const primarySuiName = suiNames[0] ?? null;
 
   const handleGenerate = async () => {
+    analytics.setupGenerateClicked();
     setStep1Status("generating");
     setKeys(null);
     setKeysDownloaded(false);
@@ -429,6 +432,7 @@ export default function GenerateKeys() {
       setKeys(response);
       setStep1Status("complete");
       saveSetupProgress({ keysGenerated: true });
+      analytics.setupKeysGenerated();
       toast.success("Keys generated successfully");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to generate keys";
@@ -448,6 +452,7 @@ export default function GenerateKeys() {
       toast.error("Connect an Ethereum wallet to set the ENS record");
       return;
     }
+    analytics.setupEnsAttachClicked();
     setEnsUploading(true);
     setEnsUploadResult(null);
     setEnsTxHash(null);
@@ -483,6 +488,7 @@ export default function GenerateKeys() {
       setEnsUploadResult({ cid: res.cid, text_record: textRecordValue, ensName });
       setEnsTxHash(null);
       saveSetupProgress({ ensAttached: true });
+      analytics.setupEnsAttached(ensName);
       toast.success("Meta address attached to ENS.");
     } catch (err: unknown) {
       const anyErr = err as { name?: string; code?: string } | ApiError | Error | unknown;
@@ -515,6 +521,7 @@ export default function GenerateKeys() {
       toast.error("Connect a Sui wallet first");
       return;
     }
+    analytics.setupSuinsAttachClicked();
     setSuinsUploading(true);
     setSuinsUploadResult(null);
     setSuinsTxDigest(null);
@@ -553,6 +560,7 @@ export default function GenerateKeys() {
       setSuinsUploadResult({ cid: res.cid, text_record: textRecordValue, suinsName: primarySuiName });
       setSuinsTxDigest(null);
       saveSetupProgress({ suinsAttached: true });
+      analytics.setupSuinsAttached(primarySuiName);
       toast.success("Meta address attached to SuiNS.");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
@@ -687,7 +695,7 @@ export default function GenerateKeys() {
                             size="lg"
                             className="w-full ring-2 ring-primary ring-offset-2 font-semibold shadow-md animate-in fade-in"
                             tooltip="Keep this file safe and never share it"
-                            onDownload={() => setKeysDownloaded(true)}
+                            onDownload={() => { setKeysDownloaded(true); analytics.setupKeysDownloaded(); }}
                           />
                         )}
 
@@ -706,7 +714,7 @@ export default function GenerateKeys() {
                             variant="outline"
                             size="default"
                             className={`relative w-full ${!keySavedToDevice ? "bg-card border-transparent hover:bg-primary/5" : ""}`}
-                            onClick={() => setShowSaveDialog(true)}
+                            onClick={() => { setShowSaveDialog(true); }}
                           >
                             <HardDrive className="h-4 w-4 mr-2" />
                             {keySavedToDevice ? "Saved to device" : "Save to this device"}
@@ -718,7 +726,7 @@ export default function GenerateKeys() {
                           <SaveToDeviceDialog
                             open={showSaveDialog}
                             onOpenChange={setShowSaveDialog}
-                            onSaved={() => setKeySavedToDevice(true)}
+                            onSaved={() => { setKeySavedToDevice(true); analytics.setupKeysSavedToDevice(); }}
                             keys={{
                               spending_pk: keysJson.spending_pk,
                               spending_sk: keysJson.spending_sk,
@@ -764,6 +772,7 @@ export default function GenerateKeys() {
                           className="w-full"
                           onClick={() => {
                             if (keysDownloaded || keySavedToDevice) {
+                              analytics.setupStepNavigated(2, 1);
                               setCurrentStep(2);
                             } else {
                               setShowContinueWithoutDownloadWarning(true);
@@ -787,6 +796,8 @@ export default function GenerateKeys() {
                               <AlertDialogCancel>Go back</AlertDialogCancel>
                               <AlertDialogAction
                                 onClick={() => {
+                                  analytics.setupSkippedWithoutBackup();
+                                  analytics.setupStepNavigated(2, 1);
                                   setCurrentStep(2);
                                   setShowContinueWithoutDownloadWarning(false);
                                 }}
@@ -842,36 +853,53 @@ export default function GenerateKeys() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/40 border border-border">
+                        <div
+                          className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-border/60"
+                          style={{ background: "hsl(217 19% 14% / 0.6)", backdropFilter: "blur(8px)" }}
+                        >
                           <div className="flex items-center gap-2 min-w-0">
-                            <Wallet className="h-4 w-4 text-primary shrink-0" />
-                            <span className="text-sm font-mono text-foreground truncate">
+                            <span
+                              className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center"
+                              style={{ background: "hsl(263 70% 52% / 0.12)", border: "1px solid hsl(263 70% 52% / 0.2)" }}
+                            >
+                              <Wallet className="h-3 w-3" style={{ color: "hsl(263 70% 65%)" }} />
+                            </span>
+                            <span className="text-xs font-mono text-foreground/80 truncate">
                               {evmAddress && formatAddress(evmAddress)}
                             </span>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                          <button
+                            type="button"
+                            className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
                             onClick={() => handleLogOut()}
                           >
                             Disconnect
-                          </Button>
+                          </button>
                         </div>
 
                         {fetchingEns ? (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Fetching ENS name…
+                          <div className="flex items-center gap-2.5 py-0.5">
+                            <span className="flex gap-[3px] shrink-0">
+                              {([0, 140, 280] as const).map((d) => (
+                                <span
+                                  key={d}
+                                  className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-bounce"
+                                  style={{ animationDelay: `${d}ms`, animationDuration: "1s" }}
+                                />
+                              ))}
+                            </span>
+                            <span className="text-xs text-muted-foreground tracking-wide">Fetching ENS name…</span>
                           </div>
                         ) : primaryEnsName ? (
                           <div className="space-y-3">
-                            {/* ENS name badge */}
-                            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/15">
-                              <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
-                              <span className="text-sm font-mono text-primary">{primaryEnsName}</span>
-                            </div>
-
+                            {/* ENS name chip — shown when no existing record (fresh attach) or after step is complete.
+                                The select/keep/attach-new sub-flows render their own context instead. */}
+                            {(!existingEnsRecord || ensUploadResult) && (
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/15">
+                                <img src="/ens-logo.png" alt="ENS" className="w-4 h-4 shrink-0 rounded-sm object-contain" />
+                                <span className="text-sm font-mono text-primary">{primaryEnsName}</span>
+                              </div>
+                            )}
                             {/* ── Already attached this session ── */}
                             {ensUploadResult ? (
                               <div className="space-y-2">
@@ -886,7 +914,7 @@ export default function GenerateKeys() {
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center gap-1.5"
                                   >
-                                    <Globe className="h-3.5 w-3.5" />
+                                    <img src="/ens-logo.png" alt="ENS" className="w-3.5 h-3.5 rounded-sm object-contain shrink-0" />
                                     Open ENS App
                                     <ExternalLink className="h-3 w-3" />
                                   </a>
@@ -894,51 +922,131 @@ export default function GenerateKeys() {
                               </div>
                             ) : checkingExistingEns ? (
                               /* ── Checking for prior setup ── */
-                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Checking existing setup…
+                              <div className="flex items-center gap-2.5 py-0.5">
+                                <span className="flex gap-[3px] shrink-0">
+                                  {([0, 140, 280] as const).map((d) => (
+                                    <span
+                                      key={d}
+                                      className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-bounce"
+                                      style={{ animationDelay: `${d}ms`, animationDuration: "1s" }}
+                                    />
+                                  ))}
+                                </span>
+                                <span className="text-xs text-muted-foreground tracking-wide">
+                                  Checking existing setup…
+                                </span>
                               </div>
                             ) : existingEnsRecord ? (
                               /* ── Prior SPECTER record found ── */
                               ensMode === "select" ? (
                                 <div className="space-y-3">
-                                  <div className="flex items-start gap-2.5 p-3 rounded-lg bg-primary/5 border border-primary/15">
-                                    <ShieldCheck className="h-4 w-4 text-primary shrink-0 mt-0.5" />
-                                    <div>
-                                      <p className="text-xs font-medium text-foreground mb-0.5">
-                                        Existing SPECTER setup detected
-                                      </p>
-                                      <p className="text-xs text-muted-foreground">
-                                        This ENS name already has a meta-address. Choose how to proceed.
-                                      </p>
+                                  {/* ── Live status banner ── */}
+                                  <div
+                                    className="relative overflow-hidden rounded-xl border border-primary/20"
+                                    style={{
+                                      background: "hsl(263 70% 52% / 0.04)",
+                                      boxShadow: "inset 3px 0 0 hsl(263 70% 52% / 0.35)",
+                                    }}
+                                  >
+                                    <div className="px-4 py-3 flex items-center gap-3">
+                                      {/* Pulsing live dot */}
+                                      <span className="relative flex shrink-0 h-2 w-2">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-55" />
+                                        <span className="relative flex rounded-full h-2 w-2 bg-emerald-500" />
+                                      </span>
+                                      <div className="min-w-0 flex-1">
+                                        <p
+                                          className="text-[9px] font-bold tracking-[0.2em] uppercase mb-0.5"
+                                          style={{ color: "hsl(263 70% 68%)", fontFamily: "var(--font-display)" }}
+                                        >
+                                          Active Record
+                                        </p>
+                                        <div className="flex items-center gap-1.5">
+                                          <img src="/ens-logo.png" alt="ENS" className="w-3.5 h-3.5 rounded-sm object-contain shrink-0 opacity-80" />
+                                          <p className="text-sm font-semibold text-foreground font-mono truncate">
+                                            {primaryEnsName}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: "hsl(263 70% 52% / 0.35)" }} />
                                     </div>
                                   </div>
-                                  <div className="grid grid-cols-2 gap-2">
+
+                                  {/* ── Choice prompt ── */}
+                                  <p className="text-[11px] text-muted-foreground px-0.5 leading-relaxed">
+                                    A meta-address is already attached to this name. How do you want to proceed?
+                                  </p>
+
+                                  {/* ── Option cards ── */}
+                                  <div className="space-y-2">
+                                    {/* Keep existing — recommended */}
                                     <button
                                       type="button"
                                       onClick={() => setEnsMode("keep")}
-                                      className="flex flex-col items-start gap-1.5 p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+                                      className="group relative w-full text-left rounded-xl border border-border overflow-hidden transition-all duration-200 hover:border-primary/35"
+                                      style={{ background: "hsl(263 70% 52% / 0.02)" }}
                                     >
-                                      <div className="flex items-center gap-1.5">
-                                        <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-                                        <span className="text-xs font-medium text-foreground">Keep existing</span>
+                                      {/* Hover gradient wash */}
+                                      <div
+                                        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                                        style={{ background: "linear-gradient(135deg, hsl(263 70% 52% / 0.07) 0%, transparent 55%)" }}
+                                      />
+                                      <div className="relative flex items-center gap-3 px-4 py-3.5">
+                                        {/* Icon container — emerald tint */}
+                                        <div
+                                          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+                                          style={{
+                                            background: "hsl(142 72% 45% / 0.1)",
+                                            border: "1px solid hsl(142 72% 45% / 0.22)",
+                                          }}
+                                        >
+                                          <ShieldCheck className="h-4 w-4" style={{ color: "hsl(142 72% 58%)" }} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="text-sm font-semibold text-foreground" style={{ fontFamily: "var(--font-display)" }}>
+                                              Keep existing
+                                            </span>
+                                            {/* Recommended chip */}
+                                            <span
+                                              className="text-[9px] font-bold tracking-[0.1em] uppercase px-1.5 py-0.5 rounded-full shrink-0"
+                                              style={{
+                                                background: "hsl(142 72% 45% / 0.11)",
+                                                color: "hsl(142 72% 62%)",
+                                                border: "1px solid hsl(142 72% 45% / 0.18)",
+                                              }}
+                                            >
+                                              Recommended
+                                            </span>
+                                          </div>
+                                          <p className="text-[11px] text-muted-foreground leading-snug">
+                                            Verify ownership and skip re-uploading
+                                          </p>
+                                        </div>
+                                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all duration-200" />
                                       </div>
-                                      <span className="text-[11px] text-muted-foreground leading-relaxed">
-                                        Verify the record is yours and skip re-upload
-                                      </span>
                                     </button>
+
+                                    {/* Replace keys — secondary */}
                                     <button
                                       type="button"
                                       onClick={() => setEnsMode("attach-new")}
-                                      className="flex flex-col items-start gap-1.5 p-3 rounded-lg border border-border bg-card hover:bg-muted/40 hover:border-primary/30 transition-colors text-left"
+                                      className="group w-full text-left rounded-xl border border-border bg-card/50 hover:bg-muted/25 hover:border-border/70 transition-all duration-200"
                                     >
-                                      <div className="flex items-center gap-1.5">
-                                        <Upload className="h-3.5 w-3.5 text-primary" />
-                                        <span className="text-xs font-medium text-foreground">Replace keys</span>
+                                      <div className="flex items-center gap-3 px-4 py-3.5">
+                                        <div className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center bg-muted/60 border border-border">
+                                          <RefreshCcw className="h-4 w-4 text-muted-foreground/70" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm font-medium text-foreground mb-0.5" style={{ fontFamily: "var(--font-display)" }}>
+                                            Replace keys
+                                          </p>
+                                          <p className="text-[11px] text-muted-foreground leading-snug">
+                                            Overwrite with your newly generated keys
+                                          </p>
+                                        </div>
+                                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all duration-200" />
                                       </div>
-                                      <span className="text-[11px] text-muted-foreground leading-relaxed">
-                                        Overwrite with your newly generated keys
-                                      </span>
                                     </button>
                                   </div>
                                 </div>
@@ -953,6 +1061,7 @@ export default function GenerateKeys() {
                                       ensName: existingEnsRecord.ens_name,
                                     });
                                     saveSetupProgress({ ensAttached: true });
+                                    analytics.setupEnsRecordKept(existingEnsRecord.ens_name);
                                     toast.success("Existing ENS record confirmed.");
                                   }}
                                   onSwitchToReplace={() => setEnsMode("attach-new")}
@@ -1084,10 +1193,10 @@ export default function GenerateKeys() {
                         )}
 
                         <div className="flex gap-3">
-                          <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(1)}>
+                          <Button variant="outline" className="flex-1" onClick={() => { analytics.setupStepNavigated(1, 2); setCurrentStep(1); }}>
                             Back
                           </Button>
-                          <Button variant="quantum" className="flex-1" onClick={() => setCurrentStep(3)}>
+                          <Button variant="quantum" className="flex-1" onClick={() => { analytics.setupStepNavigated(3, 2); setCurrentStep(3); }}>
                             {ensCompleted ? "Continue" : "Skip"}
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Button>
@@ -1232,10 +1341,10 @@ export default function GenerateKeys() {
                         )}
 
                         <div className="flex gap-3">
-                          <Button variant="outline" className="flex-1" onClick={() => setCurrentStep(2)}>
+                          <Button variant="outline" className="flex-1" onClick={() => { analytics.setupStepNavigated(2, 3); setCurrentStep(2); }}>
                             Back
                           </Button>
-                          <Button variant="quantum" className="flex-1" onClick={() => { clearSetupProgress(); setCurrentStep(4); }}>
+                          <Button variant="quantum" className="flex-1" onClick={() => { clearSetupProgress(); analytics.setupStepNavigated(4, 3); analytics.setupCompleted({ ensAttached: ensCompleted, suinsAttached: suinsCompleted }); setCurrentStep(4); }}>
                             {suinsCompleted ? "Continue" : "Skip"}
                             <ArrowRight className="ml-2 h-4 w-4" />
                           </Button>
@@ -1267,7 +1376,7 @@ export default function GenerateKeys() {
                     <ul className="space-y-2 text-sm">
                       {ensUploadResult && (
                         <li className="flex items-center gap-2">
-                          <Globe className="h-4 w-4 text-primary" />
+                          <img src="/ens-logo.png" alt="ENS" className="w-4 h-4 rounded-sm object-contain shrink-0" />
                           <span className="font-mono">{ensUploadResult.ensName}</span>
                         </li>
                       )}

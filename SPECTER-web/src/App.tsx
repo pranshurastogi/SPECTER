@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/base/tooltip";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { WalletProvider } from "@/components/features/wallet/WalletProvider";
+import { usePageTracking } from "@/hooks/usePageTracking";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
 import { Analytics } from "@vercel/analytics/react";
 import Index from "./pages/Index";
@@ -18,6 +19,11 @@ import NotFound from "./pages/NotFound";
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
+  return null;
+}
+
+function RouteTracker() {
+  usePageTracking();
   return null;
 }
 
@@ -36,6 +42,7 @@ const App = () => (
           />
           <div className="relative z-10">
             <ScrollToTop />
+            <RouteTracker />
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/setup" element={<GenerateKeys />} />

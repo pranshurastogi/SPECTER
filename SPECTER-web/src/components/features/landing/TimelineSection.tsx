@@ -13,11 +13,6 @@ import {
 import { Timeline } from "@/components/ui/specialized/timeline";
 import type { TimelineEntry } from "@/components/ui/specialized/timeline";
 
-const stats = [
-  { value: 99.6, suffix: "%", label: "Scanning efficiency" },
-  { value: 1.5, suffix: "s", label: "Scan time (80k announcements)" },
-  { value: 2030, suffix: "", label: "Future-proof (quantum-safe)" },
-];
 
 function AnimatedNumber({
   value,
@@ -189,7 +184,11 @@ export function TimelineSection() {
             View tag filtering and quantum-safe cryptography.
           </p>
           <div className="grid grid-cols-3 gap-4 md:gap-8 py-4 text-center">
-            {stats.map((s, i) => (
+            {[
+              { value: 99.6, suffix: "%", label: "Scanning efficiency" },
+              { value: 1.5, suffix: "s", label: "Scan time (80k announcements)" },
+              { value: 2030, suffix: "", label: "Future-proof (quantum-safe)" },
+            ].map((s, i) => (
               <motion.div
                 key={s.label}
                 initial={{ opacity: 0, y: 8 }}
