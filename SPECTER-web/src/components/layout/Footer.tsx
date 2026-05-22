@@ -122,23 +122,30 @@ export function Footer() {
             </div>
           </div>
         </div>
-        <div className="border-t border-border mt-6 pt-6 md:mt-4 md:pt-8">
-          <p className="mt-6 text-sm leading-6 text-muted-foreground lg:mt-0">
-            © 2026. All rights reserved.
-            <span
-              className={
-                isStaging
-                  ? "text-amber-200/55"
-                  : "text-muted-foreground/40"
-              }
-              aria-label={
-                isStaging ? "Staging deployment" : "Production deployment"
-              }
-            >
-              {" "}
-              · {isStaging ? "staging" : "prod"}
+        <div className="border-t border-border mt-6 pt-6 md:mt-4 md:pt-8 flex items-center justify-between flex-wrap gap-3">
+          {/* Live protocol status */}
+          <div className="flex items-center gap-2.5">
+            <span className="relative flex h-1.5 w-1.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
             </span>
-          </p>
+            <span className="font-display text-[10px] font-semibold tracking-[0.22em] uppercase text-muted-foreground/40 select-none">
+              Specter Protocol · Quantum&#8209;Safe · © 2026
+            </span>
+            {isStaging && (
+              <span
+                className="font-display text-[9px] font-bold tracking-[0.18em] uppercase px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400/70"
+                aria-label="Staging deployment"
+              >
+                staging
+              </span>
+            )}
+          </div>
+
+          {/* Cipher flavour text — rotates on each render is too much; static is cleaner */}
+          <span className="font-mono text-[9px] tracking-[0.12em] text-muted-foreground/20 select-none hidden sm:block">
+            [TRANSMISSIONS ENCRYPTED]
+          </span>
         </div>
       </div>
     </footer>

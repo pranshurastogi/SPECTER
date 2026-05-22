@@ -82,7 +82,7 @@ async function request<T>(
   } catch (err) {
     if (err instanceof ApiError) throw err;
     if (err instanceof TypeError && err.message === "Failed to fetch") {
-      throw new ApiError("Cannot reach SPECTER API. Is the backend running? Start with: cargo run --bin specter -- serve --port 3001");
+      throw new ApiError("Cannot reach SPECTER API. Please try again in a moment.");
     }
     throw new ApiError(err instanceof Error ? err.message : "Unknown error");
   }

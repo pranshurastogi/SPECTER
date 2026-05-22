@@ -35,6 +35,7 @@ import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
 import { listVaultEntries, unlockEntry, type VaultEntry } from "@/lib/crypto/keyVault";
 import { type DecryptedKeys } from "@/lib/crypto/keyVault";
+import { analytics } from "@/lib/analytics";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -137,6 +138,7 @@ export default function ScanPayments() {
           view_tag: typeof data.view_tag === "number" ? data.view_tag : undefined,
         });
         setKeysPaste("");
+        analytics.scanKeysLoadedFromFile();
         toast.success("Keys loaded");
       } catch {
         setLoadError("Invalid JSON");
@@ -159,6 +161,7 @@ export default function ScanPayments() {
         return;
       }
       setKeys({ viewing_sk, spending_pk, spending_sk });
+      analytics.scanKeysLoadedFromPaste();
       toast.success("Keys loaded");
     } catch {
       setLoadError("Invalid JSON");
@@ -166,12 +169,14 @@ export default function ScanPayments() {
     }
   };
 
-  const handleScan = async (keysOverride?: KeysFromFile) => {
+  const handleScan = async (keysOverride?: KeysFromFile, method?: "file" | "vault" | "paste") => {
     const scanKeys = keysOverride ?? keys;
     if (!scanKeys) {
       toast.error("Load keys first");
       return;
     }
+    const keyMethod = method ?? (keysPaste ? "paste" : "file");
+    analytics.scanInitiated(keyMethod);
     setScanState("scanning");
     setStats(null);
     setDiscoveries([]);
@@ -185,6 +190,7 @@ export default function ScanPayments() {
       setDiscoveries([...scanRes.discoveries].sort((a, b) => b.timestamp - a.timestamp));
       setStats(scanRes.stats);
       setScanState("complete");
+      analytics.scanCompleted(scanRes.discoveries.length);
       if (scanRes.discoveries.length > 0) {
         toast.success(`Found ${scanRes.discoveries.length} payment(s)`);
       } else {
@@ -193,6 +199,7 @@ export default function ScanPayments() {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Scan failed";
       const isNetwork = err instanceof ApiError && (message.includes("reach") || message.includes("fetch") || message.includes("Failed to fetch"));
+      analytics.scanError(message);
       toast.error(isNetwork ? "Cannot reach SPECTER backend." : message);
       setScanState("error");
     }
@@ -212,8 +219,9 @@ export default function ScanPayments() {
       };
       setKeys(k);
       setQuickPassword("");
+      analytics.scanKeysLoadedFromVault();
       toast.success("Keys unlocked — scanning…");
-      await handleScan(k);
+      await handleScan(k, "vault");
     } catch (err) {
       const msg = err instanceof Error && err.message.includes("decrypt")
         ? "Wrong password"
@@ -468,8 +476,8 @@ export default function ScanPayments() {
                             key={`${d.stealth_address}-${d.announcement_id}`}
                             role="button"
                             tabIndex={0}
-                            onClick={() => setSelectedPayment(d)}
-                            onKeyDown={(e) => e.key === "Enter" && setSelectedPayment(d)}
+                            onClick={() => { analytics.scanPaymentSelected(d.chain as "ethereum" | "sui"); setSelectedPayment(d); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { analytics.scanPaymentSelected(d.chain as "ethereum" | "sui"); setSelectedPayment(d); } }}
                             className="p-3 rounded-lg bg-muted/40 border border-border flex items-center gap-3 cursor-pointer hover:bg-muted/60 transition-colors"
                           >
                             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -640,7 +648,7 @@ export default function ScanPayments() {
                         variant="outline"
                         size="default"
                         className="w-full"
-                        onClick={() => setRevealedPk(true)}
+                        onClick={() => { analytics.scanPrivateKeyRevealed(); setRevealedPk(true); }}
                       >
                         <Eye className="h-4 w-4 mr-2" />
                         View private key

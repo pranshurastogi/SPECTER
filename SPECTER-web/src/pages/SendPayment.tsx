@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/base/tooltip";
 import { getPaymentHistory, addPaymentEntry, type PaymentEntry } from "@/lib/paymentHistory";
 import { useTestnet } from "@/lib/blockchain/chainConfig";
+import { analytics } from "@/lib/analytics";
 
 // Wallet imports
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
@@ -140,6 +141,7 @@ export default function SendPayment() {
     const looksLikeHex =
       /^[0-9a-fA-F]+$/.test(name.replace(/^0x/, "")) && name.length > 100;
     if (looksLikeHex) {
+      analytics.sendResolveInitiated("meta_address");
       const metaHex = name.replace(/^0x/, "").trim();
       const spk = metaHex.length >= 2370 ? metaHex.slice(2, 2370) : "";
       const vpk = metaHex.length >= 4738 ? metaHex.slice(2370, 4738) : "";
@@ -159,9 +161,12 @@ export default function SendPayment() {
         const stealth = await api.createStealth({ meta_address: metaHex });
         setStealthResult(stealth);
         setStep("generated");
+        analytics.sendResolveSuccess("meta_address", "meta-address");
+        analytics.sendStealthGenerated("ethereum");
         toast.success("Stealth address generated");
       } catch (err) {
         const message = err instanceof ApiError ? err.message : "Failed to create stealth payment";
+        analytics.sendResolveError("stealth_generation_failed", "meta_address");
         toast.error(message);
       } finally {
         setIsResolving(false);
@@ -172,7 +177,9 @@ export default function SendPayment() {
 
     const isSuiName = name.endsWith(".sui");
     const normalized = name.includes(".") ? name : `${name}.eth`;
+    const nameType = isSuiName ? "sui" : "ens";
 
+    analytics.sendResolveInitiated(nameType);
     setIsResolving(true);
     setResolveStatus("Resolving…");
     setResolveError(null);
@@ -191,6 +198,7 @@ export default function SendPayment() {
         ? validationError.message
         : "Invalid name format";
       setResolveError(msg);
+      analytics.sendResolveError("invalid_name_format", nameType);
       toast.error(msg);
       setIsResolving(false);
       setResolveStatus("");
@@ -216,6 +224,7 @@ export default function SendPayment() {
       setResolveError(null);
       addRecentRecipient(resolved.ens_name);
       setRecentRecipients(getRecentRecipients());
+      analytics.sendResolveSuccess(nameType, resolved.ens_name);
       toast.success(`Resolved ${resolved.ens_name}`);
 
       // Auto-generate stealth address
@@ -223,11 +232,12 @@ export default function SendPayment() {
       const stealth = await api.createStealth({ meta_address: resolved.meta_address });
       setStealthResult(stealth);
       setStep("generated");
+      analytics.sendStealthGenerated(isSuiName ? "sui" : "ethereum");
       toast.success("Stealth address generated");
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
       const message = apiErr?.message ?? `Failed to resolve ${isSuiName ? "SuiNS" : "ENS"}`;
-      const code = apiErr?.code;
+      const code = apiErr?.code ?? "unknown";
       if (code === "NO_SPECTER_RECORD" || code === "NO_SUINS_SPECTER_RECORD") {
         setResolveError("no-specter-setup");
       } else if (code === "IPFS_ERROR") {
@@ -235,6 +245,7 @@ export default function SendPayment() {
       } else {
         setResolveError(message);
       }
+      analytics.sendResolveError(code, nameType);
       toast.error(message);
     } finally {
       setIsResolving(false);
@@ -249,6 +260,7 @@ export default function SendPayment() {
       toast.error("Enter transaction hash");
       return;
     }
+    analytics.sendManualPublishClicked();
     const expectedRecipient =
       publishChain === "sui"
         ? stealthResult.stealth_sui_address
@@ -280,6 +292,8 @@ export default function SendPayment() {
         txHash: verified.txHash,
         announcementId: res.id,
       });
+      analytics.sendPaymentPublished(publishChain, verified.amountFormatted, "manual");
+      analytics.sendCompleted(publishChain, verified.amountFormatted, "manual");
       toast.success(
         `Verified ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
       );
@@ -300,6 +314,7 @@ export default function SendPayment() {
       return;
     }
 
+    analytics.sendWalletSendClicked(publishChain);
     setIsSending(true);
     setSendError(null);
 
@@ -324,6 +339,7 @@ export default function SendPayment() {
           account: walletClient.account,
           chain,
         } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
+        analytics.sendTxSubmitted("ethereum");
         await publicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
       } else {
         if (!suiAccount) {
@@ -337,6 +353,7 @@ export default function SendPayment() {
         tx.transferObjects([coin], stealthResult.stealth_sui_address);
         const result = await signAndExecuteSui({ transaction: tx });
         txHashResult = result.digest;
+        analytics.sendTxSubmitted("sui");
         await suiClient.waitForTransaction({ digest: result.digest });
       }
 
@@ -362,6 +379,8 @@ export default function SendPayment() {
         txHash: verified.txHash,
         announcementId: res.id,
       });
+      analytics.sendPaymentPublished(publishChain, verified.amountFormatted, "wallet");
+      analytics.sendCompleted(publishChain, verified.amountFormatted, "wallet");
       toast.success(
         `Sent ${formatCryptoAmount(verified.amountFormatted)} ${publishChain === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`
       );
@@ -471,6 +490,7 @@ export default function SendPayment() {
                           key={r.name}
                           type="button"
                           onClick={() => {
+                            analytics.sendRecentRecipientClicked();
                             setEnsName(r.name);
                             handleResolve(r.name);
                           }}
@@ -577,7 +597,7 @@ export default function SendPayment() {
                       </div>
 
                       {announcementId === null ? (
-                        <Tabs defaultValue="wallet" onValueChange={(v) => setSendMode(v as "manual" | "wallet")}>
+                        <Tabs defaultValue="wallet" onValueChange={(v) => { setSendMode(v as "manual" | "wallet"); analytics.sendTabSwitched(v as "manual" | "wallet"); }}>
                           <TabsList className="w-full">
                             <TabsTrigger value="wallet" className="flex-1">Send from Wallet</TabsTrigger>
                             <TabsTrigger value="manual" className="flex-1">Manual</TabsTrigger>
@@ -929,7 +949,7 @@ export default function SendPayment() {
                               className="w-full"
                               tooltip="Save receipt as JSON"
                             />
-                            <Button variant="quantum" className="w-full" onClick={resetForm}>
+                            <Button variant="quantum" className="w-full" onClick={() => { analytics.sendAnotherClicked(); resetForm(); }}>
                               Send Another
                               <ArrowRight className="ml-2 h-4 w-4" />
                             </Button>
