@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:staging": "vite build --mode staging",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -16,8 +15,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dynamic-labs/ethereum": "^4.60.0",
-    "@dynamic-labs/sdk-react-core": "^4.60.0",
+    "@dynamic-labs/ethereum": "4.83.1",
+    "@dynamic-labs/sdk-react-core": "4.83.1",
     "@erc7824/nitrolite": "^0.5.3",
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^3.10.0",
@@ -78,8 +77,32 @@
     "viem": "^2.21.0",
     "zod": "^3.25.76"
   },
+  "overrides": {
+    "@dynamic-labs/assert-package-version": "4.83.1",
+    "@dynamic-labs/embedded-wallet-evm": "4.83.1",
+    "@dynamic-labs/ethereum-core": "4.83.1",
+    "@dynamic-labs/locale": "4.83.1",
+    "@dynamic-labs/logger": "4.83.1",
+    "@dynamic-labs/message-transport": "4.83.1",
+    "@dynamic-labs/multi-wallet": "4.83.1",
+    "@dynamic-labs/store": "4.83.1",
+    "@dynamic-labs/types": "4.83.1",
+    "@dynamic-labs/utils": "4.83.1",
+    "@dynamic-labs/wallet-connector-core": "4.83.1"
+  },
   "resolutions": {
-    "@walletconnect/utils/@noble/hashes": "1.8.0"
+    "@walletconnect/utils/@noble/hashes": "1.8.0",
+    "@dynamic-labs/assert-package-version": "4.83.1",
+    "@dynamic-labs/embedded-wallet-evm": "4.83.1",
+    "@dynamic-labs/ethereum-core": "4.83.1",
+    "@dynamic-labs/locale": "4.83.1",
+    "@dynamic-labs/logger": "4.83.1",
+    "@dynamic-labs/message-transport": "4.83.1",
+    "@dynamic-labs/multi-wallet": "4.83.1",
+    "@dynamic-labs/store": "4.83.1",
+    "@dynamic-labs/types": "4.83.1",
+    "@dynamic-labs/utils": "4.83.1",
+    "@dynamic-labs/wallet-connector-core": "4.83.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
