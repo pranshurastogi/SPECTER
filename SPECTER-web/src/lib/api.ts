@@ -103,7 +103,6 @@ export interface GenerateKeysResponse {
   viewing_pk: string;
   viewing_sk: string;
   meta_address: string;
-  view_tag: number;
 }
 
 export interface CreateStealthRequest {
@@ -123,9 +122,15 @@ export interface AnnouncementDto {
 }
 
 export interface CreateStealthResponse {
+  /**
+   * Server-held pending-payment identifier. Required when publishing the
+   * announcement after the on-chain transaction is confirmed.
+   */
+  payment_id: string;
   stealth_address: string;
   stealth_sui_address: string;
   ephemeral_ciphertext: string;
+  /** Per-payment protocol view tag (informational; bound to payment_id server-side). */
   view_tag: number;
   announcement: AnnouncementDto;
 }
@@ -192,10 +197,21 @@ export interface UploadIpfsResponse {
   text_record: string;
 }
 
+/**
+ * Publish a previously-created stealth payment.
+ *
+ * Preferred path: pass `payment_id` from `CreateStealthResponse` — the server
+ * publishes the announcement it built, ensuring the view tag is correct.
+ *
+ * Fallback path: pass the full `announcement` DTO returned by `/stealth/create`
+ * (use only if the server lost the pending entry, e.g. after a restart).
+ *
+ * The previously-supported loose `ephemeral_key` + `view_tag` fields have
+ * been removed in favor of `payment_id`.
+ */
 export interface PublishAnnouncementRequest {
-  ephemeral_key: string;
-  view_tag: number;
-  channel_id?: string | null;
+  payment_id?: string;
+  announcement?: AnnouncementDto;
   tx_hash: string;
   amount?: string | null;
   chain?: string | null;

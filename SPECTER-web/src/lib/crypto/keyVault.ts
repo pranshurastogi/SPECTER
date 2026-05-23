@@ -29,7 +29,12 @@ export interface DecryptedKeys {
   viewing_pk: string;
   viewing_sk: string;
   meta_address: string;
-  view_tag: number;
+  /**
+   * @deprecated SPECTER view tags are per-payment, not per-wallet. This field
+   * is retained only for legacy vault entries created before the v1 schema
+   * fix; new entries omit it. Do not use it for publish or scan.
+   */
+  view_tag?: number;
 }
 
 function generateId(): string {
@@ -70,7 +75,11 @@ export async function saveToVault(
   label: string,
   password: string,
 ): Promise<string> {
-  const plaintext = JSON.stringify(keys);
+  // Strip the deprecated `view_tag` before persisting so newly-created vault
+  // entries match the v1 schema (no wallet-level tag).
+  const { view_tag: _legacyTag, ...sanitized } = keys;
+  void _legacyTag;
+  const plaintext = JSON.stringify(sanitized);
   const envelope = await encryptWithPassword(plaintext, password);
   const entry: VaultEntry = {
     id: generateId(),
@@ -93,7 +102,9 @@ export async function unlockEntry(
   const entry = vault.find((e) => e.id === id);
   if (!entry) throw new Error("Key entry not found");
   const plaintext = await decryptWithPassword(entry.envelope, password);
-  return JSON.parse(plaintext) as DecryptedKeys;
+  const parsed = JSON.parse(plaintext) as DecryptedKeys;
+  // Legacy entries may still carry `view_tag`; tolerate but do not use it.
+  return parsed;
 }
 
 /** Remove a single vault entry by id. */

@@ -41,17 +41,17 @@ CREATE=$(curl -s -X POST "$BASE_URL/api/v1/stealth/create" \
   -d "{\"meta_address\": \"$META_ADDRESS\"}")
 echo "$CREATE" | jq -e '.stealth_address' >/dev/null || { echo "Create stealth failed"; echo "$CREATE" | jq .; exit 1; }
 STEALTH_ADDRESS=$(echo "$CREATE" | jq -r '.stealth_address')
-# Publish API expects "ephemeral_key"; create response returns "ephemeral_ciphertext" (same value)
-EPHEMERAL_KEY=$(echo "$CREATE" | jq -r '.ephemeral_ciphertext // .ephemeral_key')
-VIEW_TAG=$(echo "$CREATE" | jq -r '.view_tag')
+PAYMENT_ID=$(echo "$CREATE" | jq -r '.payment_id')
 echo "    stealth_address: $STEALTH_ADDRESS"
+echo "    payment_id:      $PAYMENT_ID"
 echo ""
 
-# 3. Publish announcement
+# 3. Publish announcement via payment_id (server-authoritative path; view tag
+# is bound at create time and cannot be tampered with by the client).
 echo "==> 3. Publish announcement"
 PUBLISH=$(curl -s -X POST "$BASE_URL/api/v1/registry/announcements" \
   -H "Content-Type: application/json" \
-  -d "{\"ephemeral_key\": \"$EPHEMERAL_KEY\", \"view_tag\": $VIEW_TAG}")
+  -d "{\"payment_id\": \"$PAYMENT_ID\", \"tx_hash\": \"0xe2e-test-tx\", \"chain\": \"ethereum\"}")
 echo "$PUBLISH" | jq -e '.id' >/dev/null || { echo "Publish failed"; echo "$PUBLISH" | jq .; exit 1; }
 echo "    announcement id: $(echo "$PUBLISH" | jq -r '.id')"
 echo ""

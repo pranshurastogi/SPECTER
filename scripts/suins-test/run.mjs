@@ -142,7 +142,6 @@ async function main() {
 
   const keys = await api("/api/v1/keys/generate", { method: "POST" });
   info(`Meta-address: ${keys.meta_address.slice(0, 40)}...`);
-  info(`View tag:     ${keys.view_tag}`);
 
   // ── Step 3: Upload meta-address to IPFS ───────────────────────────────────
 
