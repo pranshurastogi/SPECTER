@@ -7,10 +7,12 @@ mod dto;
 mod error;
 mod handlers;
 mod middleware;
+mod pending;
 mod routes;
 mod state;
 
 pub use error::ApiError;
+pub use pending::{PendingPaymentStore, DEFAULT_PENDING_TTL};
 pub use routes::create_router;
 pub use state::{ApiConfig, AppState, SecurityConfig};
 
@@ -24,6 +26,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::middleware::{spawn_rate_limit_cleanup, RateLimitState};
+use crate::pending::spawn_cleanup_task as spawn_pending_cleanup_task;
 
 /// API server for SPECTER.
 pub struct ApiServer {
@@ -88,6 +91,9 @@ impl ApiServer {
     pub async fn run(self, addr: impl Into<SocketAddr>) -> std::io::Result<()> {
         let addr = addr.into();
         let security = &self.state.config.security;
+
+        // Background TTL sweep for pending payments (the create→publish binding).
+        spawn_pending_cleanup_task(self.state.pending_payments.clone());
 
         info!("SPECTER API server listening on {}", addr);
         info!(

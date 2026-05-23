@@ -43,7 +43,6 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
-  view_tag?: number;
 }
 
 export default function ScanPayments() {
@@ -135,7 +134,6 @@ export default function ScanPayments() {
           viewing_sk,
           spending_pk,
           spending_sk,
-          view_tag: typeof data.view_tag === "number" ? data.view_tag : undefined,
         });
         setKeysPaste("");
         analytics.scanKeysLoadedFromFile();
@@ -215,7 +213,6 @@ export default function ScanPayments() {
         viewing_sk: dk.viewing_sk,
         spending_pk: dk.spending_pk,
         spending_sk: dk.spending_sk,
-        view_tag: dk.view_tag,
       };
       setKeys(k);
       setQuickPassword("");
@@ -370,7 +367,6 @@ export default function ScanPayments() {
                     viewing_sk: dk.viewing_sk,
                     spending_pk: dk.spending_pk,
                     spending_sk: dk.spending_sk,
-                    view_tag: dk.view_tag,
                   });
                   setKeysPaste("");
                   setLoadError(null);

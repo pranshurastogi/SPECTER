@@ -13,6 +13,8 @@ use specter_core::error::Result;
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, AnnouncementStats};
 
+use crate::pending::PendingPaymentStore;
+
 // ── ApiConfig ─────────────────────────────────────────────────────────────
 
 /// Configuration for the API service.
@@ -293,6 +295,11 @@ pub struct AppState {
     pub suins_resolver: SuinsResolver,
     /// Yellow Network configuration.
     pub yellow_config: YellowConfig,
+    /// In-flight stealth payments awaiting their on-chain tx + publish.
+    ///
+    /// Binds `POST /api/v1/stealth/create` to `POST /api/v1/registry/announcements`
+    /// so the protocol view tag is **never** trusted from client input.
+    pub pending_payments: Arc<PendingPaymentStore>,
 }
 
 impl AppState {
@@ -334,6 +341,7 @@ impl AppState {
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
             yellow_config: build_yellow_config(),
+            pending_payments: Arc::new(PendingPaymentStore::new()),
         }
     }
 
@@ -347,6 +355,7 @@ impl AppState {
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
             yellow_store: None,
+            pending_payments: Arc::new(PendingPaymentStore::new()),
         }
     }
 }

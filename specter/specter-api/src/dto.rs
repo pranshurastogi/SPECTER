@@ -2,8 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use specter_core::types::Announcement;
+use uuid::Uuid;
 
 /// Response for key generation.
+///
+/// Note: there is intentionally **no** `view_tag` here. In SPECTER, every
+/// announcement carries its own per-payment view tag derived from the
+/// ML-KEM shared secret at create time; a wallet does **not** have a
+/// stable view tag.
 #[derive(Debug, Serialize)]
 pub struct GenerateKeysResponse {
     /// Spending public key (hex)
@@ -16,8 +22,6 @@ pub struct GenerateKeysResponse {
     pub viewing_sk: String,
     /// Meta-address (hex-encoded, for ENS storage)
     pub meta_address: String,
-    /// Base view tag for this wallet
-    pub view_tag: u8,
 }
 
 /// Request to create a stealth payment.
@@ -31,17 +35,26 @@ pub struct CreateStealthRequest {
 }
 
 /// Response for stealth payment creation.
+///
+/// The server holds the full announcement against `payment_id`. After the
+/// sender broadcasts the on-chain tx they must POST to
+/// `/api/v1/registry/announcements` with this `payment_id` so the server
+/// publishes the announcement it built (preventing client-side view-tag
+/// tampering). The full `announcement` DTO is also returned for clients
+/// that want to retain a local copy as backup.
 #[derive(Debug, Serialize)]
 pub struct CreateStealthResponse {
+    /// Server-held pending-payment identifier; required by publish.
+    pub payment_id: Uuid,
     /// The stealth Ethereum address to send funds to
     pub stealth_address: String,
     /// The stealth Sui address (same key)
     pub stealth_sui_address: String,
     /// The ephemeral ciphertext (hex)
     pub ephemeral_ciphertext: String,
-    /// View tag for the announcement
+    /// View tag for the announcement (informational; bound to payment_id server-side)
     pub view_tag: u8,
-    /// Full announcement to publish
+    /// Full announcement (returned for client-side reference / fallback publish)
     pub announcement: AnnouncementDto,
 }
 
@@ -97,13 +110,20 @@ pub struct DiscoveryDto {
 }
 
 /// Scan statistics.
+///
+/// `view_tag_matches` is the number of announcements that passed the view-tag
+/// filter (i.e. decapsulation succeeded and `compute_view_tag(shared_secret)
+/// == announcement.view_tag`). It is **strictly ≥ `discoveries`** because a
+/// view-tag match may still fail the subsequent stealth-key derivation in
+/// rare cases. `total_scanned - view_tag_matches` is the count filtered out
+/// by the view tag.
 #[derive(Debug, Serialize)]
 pub struct ScanStatsDto {
     /// Total announcements scanned
     pub total_scanned: u64,
-    /// View tag matches
+    /// Announcements whose view tag matched after decapsulation
     pub view_tag_matches: u64,
-    /// Payments discovered
+    /// Payments discovered (subset of view_tag_matches)
     pub discoveries: u64,
     /// Duration in milliseconds
     pub duration_ms: u64,
@@ -230,15 +250,31 @@ impl TryFrom<AnnouncementDto> for Announcement {
     }
 }
 
-/// Request to publish an announcement.
+/// Request to publish a previously-created stealth payment.
+///
+/// **Preferred path (`payment_id`):** the server retrieves the announcement
+/// it built at `/api/v1/stealth/create` time and publishes it with the
+/// supplied metadata. This is the only path where the protocol view tag is
+/// guaranteed correct.
+///
+/// **Fallback path (`announcement`):** if the server restarted and the
+/// pending payment expired, the client may resubmit the original
+/// `AnnouncementDto` returned by `/stealth/create`. The server validates
+/// structure (ciphertext size, non-zero, timestamp bounds) but cannot
+/// re-derive the view tag without the recipient's viewing secret key;
+/// senders must therefore submit exactly what the server returned. This
+/// path is logged and metered.
+///
+/// At least one of `payment_id` or `announcement` MUST be provided. The
+/// legacy loose `view_tag` + `ephemeral_key` fields are no longer accepted.
 #[derive(Debug, Deserialize)]
 pub struct PublishAnnouncementRequest {
-    /// Ephemeral key (hex)
-    pub ephemeral_key: String,
-    /// View tag
-    pub view_tag: u8,
-    /// Optional channel ID (hex)
-    pub channel_id: Option<String>,
+    /// Preferred: the `payment_id` returned by `/api/v1/stealth/create`.
+    #[serde(default)]
+    pub payment_id: Option<Uuid>,
+    /// Fallback: full announcement DTO returned by `/api/v1/stealth/create`.
+    #[serde(default)]
+    pub announcement: Option<AnnouncementDto>,
     /// Transaction hash (required; for duplicate detection and storage)
     pub tx_hash: String,
     /// Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)

@@ -14,7 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use specter_api::{ApiConfig, ApiServer};
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
-use specter_crypto::{compute_view_tag, generate_keypair};
+use specter_crypto::generate_keypair;
 use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::MemoryRegistry;
 use specter_stealth::create_stealth_payment;
@@ -125,15 +125,14 @@ async fn cmd_generate(output: Option<PathBuf>) -> Result<()> {
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
-    let view_tag = compute_view_tag(viewing.public.as_bytes());
-
+    // No `view_tag` field: SPECTER view tags are per-payment (derived from the
+    // Kyber shared secret) and have no meaning at the wallet level.
     let keys_json = serde_json::json!({
         "spending_pk": hex::encode(spending.public.as_bytes()),
         "spending_sk": hex::encode(spending.secret.as_bytes()),
         "viewing_pk": hex::encode(viewing.public.as_bytes()),
         "viewing_sk": hex::encode(viewing.secret.as_bytes()),
         "meta_address": meta.to_hex(),
-        "view_tag": view_tag,
     });
 
     if let Some(path) = output {

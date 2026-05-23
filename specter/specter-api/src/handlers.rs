@@ -13,7 +13,7 @@ use tracing::{debug, info};
 
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
-use specter_crypto::{compute_view_tag, generate_keypair};
+use specter_crypto::generate_keypair;
 use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
@@ -34,15 +34,13 @@ pub async fn generate_keys(
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
-    let view_tag = compute_view_tag(viewing.public.as_bytes());
-
+    // Intentionally NO `view_tag` field on the response — see GenerateKeysResponse.
     let response = GenerateKeysResponse {
         spending_pk: hex::encode(spending.public.as_bytes()),
         spending_sk: hex::encode(spending.secret.as_bytes()),
         viewing_pk: hex::encode(viewing.public.as_bytes()),
         viewing_sk: hex::encode(viewing.secret.as_bytes()),
         meta_address: meta.to_hex(),
-        view_tag,
     };
 
     info!("Generated new SPECTER keys");
@@ -51,7 +49,7 @@ pub async fn generate_keys(
 
 /// POST /api/v1/stealth/create
 pub async fn create_stealth(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<CreateStealthRequest>,
 ) -> Result<Json<CreateStealthResponse>> {
     let meta = MetaAddress::from_hex(&req.meta_address)
@@ -60,7 +58,13 @@ pub async fn create_stealth(
     let payment = create_stealth_payment(&meta)
         .map_err(|e| ApiError::internal(format!("Failed to create stealth payment: {}", e)))?;
 
+    // Server retains the canonical announcement (correct view_tag + ephemeral
+    // key) keyed by payment_id. The frontend will quote this id back to
+    // `/api/v1/registry/announcements` after broadcasting the on-chain tx.
+    let payment_id = state.pending_payments.insert(payment.announcement.clone());
+
     let response = CreateStealthResponse {
+        payment_id,
         stealth_address: payment.stealth_address.to_checksum_string(),
         stealth_sui_address: payment.stealth_sui_address.to_hex_string(),
         ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
@@ -69,6 +73,7 @@ pub async fn create_stealth(
     };
 
     debug!(
+        payment_id = %response.payment_id,
         stealth_address = %response.stealth_address,
         view_tag = response.view_tag,
         "Created stealth payment"
@@ -118,9 +123,7 @@ pub async fn scan_payments(
         state.registry.all_announcements().await
     };
 
-    let total_scanned = announcements.len() as u64;
-
-    let discoveries = specter_stealth::discovery::scan_with_context(
+    let (discoveries, scan_stats) = specter_stealth::discovery::scan_with_context_and_stats(
         &announcements,
         &viewing_sk,
         &spending_pk,
@@ -128,6 +131,7 @@ pub async fn scan_payments(
     );
 
     let elapsed = start.elapsed();
+    let duration_ms = elapsed.as_millis() as u64;
 
     let discovery_dtos: Vec<DiscoveryDto> = discoveries
         .into_iter()
@@ -146,20 +150,21 @@ pub async fn scan_payments(
         .collect();
 
     let stats = ScanStatsDto {
-        total_scanned,
-        view_tag_matches: discovery_dtos.len() as u64,
-        discoveries: discovery_dtos.len() as u64,
-        duration_ms: elapsed.as_millis() as u64,
+        total_scanned: scan_stats.total_scanned,
+        view_tag_matches: scan_stats.view_tag_matches,
+        discoveries: scan_stats.discoveries,
+        duration_ms,
         rate: if elapsed.as_secs_f64() > 0.0 {
-            total_scanned as f64 / elapsed.as_secs_f64()
+            scan_stats.total_scanned as f64 / elapsed.as_secs_f64()
         } else {
             0.0
         },
     };
 
     info!(
-        total_scanned,
-        discoveries = discovery_dtos.len(),
+        total_scanned = stats.total_scanned,
+        view_tag_matches = stats.view_tag_matches,
+        discoveries = stats.discoveries,
         duration_ms = stats.duration_ms,
         "Scan complete"
     );
@@ -261,26 +266,19 @@ pub async fn ipfs_get(
 }
 
 /// POST /api/v1/registry/announcements
+///
+/// Publishes a previously-created stealth payment. The protocol view tag is
+/// always derived server-side; clients can no longer supply a loose `view_tag`
+/// or `ephemeral_key` here.
+///
+/// Resolution order:
+///  1. `payment_id` (preferred) — server retrieves the pending announcement.
+///  2. `announcement` (fallback) — accepted only if the server restarted and
+///     the pending entry expired; logged for observability.
 pub async fn publish_announcement(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PublishAnnouncementRequest>,
 ) -> Result<Json<PublishAnnouncementResponse>> {
-    let ephemeral_key = hex::decode(&req.ephemeral_key)?;
-
-    let channel_id = req
-        .channel_id
-        .map(|s| {
-            let bytes = hex::decode(&s)?;
-            let mut arr = [0u8; 32];
-            if bytes.len() == 32 {
-                arr.copy_from_slice(&bytes);
-                Ok::<_, hex::FromHexError>(arr)
-            } else {
-                Err(hex::FromHexError::InvalidStringLength)
-            }
-        })
-        .transpose()?;
-
     let tx_hash = req.tx_hash.trim();
     if tx_hash.is_empty() {
         return Err(ApiError::bad_request(
@@ -288,14 +286,43 @@ pub async fn publish_announcement(
         ));
     }
 
-    let mut announcement = if let Some(ch_id) = channel_id {
-        Announcement::with_channel(ephemeral_key, req.view_tag, ch_id)
-    } else {
-        Announcement::new(ephemeral_key, req.view_tag)
+    let mut announcement = match (req.payment_id, req.announcement) {
+        // Happy path: server-authoritative announcement bound to a payment_id.
+        (Some(pid), _) => {
+            let pending = state.pending_payments.take(&pid).ok_or_else(|| {
+                ApiError::bad_request(
+                    "Unknown or expired payment_id. Re-create the stealth payment.",
+                )
+            })?;
+            debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
+            pending.announcement
+        }
+        // Fallback: client provided the full create-time announcement DTO.
+        (None, Some(dto)) => {
+            tracing::warn!(
+                "Publish via announcement fallback (no payment_id). Verify clients are up-to-date."
+            );
+            let mut ann: Announcement =
+                dto.try_into()
+                    .map_err(|e: specter_core::error::SpecterError| {
+                        ApiError::bad_request(format!("Invalid announcement: {}", e))
+                    })?;
+            // Force fresh id assignment by the registry.
+            ann.id = 0;
+            ann
+        }
+        (None, None) => {
+            return Err(ApiError::bad_request(
+                "Either payment_id or announcement is required",
+            ));
+        }
     };
+
     announcement.tx_hash = Some(tx_hash.to_string());
     announcement.amount = req.amount.filter(|s| !s.trim().is_empty());
     announcement.chain = req.chain.filter(|s| !s.trim().is_empty());
+
+    let view_tag = announcement.view_tag;
 
     let id = state
         .registry
@@ -303,7 +330,7 @@ pub async fn publish_announcement(
         .await
         .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
 
-    info!(id, view_tag = req.view_tag, "Published announcement");
+    info!(id, view_tag, "Published announcement");
 
     Ok(Json(PublishAnnouncementResponse { id, success: true }))
 }

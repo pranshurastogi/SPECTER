@@ -42,6 +42,9 @@ rand = { workspace = true }
 governor = { workspace = true }
 dashmap = { workspace = true }
 
+# Pending payment IDs (binds /stealth/create → /registry/announcements)
+uuid = { workspace = true }
+
 # Config
 dotenvy = "0.15"
 

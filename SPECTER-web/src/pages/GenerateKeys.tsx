@@ -578,7 +578,6 @@ export default function GenerateKeys() {
       viewing_pk: keys.viewing_pk,
       viewing_sk: keys.viewing_sk,
       meta_address: keys.meta_address,
-      view_tag: keys.view_tag,
     }
     : null;
 
@@ -733,7 +732,6 @@ export default function GenerateKeys() {
                               viewing_pk: keysJson.viewing_pk,
                               viewing_sk: keysJson.viewing_sk,
                               meta_address: keysJson.meta_address,
-                              view_tag: keysJson.view_tag,
                             }}
                           />
                         )}

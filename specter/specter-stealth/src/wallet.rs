@@ -102,14 +102,17 @@ impl SpecterWallet {
         &self.keys.viewing.public
     }
 
-    /// Computes the view tag for this wallet.
+    /// **Deprecated.** Returns `SHAKE256(DOMAIN_VIEW_TAG || viewing_pk)[0]`.
     ///
-    /// This is used to filter announcements during scanning.
-    /// Note: In SPECTER, the view tag depends on the shared secret,
-    /// not just the viewing key. This method returns a "base" view tag
-    /// computed from the viewing public key for informational purposes.
+    /// This is NOT the SPECTER protocol view tag. The protocol tag is derived
+    /// per-payment from the ML-KEM shared secret (`compute_view_tag(shared_secret)`),
+    /// which a wallet alone cannot compute in advance. Use [`SpecterWallet::try_discover`]
+    /// for actual scanning. This helper is retained only to migrate historical
+    /// callers; it will be removed in a future release.
+    #[deprecated(
+        note = "Wallets do not have a stable view tag in SPECTER; the protocol tag is per-payment. Use try_discover() for scanning."
+    )]
     pub fn base_view_tag(&self) -> u8 {
-        // This is just for display - actual view tags are per-announcement
         compute_view_tag(self.keys.viewing.public.as_bytes())
     }
 
@@ -224,6 +227,28 @@ mod tests {
 
         let wallet = SpecterWallet::generate_with_config(config).unwrap();
         assert!(wallet.meta_address().validate().is_ok());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_base_view_tag_is_not_protocol_tag() {
+        let wallet = SpecterWallet::generate().unwrap();
+        let (ciphertext, shared_secret) = encapsulate(wallet.viewing_public_key()).unwrap();
+        let protocol_tag = compute_view_tag(&shared_secret);
+
+        // The deprecated wallet-level "base" tag is hash(viewing_pk)[0];
+        // the protocol tag is hash(shared_secret)[0]. They are produced from
+        // different inputs and almost always differ — verify both are stable
+        // and that the actual `try_discover` flow ignores the wallet tag.
+        let _ = wallet.base_view_tag();
+
+        let discovered = wallet
+            .try_discover(ciphertext.as_bytes(), protocol_tag)
+            .unwrap();
+        assert!(
+            discovered.is_some(),
+            "discovery must succeed using protocol tag, not wallet tag"
+        );
     }
 
     #[test]

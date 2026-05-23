@@ -164,20 +164,95 @@ pub fn scan_with_context(
     spending_pk: &[u8],
     spending_sk: &[u8],
 ) -> Vec<DiscoveryResult> {
-    announcements
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, ann)| {
-            match scan_announcement(ann, viewing_sk, spending_pk, spending_sk) {
-                ScanResult::Discovered(keys) => Some(DiscoveryResult {
+    let (results, _stats) =
+        scan_with_context_and_stats(announcements, viewing_sk, spending_pk, spending_sk);
+    results
+}
+
+/// Scans announcements and returns both discoveries and accurate scan statistics.
+///
+/// Unlike [`scan_with_context`], this distinguishes:
+/// - `total_scanned`: every announcement we attempted
+/// - `view_tag_matches`: announcements whose view tag matched after decap
+///   (the true filtering metric — strictly ≥ `discoveries`)
+/// - `discoveries`: subset of view-tag matches that produced valid stealth keys
+/// - `errors`: announcements that failed structural validation / decap / derive
+///
+/// Prefer this for any code path that surfaces scan statistics to the user
+/// (e.g. the REST API's `ScanStatsDto`).
+pub fn scan_with_context_and_stats(
+    announcements: &[Announcement],
+    viewing_sk: &[u8],
+    spending_pk: &[u8],
+    spending_sk: &[u8],
+) -> (Vec<DiscoveryResult>, ScanStats) {
+    use specter_core::types::KyberSecretKey;
+    use specter_crypto::derive::derive_stealth_keys;
+
+    let mut stats = ScanStats::new();
+    let mut results = Vec::new();
+
+    // Parse the viewing secret once. If it fails, every announcement counts
+    // as a structural error and we bail out early with the right totals.
+    let viewing_secret = match KyberSecretKey::from_bytes(viewing_sk) {
+        Ok(sk) => sk,
+        Err(_) => {
+            stats.total_scanned = announcements.len() as u64;
+            stats.errors = announcements.len() as u64;
+            return (results, stats);
+        }
+    };
+
+    for (idx, ann) in announcements.iter().enumerate() {
+        stats.total_scanned += 1;
+
+        if ann.validate().is_err() {
+            stats.errors += 1;
+            continue;
+        }
+
+        let ciphertext = match KyberCiphertext::from_bytes(&ann.ephemeral_key) {
+            Ok(ct) => ct,
+            Err(_) => {
+                stats.errors += 1;
+                continue;
+            }
+        };
+
+        let shared_secret = match decapsulate(&ciphertext, &viewing_secret) {
+            Ok(ss) => ss,
+            Err(_) => {
+                stats.errors += 1;
+                continue;
+            }
+        };
+
+        let expected_view_tag = compute_view_tag(&shared_secret);
+        if expected_view_tag != ann.view_tag {
+            // NotForUs: filtered out by view tag.
+            continue;
+        }
+
+        // View tag matched — count it before attempting derive so the metric
+        // reflects filter efficiency, not derivation success.
+        stats.view_tag_matches += 1;
+
+        match derive_stealth_keys(spending_pk, spending_sk, &shared_secret) {
+            Ok(keys) => {
+                stats.discoveries += 1;
+                results.push(DiscoveryResult {
                     announcement: ann.clone(),
                     keys,
                     index: idx,
-                }),
-                _ => None,
+                });
             }
-        })
-        .collect()
+            Err(_) => {
+                stats.errors += 1;
+            }
+        }
+    }
+
+    (results, stats)
 }
 
 /// Verifies that a given announcement derives to an expected stealth address.
@@ -235,6 +310,58 @@ mod tests {
         let announcement = create_announcement_for(other_viewing.public.as_bytes());
         let result = scan_announcement(&announcement, &viewing_sk, &spending_pk, &spending_sk);
         assert!(!result.is_discovered());
+    }
+
+    /// `scan_with_context_and_stats` must report accurate filter efficiency,
+    /// not just discovery counts. A view-tag match that fails the (rare) derive
+    /// step still counts toward `view_tag_matches`.
+    #[test]
+    fn test_scan_stats_count_view_tag_matches_independently() {
+        let (spending_pk, spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+
+        // 3 announcements addressed to us, 7 noise (different recipients).
+        let mut anns = Vec::new();
+        for _ in 0..3 {
+            anns.push(create_announcement_for(&viewing_pk));
+        }
+        for _ in 0..7 {
+            anns.push(create_announcement_for(
+                generate_keypair().public.as_bytes(),
+            ));
+        }
+
+        let (results, stats) =
+            scan_with_context_and_stats(&anns, &viewing_sk, &spending_pk, &spending_sk);
+
+        assert_eq!(stats.total_scanned, 10);
+        assert_eq!(stats.discoveries, 3);
+        // Every announcement is a valid encapsulation, so the only path to a
+        // view-tag match is "addressed to us". All 3 of ours must match.
+        assert_eq!(stats.view_tag_matches, 3);
+        assert_eq!(results.len(), 3);
+        assert!(stats.view_tag_matches >= stats.discoveries);
+    }
+
+    /// A garbage announcement that won't decapsulate is counted as an error,
+    /// never as a view-tag match or discovery.
+    #[test]
+    fn test_scan_stats_skip_invalid_announcements() {
+        let (spending_pk, spending_sk, _viewing_pk, viewing_sk) = create_test_keys();
+
+        let bad = Announcement::new(
+            vec![0xFFu8; specter_core::constants::KYBER_CIPHERTEXT_SIZE],
+            0,
+        );
+        let (results, stats) =
+            scan_with_context_and_stats(&[bad], &viewing_sk, &spending_pk, &spending_sk);
+
+        assert_eq!(stats.total_scanned, 1);
+        assert_eq!(stats.discoveries, 0);
+        // Decapsulation produces a pseudo-random shared secret, whose tag has
+        // a 1/256 chance of colliding with the announcement's. So
+        // view_tag_matches is either 0 (likely) or 1 (unlikely), but never >1.
+        assert!(stats.view_tag_matches <= 1);
+        assert!(results.is_empty());
     }
 
     #[test]
