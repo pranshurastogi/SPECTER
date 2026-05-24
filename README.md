@@ -343,7 +343,7 @@ Frontend test suites: `pendingPayment` (31 cases), `paymentHistory` (16 cases), 
 - `#![forbid(unsafe_code)]` enforced workspace-wide.
 - Per-IP rate limiting on all write endpoints (`governor`).
 - SQLite runs in WAL mode with foreign-key constraints and a 5 s busy timeout.
-- The browser key vault stores secret keys as an AES-GCM blob derived from a user password (PBKDF2-SHA256, 600k iterations) — never in cleartext.
+- The browser key vault stores secret keys as AES-GCM ciphertext — never in cleartext. Unlock via **password** (PBKDF2-SHA256, 210k iterations) or **passkey** (WebAuthn PRF + HKDF) on the same device.
 - The client-side pending-payment vault stores only public fields (stealth address, ciphertext, view tag, payment ID) — no private key material is written to localStorage.
 
 To report a vulnerability: **hello@pranshurastogi.com**

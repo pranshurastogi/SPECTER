@@ -2,22 +2,21 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   HardDrive,
-  Lock,
-  Loader2,
-  Trash2,
   ChevronDown,
   ChevronUp,
-  AlertTriangle,
+  Trash2,
+  Fingerprint,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
-import { Input } from "@/components/ui/base/input";
 import {
   listVaultEntries,
-  unlockEntry,
   removeEntry,
+  getEntryUnlockMethod,
   type VaultEntry,
   type DecryptedKeys,
 } from "@/lib/crypto/keyVault";
+import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
 import { toast } from "@/components/ui/base/sonner";
 
 interface UnlockSavedKeysProps {
@@ -27,38 +26,23 @@ interface UnlockSavedKeysProps {
 export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
   const [entries, setEntries] = useState<VaultEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [unlocking, setUnlocking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
 
   const refresh = useCallback(() => {
     const all = listVaultEntries();
     setEntries(all);
-    if (all.length === 1) setSelectedId(all[0].id);
+    if (all.length === 1) setSelectedId(all[0]!.id);
+    else if (selectedId && !all.some((e) => e.id === selectedId)) {
+      setSelectedId(all[0]?.id ?? null);
+    }
     return all;
-  }, []);
+  }, [selectedId]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   if (entries.length === 0) return null;
-
-  const handleUnlock = async () => {
-    if (!selectedId || !password) return;
-    setUnlocking(true);
-    setError(null);
-    try {
-      const keys = await unlockEntry(selectedId, password);
-      toast.success("Keys unlocked");
-      onUnlock(keys);
-    } catch {
-      setError("Wrong password or corrupted data");
-    } finally {
-      setUnlocking(false);
-    }
-  };
 
   const handleRemove = (id: string) => {
     removeEntry(id);
@@ -78,12 +62,8 @@ export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
       >
         <div className="flex items-center gap-2">
           <HardDrive className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium text-foreground">
-            Unlock saved keys
-          </span>
-          <span className="text-xs text-muted-foreground">
-            ({entries.length} saved)
-          </span>
+          <span className="text-sm font-medium text-foreground">Unlock saved keys</span>
+          <span className="text-xs text-muted-foreground">({entries.length} saved)</span>
         </div>
         {expanded ? (
           <ChevronUp className="h-4 w-4 text-muted-foreground" />
@@ -101,12 +81,9 @@ export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
             className="overflow-hidden"
           >
             <div className="px-3 pb-3 space-y-3">
-              {/* Key selection */}
               {entries.length > 1 && (
                 <div className="space-y-1.5">
-                  <span className="text-xs text-muted-foreground">
-                    Choose a key set
-                  </span>
+                  <span className="text-xs text-muted-foreground">Choose a key set</span>
                   <div className="space-y-1.5 max-h-32 overflow-y-auto">
                     {entries.map((entry) => (
                       <div
@@ -120,16 +97,17 @@ export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
                         <button
                           type="button"
                           className="flex-1 text-left min-w-0"
-                          onClick={() => {
-                            setSelectedId(entry.id);
-                            setError(null);
-                            setPassword("");
-                          }}
+                          onClick={() => setSelectedId(entry.id)}
                         >
-                          <p className="text-sm font-medium truncate">
-                            {entry.label}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-sm font-medium truncate">{entry.label}</p>
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            {getEntryUnlockMethod(entry) === "passkey" ? (
+                              <Fingerprint className="h-3 w-3" />
+                            ) : (
+                              <Lock className="h-3 w-3" />
+                            )}
+                            {getEntryUnlockMethod(entry) === "passkey" ? "Passkey" : "Password"}
+                            {" · "}
                             {new Date(entry.createdAt).toLocaleDateString()}
                           </p>
                         </button>
@@ -150,15 +128,19 @@ export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
                 </div>
               )}
 
-              {/* Single entry indicator */}
               {entries.length === 1 && selected && (
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {selected.label}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Saved {new Date(selected.createdAt).toLocaleDateString()}
+                    <p className="text-sm font-medium truncate">{selected.label}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      {getEntryUnlockMethod(selected) === "passkey" ? (
+                        <Fingerprint className="h-3 w-3" />
+                      ) : (
+                        <Lock className="h-3 w-3" />
+                      )}
+                      {getEntryUnlockMethod(selected) === "passkey" ? "Passkey" : "Password"}
+                      {" · "}
+                      {new Date(selected.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                   <Button
@@ -172,47 +154,17 @@ export function UnlockSavedKeys({ onUnlock }: UnlockSavedKeysProps) {
                 </div>
               )}
 
-              {/* Password + unlock */}
               {selectedId && (
-                <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      placeholder="Enter password"
-                      value={password}
-                      onChange={(e) => {
-                        setPassword(e.target.value);
-                        setError(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && password) handleUnlock();
-                      }}
-                      className="flex-1"
-                      autoComplete="current-password"
-                    />
-                    <Button
-                      variant="quantum"
-                      size="default"
-                      disabled={!password || unlocking}
-                      onClick={handleUnlock}
-                    >
-                      {unlocking ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <>
-                          <Lock className="h-4 w-4 mr-1.5" />
-                          Unlock
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  {error && (
-                    <div className="flex items-center gap-1.5 text-xs text-destructive">
-                      <AlertTriangle className="h-3 w-3 shrink-0" />
-                      {error}
-                    </div>
-                  )}
-                </div>
+                <VaultUnlockForm
+                  entries={entries}
+                  selectedId={selectedId}
+                  onSelectId={setSelectedId}
+                  onUnlock={(keys) => {
+                    toast.success("Keys unlocked");
+                    onUnlock(keys);
+                  }}
+                  showEntryPicker={false}
+                />
               )}
             </div>
           </motion.div>
