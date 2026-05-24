@@ -59,7 +59,8 @@ import { analytics } from "@/lib/analytics";
 import { formatAddress } from "@/lib/utils";
 import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
-import { listVaultEntries, unlockEntry, type VaultEntry } from "@/lib/crypto/keyVault";
+import { listVaultEntries, getEntryUnlockMethod, type VaultEntry } from "@/lib/crypto/keyVault";
+import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
 
 type SetupStep = 1 | 2 | 3 | 4;
 type EnsMode = "select" | "keep" | "attach-new";
@@ -84,8 +85,6 @@ function EnsExistingRecordPanel({
   const [error, setError] = useState<string | null>(null);
   const [vaultEntries] = useState<VaultEntry[]>(() => listVaultEntries());
   const [selectedEntry, setSelectedEntry] = useState<string>(() => listVaultEntries()[0]?.id ?? "");
-  const [password, setPassword] = useState("");
-  const [unlocking, setUnlocking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const compare = (candidateMeta: string) => {
@@ -108,20 +107,6 @@ function EnsExistingRecordPanel({
       setError(err instanceof Error ? err.message : "Could not read file");
     }
     e.target.value = "";
-  };
-
-  const onUnlock = async () => {
-    if (!selectedEntry || !password) return;
-    setUnlocking(true);
-    setError(null);
-    try {
-      const decrypted = await unlockEntry(selectedEntry, password);
-      compare(decrypted.meta_address);
-    } catch {
-      setError("Wrong password — try again");
-    } finally {
-      setUnlocking(false);
-    }
   };
 
   return (
@@ -247,45 +232,27 @@ function EnsExistingRecordPanel({
                   />
                   <span className="text-xs font-medium text-foreground truncate">{entry.label}</span>
                   <span className="text-[11px] text-muted-foreground ml-auto shrink-0">
+                    {getEntryUnlockMethod(entry) === "passkey" ? "Passkey" : "Password"}
+                    {" · "}
                     {new Date(entry.createdAt).toLocaleDateString()}
                   </span>
                 </label>
               ))}
             </div>
           )}
-          <Input
-            type="password"
-            placeholder="Vault password"
-            value={password}
-            onChange={(e) => { setPassword(e.target.value); setError(null); }}
-            onKeyDown={(e) => e.key === "Enter" && onUnlock()}
-            autoComplete="current-password"
-          />
-          {error && (
-            <p className="flex items-center gap-1.5 text-xs text-destructive">
-              <AlertTriangle className="h-3 w-3 shrink-0" />
-              {error}
-            </p>
+          {selectedEntry && (
+            <VaultUnlockForm
+              entries={vaultEntries}
+              selectedId={selectedEntry}
+              onSelectId={setSelectedEntry}
+              onUnlock={(decrypted) => compare(decrypted.meta_address)}
+              unlockLabel="Unlock & compare"
+              showEntryPicker={false}
+            />
           )}
-          <Button
-            variant="quantum"
-            size="sm"
-            className="w-full"
-            onClick={onUnlock}
-            disabled={!password || unlocking}
-          >
-            {unlocking ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <>
-                <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-                Unlock & compare
-              </>
-            )}
-          </Button>
           <button
             type="button"
-            onClick={() => { setError(null); setPassword(""); setVerifyStep("pick-method"); }}
+            onClick={() => { setError(null); setVerifyStep("pick-method"); }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors w-full text-center pt-1"
           >
             ← Back
@@ -323,7 +290,7 @@ function EnsExistingRecordPanel({
               variant="outline"
               size="sm"
               className="flex-1"
-              onClick={() => { setResult(null); setPassword(""); setError(null); setVerifyStep("pick-method"); }}
+              onClick={() => { setResult(null); setError(null); setVerifyStep("pick-method"); }}
             >
               Try another
             </Button>
