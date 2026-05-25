@@ -29,7 +29,12 @@ import {
 import { toast } from "@/components/ui/base/sonner";
 import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
-import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
+import {
+  ArbitrumIcon,
+  EthereumIcon,
+  MonadIcon,
+  SuiIcon,
+} from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
@@ -37,6 +42,7 @@ import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
 import { listVaultEntries, getEntryUnlockMethod, type VaultEntry, type DecryptedKeys } from "@/lib/crypto/keyVault";
 import { Fingerprint } from "lucide-react";
 import { analytics } from "@/lib/analytics";
+import { getSendChainConfig, type TxChain } from "@/lib/blockchain/sendChains";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -44,6 +50,28 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
+}
+
+function normalizeDiscoveryChain(chain: string): TxChain {
+  const normalized = chain.trim().toLowerCase();
+  if (normalized === "sui") return "sui";
+  if (normalized === "arbitrum" || normalized.includes("arb")) return "arbitrum";
+  if (normalized === "monad") return "monad";
+  return "ethereum";
+}
+
+function chainIcon(chain: TxChain) {
+  if (chain === "sui") return <SuiIcon className="h-4 w-4 text-[#4DA2FF]" />;
+  if (chain === "arbitrum") return <ArbitrumIcon className="h-4 w-4 text-[#96BEDC]" />;
+  if (chain === "monad") return <MonadIcon className="h-4 w-4 text-[#9E7BFF]" />;
+  return <EthereumIcon className="h-4 w-4 text-primary" />;
+}
+
+function chainAccentClass(chain: TxChain): string {
+  if (chain === "sui") return "text-[#4DA2FF]";
+  if (chain === "arbitrum") return "text-[#96BEDC]";
+  if (chain === "monad") return "text-[#9E7BFF]";
+  return "text-primary";
 }
 
 export default function ScanPayments() {
@@ -66,19 +94,42 @@ export default function ScanPayments() {
   const [derivedAddress, setDerivedAddress] = useState<string | null>(null);
   const [addressMatch, setAddressMatch] = useState<boolean | null>(null);
   const [suiPrivateKeyBech32, setSuiPrivateKeyBech32] = useState<string | null>(null);
+  const [chainFilter, setChainFilter] = useState<"all" | TxChain>("all");
   const [page, setPage] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const PAGE_SIZE = 10;
-  const paginatedDiscoveries = discoveries.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-  const totalPages = Math.ceil(discoveries.length / PAGE_SIZE) || 1;
+  const filteredDiscoveries = discoveries.filter((d) => {
+    if (chainFilter === "all") return true;
+    return normalizeDiscoveryChain(d.chain) === chainFilter;
+  });
+  const paginatedDiscoveries = filteredDiscoveries.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const totalPages = Math.ceil(filteredDiscoveries.length / PAGE_SIZE) || 1;
+  const selectedPaymentChain = selectedPayment ? normalizeDiscoveryChain(selectedPayment.chain) : null;
+  const selectedPaymentConfig = selectedPaymentChain ? getSendChainConfig(selectedPaymentChain) : null;
+  const totalsByChain = discoveries.reduce<Record<TxChain, { count: number; amount: number }>>(
+    (acc, discovery) => {
+      const chain = normalizeDiscoveryChain(discovery.chain);
+      const numericAmount = Number(discovery.amount || "0");
+      acc[chain].count += 1;
+      acc[chain].amount += Number.isFinite(numericAmount) ? numericAmount : 0;
+      return acc;
+    },
+    {
+      ethereum: { count: 0, amount: 0 },
+      arbitrum: { count: 0, amount: 0 },
+      monad: { count: 0, amount: 0 },
+      sui: { count: 0, amount: 0 },
+    },
+  );
 
   useEffect(() => {
     setPage(0);
-  }, [discoveries.length]);
+  }, [discoveries.length, chainFilter]);
 
   useEffect(() => {
     if (selectedPayment && revealedPk) {
+      const selectedChain = normalizeDiscoveryChain(selectedPayment.chain);
       try {
         const pkHex = selectedPayment.eth_private_key.startsWith("0x")
           ? selectedPayment.eth_private_key.slice(2)
@@ -87,7 +138,7 @@ export default function ScanPayments() {
         for (let i = 0; i < pkHex.length; i += 2) {
           bytes[i / 2] = parseInt(pkHex.substring(i, i + 2), 16);
         }
-        if (selectedPayment.chain === "sui") {
+        if (selectedChain === "sui") {
           const keypair = Secp256k1Keypair.fromSecretKey(bytes);
           const derived = keypair.getPublicKey().toSuiAddress();
           const expected = normalizeSuiAddress(selectedPayment.stealth_sui_address);
@@ -223,6 +274,8 @@ export default function ScanPayments() {
     return d.toLocaleDateString();
   };
 
+  const chainFilters: Array<"all" | TxChain> = ["all", "ethereum", "arbitrum", "monad", "sui"];
+
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
@@ -238,7 +291,7 @@ export default function ScanPayments() {
               Scan for Payments
             </HeadingScramble>
             <p className="text-sm text-muted-foreground mt-2">
-              Scan the chain. Claim what&apos;s yours.
+              Discover and claim stealth payments.
             </p>
           </div>
 
@@ -402,35 +455,86 @@ export default function ScanPayments() {
                     <div className="specter-confirm">
                       <Check className="h-3.5 w-3.5" />
                       <span className="specter-confirm-text">
-                        {discoveries.length} stealth payment{discoveries.length !== 1 ? "s" : ""} detected
+                        {filteredDiscoveries.length} stealth payment{filteredDiscoveries.length !== 1 ? "s" : ""} detected
                       </span>
+                    </div>
+                    {discoveries.length > 0 && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {(Object.keys(totalsByChain) as TxChain[])
+                          .filter((chain) => totalsByChain[chain].count > 0)
+                          .map((chain) => {
+                            const cfg = getSendChainConfig(chain);
+                            const total = totalsByChain[chain];
+                            return (
+                              <div
+                                key={chain}
+                                className="rounded-lg border border-white/[0.08] bg-black/25 px-2.5 py-2"
+                              >
+                                <div className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${chainAccentClass(chain)}`}>
+                                  {chainIcon(chain)}
+                                  {cfg.shortLabel}
+                                </div>
+                                <div className="text-xs text-white/70 mt-1">
+                                  {formatCryptoAmount(total.amount.toFixed(6))} {cfg.currencySymbol}
+                                </div>
+                                <div className="text-[10px] text-white/35">{total.count} payment{total.count !== 1 ? "s" : ""}</div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {chainFilters.map((filter) => {
+                        const active = chainFilter === filter;
+                        const label = filter === "all" ? "All" : getSendChainConfig(filter).shortLabel;
+                        return (
+                          <button
+                            key={filter}
+                            type="button"
+                            onClick={() => setChainFilter(filter)}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                              active
+                                ? "border-primary/50 bg-primary/15 text-primary"
+                                : "border-white/10 bg-black/30 text-white/50 hover:bg-white/[0.06] hover:text-white/80"
+                            }`}
+                          >
+                            {filter !== "all" && chainIcon(filter)}
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
                     <div className="space-y-2">
                       {paginatedDiscoveries.map((d) => {
-                        const addr = d.chain === "sui" ? d.stealth_sui_address : d.stealth_address;
+                        const mappedChain = normalizeDiscoveryChain(d.chain);
+                        const addr = mappedChain === "sui" ? d.stealth_sui_address : d.stealth_address;
                         const shortAddr = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr;
-                        const ChainIcon = d.chain === "sui" ? SuiIcon : EthereumIcon;
+                        const chainCfg = getSendChainConfig(mappedChain);
                         return (
                           <div
                             key={`${d.stealth_address}-${d.announcement_id}`}
                             role="button"
                             tabIndex={0}
-                            onClick={() => { analytics.scanPaymentSelected(d.chain as "ethereum" | "sui"); setSelectedPayment(d); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") { analytics.scanPaymentSelected(d.chain as "ethereum" | "sui"); setSelectedPayment(d); } }}
-                            className="p-3 rounded-lg bg-muted/40 border border-border flex items-center gap-3 cursor-pointer hover:bg-muted/60 transition-colors"
+                            onClick={() => { analytics.scanPaymentSelected(mappedChain); setSelectedPayment(d); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { analytics.scanPaymentSelected(mappedChain); setSelectedPayment(d); } }}
+                            className="p-3 rounded-lg bg-black/35 border border-white/[0.08] flex items-center gap-3 cursor-pointer hover:bg-white/[0.04] hover:border-white/[0.14] transition-colors"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                              <ChainIcon className={`h-4 w-4 ${d.chain === "sui" ? "text-[#4DA2FF]" : "text-primary"}`} />
+                            <div className="w-8 h-8 rounded-lg bg-white/[0.05] border border-white/[0.1] flex items-center justify-center shrink-0">
+                              {chainIcon(mappedChain)}
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap text-xs">
                                 <span className="font-mono truncate" title={addr}>
                                   {shortAddr}
                                 </span>
+                                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/55">
+                                  {chainCfg.shortLabel}
+                                </span>
                                 {d.amount !== "" && (
-                                  <span className="font-medium text-foreground shrink-0">
+                                  <span className="font-medium text-foreground shrink-0 inline-flex items-center gap-1">
                                     {formatCryptoAmount(d.amount)}{" "}
-                                    {d.chain === "sui" ? "SUI" : d.channel_id ? "USDC" : "ETH"}
+                                    {d.channel_id ? "USDC" : chainCfg.currencySymbol}
+                                    {chainIcon(mappedChain)}
                                   </span>
                                 )}
                               </div>
@@ -504,34 +608,25 @@ export default function ScanPayments() {
                     <div>
                       <span className="text-xs text-muted-foreground">Chain</span>
                       <div className="flex items-center gap-2 mt-1">
-                        {selectedPayment.chain === "sui" ? (
-                          <>
-                            <SuiIcon size={18} className="text-[#4DA2FF]" />
-                            <span className="font-medium">Sui</span>
-                          </>
-                        ) : (
-                          <>
-                            <EthereumIcon size={18} />
-                            <span className="font-medium">Ethereum</span>
-                          </>
-                        )}
+                        {selectedPaymentChain && chainIcon(selectedPaymentChain)}
+                        <span className="font-medium">{selectedPaymentConfig?.label}</span>
                       </div>
                     </div>
 
                     {/* Address for chain only */}
                     <div>
                       <span className="text-xs text-muted-foreground">
-                        {selectedPayment.chain === "sui" ? "Sui address" : "EVM address"}
+                        {selectedPaymentChain === "sui" ? "Sui address" : "EVM address"}
                       </span>
                       <div className="flex items-center gap-2 flex-wrap mt-1">
                         <code className="text-xs font-mono break-all flex-1 min-w-0">
-                          {selectedPayment.chain === "sui"
+                          {selectedPaymentChain === "sui"
                             ? selectedPayment.stealth_sui_address
                             : selectedPayment.stealth_address}
                         </code>
                         <CopyButton
                           text={
-                            selectedPayment.chain === "sui"
+                            selectedPaymentChain === "sui"
                               ? selectedPayment.stealth_sui_address ?? ""
                               : selectedPayment.stealth_address
                           }
@@ -549,12 +644,9 @@ export default function ScanPayments() {
                       <span className="text-xs text-muted-foreground">Amount</span>
                       <p className="font-medium mt-1">
                         {selectedPayment.amount
-                          ? `${formatCryptoAmount(selectedPayment.amount)} ${selectedPayment.chain === "sui"
-                            ? "SUI"
-                            : selectedPayment.channel_id
-                              ? "USDC"
-                              : "ETH"
-                          }`
+                          ? `${formatCryptoAmount(selectedPayment.amount)} ${
+                              selectedPayment.channel_id ? "USDC" : selectedPaymentConfig?.currencySymbol ?? ""
+                            }`
                           : "—"}
                       </p>
                     </div>
@@ -595,7 +687,7 @@ export default function ScanPayments() {
                     ) : (
                       <div className="space-y-3 p-3 rounded-lg bg-muted/40 border border-border">
                         <code className="text-xs font-mono break-all block bg-background/80 p-2 rounded border overflow-x-auto">
-                          {selectedPayment.chain === "sui" && suiPrivateKeyBech32
+                          {selectedPaymentChain === "sui" && suiPrivateKeyBech32
                             ? suiPrivateKeyBech32
                             : selectedPayment.eth_private_key}
                         </code>
@@ -618,7 +710,7 @@ export default function ScanPayments() {
                         <div className="flex gap-2 flex-wrap">
                           <CopyButton
                             text={
-                              selectedPayment.chain === "sui" && suiPrivateKeyBech32
+                              selectedPaymentChain === "sui" && suiPrivateKeyBech32
                                 ? suiPrivateKeyBech32
                                 : selectedPayment.eth_private_key
                             }

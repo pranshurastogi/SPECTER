@@ -353,6 +353,33 @@
   }
 }
 
+@keyframes blinkCursor {
+  50% {
+    border-right-color: transparent;
+  }
+}
+
+@keyframes typeAndDelete {
+  0%,
+  10% {
+    width: 0;
+  }
+  45%,
+  55% {
+    width: 8.2em;
+  }
+  90%,
+  100% {
+    width: 0;
+  }
+}
+
+.terminal-loader-text {
+  animation:
+    typeAndDelete 2.4s steps(30) infinite,
+    blinkCursor 0.8s step-end infinite;
+}
+
 /* --- Holographic scrolling card feed --- */
 :root {
   --holo-cyan-glow: rgba(0, 191, 255, 0.5);

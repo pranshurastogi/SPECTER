@@ -39,6 +39,7 @@
  */
 
 import type { AnnouncementDto } from "@/lib/api";
+import type { TxChain } from "@/lib/blockchain/sendChains";
 
 const STORAGE_KEY = "specter_pending_payments_v1";
 const MAX_ENTRIES = 25;
@@ -69,7 +70,7 @@ export interface PendingPaymentRecord {
   /** Full announcement DTO; sent as fallback if the server's pending entry expired. */
   announcement: AnnouncementDto;
   /** Chain the user is publishing to (chosen at create or send time). */
-  chain: "ethereum" | "sui";
+  chain: TxChain;
   /** Lifecycle status. */
   status: PendingStatus;
   /** ms since epoch. */
@@ -186,7 +187,7 @@ export function savePending(input: {
   stealth_address: string;
   stealth_sui_address: string;
   announcement: AnnouncementDto;
-  chain: "ethereum" | "sui";
+  chain: TxChain;
 }): PendingPaymentRecord {
   const store = readStore();
   const now = safeNow();
@@ -236,7 +237,7 @@ export function savePending(input: {
  */
 export function markSent(
   payment_id: string,
-  data: { tx_hash: string; chain: "ethereum" | "sui"; amount?: string },
+  data: { tx_hash: string; chain: TxChain; amount?: string },
 ): PendingPaymentRecord | null {
   const store = readStore();
   const rec = store.records[payment_id];

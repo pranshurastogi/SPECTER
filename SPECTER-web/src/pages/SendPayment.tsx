@@ -55,6 +55,7 @@ import {
   ExternalLink,
   ShieldCheck,
   LifeBuoy,
+  X,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
@@ -79,7 +80,7 @@ import {
   SelectValue,
 } from "@/components/ui/base/select";
 import { Label } from "@/components/ui/base/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/base/tabs";
+import { Tabs, TabsContent } from "@/components/ui/base/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -107,7 +108,12 @@ function getRelativeTime(ts: number): string {
 }
 import { validateEnsName, EnsResolverError } from "@/lib/blockchain/ensResolver";
 import { validateSuinsName, SuinsResolverError } from "@/lib/blockchain/suinsResolver";
-import { EthereumIcon, SuiIcon } from "@/components/ui/specialized/chain-icons";
+import {
+  ArbitrumIcon,
+  EthereumIcon,
+  MonadIcon,
+  SuiIcon,
+} from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { Link } from "react-router-dom";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
@@ -134,8 +140,16 @@ import {
   clearPending,
   type PendingPaymentRecord,
 } from "@/lib/pendingPayment";
-import { useTestnet } from "@/lib/blockchain/chainConfig";
 import { analytics } from "@/lib/analytics";
+import {
+  getAvailableSendChains,
+  getExplorerTxUrl,
+  getPublicClientForEvm,
+  getSendChainConfig,
+  getViemChainForEvm,
+  isEvmChain,
+  type EvmTxChain,
+} from "@/lib/blockchain/sendChains";
 
 // Wallet imports
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
@@ -148,9 +162,9 @@ import {
   ConnectModal,
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
-import { publicClient } from "@/lib/blockchain/viemClient";
-import { chain } from "@/lib/blockchain/chainConfig";
 import { parseEther } from "viem";
+import { SendingLoader } from "@/components/ui/sending-loader";
+import { Switch } from "@/components/ui/base/switch";
 
 type SendStep = "input" | "generated" | "published";
 
@@ -182,6 +196,28 @@ interface ConfirmDialogState {
 }
 
 const RECOVERY_FILENAME_PREFIX = "specter-recovery";
+const DISMISSED_PENDING_SESSION_KEY = "specter.send.dismissed.pending.v1";
+
+function readDismissedPendingIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(DISMISSED_PENDING_SESSION_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissedPendingIds(ids: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(DISMISSED_PENDING_SESSION_KEY, JSON.stringify(ids));
+  } catch {
+    // best effort only
+  }
+}
 
 /**
  * Reconstruct the strict subset of `CreateStealthResponse` we need from
@@ -196,6 +232,55 @@ function stealthResultFromPending(rec: PendingPaymentRecord): CreateStealthRespo
     view_tag: rec.announcement.view_tag,
     announcement: rec.announcement,
   };
+}
+
+function getChainIcon(chain: TxChain, size = 14) {
+  const chainCfg = getSendChainConfig(chain);
+  if (chain === "sui") {
+    return <SuiIcon size={size} className={chainCfg.colorClass} />;
+  }
+  if (chain === "arbitrum") {
+    return <ArbitrumIcon size={size} className={chainCfg.colorClass} />;
+  }
+  if (chain === "monad") {
+    return <MonadIcon size={size} className={chainCfg.colorClass} />;
+  }
+  return <EthereumIcon size={size} className={chainCfg.colorClass} />;
+}
+
+function ReceiptConfetti() {
+  const pieces = Array.from({ length: 20 }, (_, i) => i);
+  const colors = ["#a78bfa", "#34d399", "#60a5fa", "#f59e0b", "#f472b6"];
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {pieces.map((piece) => (
+        <motion.span
+          key={piece}
+          initial={{ y: -30, x: `${(piece % 10) * 10}%`, opacity: 0, rotate: 0 }}
+          animate={{
+            y: [0, 100, 180],
+            x: [`${(piece % 10) * 10}%`, `${(piece % 10) * 10 + (piece % 2 === 0 ? 3 : -3)}%`],
+            opacity: [0, 1, 0],
+            rotate: [0, 180, 360],
+          }}
+          transition={{
+            duration: 1.6 + (piece % 4) * 0.2,
+            ease: "easeOut",
+            delay: (piece % 8) * 0.04,
+          }}
+          className="absolute top-0 h-2.5 w-1.5 rounded-sm"
+          style={{ backgroundColor: colors[piece % colors.length] }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function getFundingUrl(chain: TxChain): string {
+  if (chain === "arbitrum") return "https://faucet.quicknode.com/arbitrum/sepolia";
+  if (chain === "monad") return "https://faucet.monad.xyz";
+  if (chain === "sui") return "https://faucet.sui.io/";
+  return "https://faucet.quicknode.com/ethereum/sepolia";
 }
 
 export default function SendPayment() {
@@ -236,12 +321,18 @@ export default function SendPayment() {
   // Recovery banner state (populated on mount + after every status change).
   const [incompletePending, setIncompletePending] = useState<PendingPaymentRecord[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [dismissedPendingIds, setDismissedPendingIds] = useState<string[]>(() => readDismissedPendingIds());
 
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
+  const [isBalanceLoading, setIsBalanceLoading] = useState(false);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   const refreshIncompletePending = useCallback(() => {
     try {
-      setIncompletePending(getActivePending());
+      const dismissed = new Set(readDismissedPendingIds());
+      setDismissedPendingIds(Array.from(dismissed));
+      setIncompletePending(getActivePending().filter((rec) => !dismissed.has(rec.payment_id)));
     } catch {
       setIncompletePending([]);
     }
@@ -261,6 +352,27 @@ export default function SendPayment() {
     [],
   );
 
+  const dismissPendingPrompt = useCallback(
+    (paymentId: string) => {
+      setConfirmDialog({
+        open: true,
+        title: "Dismiss reminder for this session?",
+        description:
+          "This will hide this pending-payment reminder until you open a new browser session. You can still recover it from local storage later.",
+        confirmLabel: "Dismiss for this session",
+        cancelLabel: "Keep reminder",
+        onConfirm: () => {
+          const next = Array.from(new Set([...dismissedPendingIds, paymentId]));
+          writeDismissedPendingIds(next);
+          setDismissedPendingIds(next);
+          setIncompletePending((prev) => prev.filter((p) => p.payment_id !== paymentId));
+          setConfirmDialog(null);
+        },
+      });
+    },
+    [dismissedPendingIds],
+  );
+
   // Wallet hooks
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
   const suiAccount = useCurrentAccount();
@@ -270,6 +382,11 @@ export default function SendPayment() {
 
   const evmConnected = !!primaryWallet;
   const suiConnected = !!suiAccount;
+  const availableSendChains = useMemo(
+    () => getAvailableSendChains(Boolean(stealthResult?.stealth_sui_address)),
+    [stealthResult?.stealth_sui_address],
+  );
+  const publishChainConfig = useMemo(() => getSendChainConfig(publishChain), [publishChain]);
 
   /* ─────────────────────────────────────────────────────────────────────── */
   /* Mount: garbage-collect expired pending + populate recovery banner       */
@@ -282,6 +399,12 @@ export default function SendPayment() {
     }
     refreshIncompletePending();
   }, [refreshIncompletePending]);
+
+  useEffect(() => {
+    if (!availableSendChains.includes(publishChain)) {
+      setPublishChain(availableSendChains[0] ?? "ethereum");
+    }
+  }, [availableSendChains, publishChain]);
 
   /* ─────────────────────────────────────────────────────────────────────── */
   /* Helpers                                                                  */
@@ -300,6 +423,66 @@ export default function SendPayment() {
       activePending?.status === "sent_unpublished"
     );
   }, [publishPhase, activePending]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchBalance = async () => {
+      if (sendMode !== "wallet") return;
+      setBalanceError(null);
+      if (isEvmChain(publishChain)) {
+        if (!primaryWallet?.address) {
+          setWalletBalance(null);
+          return;
+        }
+        try {
+          setIsBalanceLoading(true);
+          const client = getPublicClientForEvm(publishChain);
+          const bal = await client.getBalance({ address: primaryWallet.address as `0x${string}` });
+          if (!cancelled) setWalletBalance((Number(bal) / 1e18).toFixed(6));
+        } catch (err) {
+          if (!cancelled) {
+            setWalletBalance(null);
+            setBalanceError(err instanceof Error ? err.message : "Could not fetch balance");
+          }
+        } finally {
+          if (!cancelled) setIsBalanceLoading(false);
+        }
+        return;
+      }
+
+      if (!suiAccount?.address) {
+        setWalletBalance(null);
+        return;
+      }
+      try {
+        setIsBalanceLoading(true);
+        const bal = await suiClient.getBalance({ owner: suiAccount.address });
+        const amount = Number(bal.totalBalance ?? "0") / 1e9;
+        if (!cancelled) setWalletBalance(amount.toFixed(6));
+      } catch (err) {
+        if (!cancelled) {
+          setWalletBalance(null);
+          setBalanceError(err instanceof Error ? err.message : "Could not fetch balance");
+        }
+      } finally {
+        if (!cancelled) setIsBalanceLoading(false);
+      }
+    };
+
+    void fetchBalance();
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryWallet?.address, publishChain, sendMode, suiAccount?.address, suiClient]);
+
+  const walletAmountNum = Number(walletAmount);
+  const walletBalanceNum = Number(walletBalance ?? 0);
+  const insufficientFunds =
+    sendMode === "wallet" &&
+    Number.isFinite(walletAmountNum) &&
+    walletAmountNum > 0 &&
+    Number.isFinite(walletBalanceNum) &&
+    walletAmountNum > walletBalanceNum;
 
   const resetForm = useCallback(() => {
     setStep("input");
@@ -322,6 +505,9 @@ export default function SendPayment() {
     setPublishPhase("idle");
     setPendingTxHash(null);
     setPendingVerifiedTx(null);
+    setWalletBalance(null);
+    setBalanceError(null);
+    setIsBalanceLoading(false);
     refreshIncompletePending();
   }, [refreshIncompletePending]);
 
@@ -357,6 +543,11 @@ export default function SendPayment() {
   /* ─────────────────────────────────────────────────────────────────────── */
   const resumePending = useCallback(
     (rec: PendingPaymentRecord) => {
+      if (dismissedPendingIds.includes(rec.payment_id)) {
+        const next = dismissedPendingIds.filter((id) => id !== rec.payment_id);
+        writeDismissedPendingIds(next);
+        setDismissedPendingIds(next);
+      }
       const stealth = stealthResultFromPending(rec);
       setStealthResult(stealth);
       setActivePending(rec);
@@ -389,7 +580,7 @@ export default function SendPayment() {
         toast.info(`Resuming payment to ${rec.recipient}.`);
       }
     },
-    [],
+    [dismissedPendingIds],
   );
 
   /* ─────────────────────────────────────────────────────────────────────── */
@@ -599,7 +790,7 @@ export default function SendPayment() {
       const expectedRecipient =
         chainValue === "sui" ? stealth.stealth_sui_address : stealth.stealth_address;
       if (!expectedRecipient) {
-        toast.error(`${chainValue === "sui" ? "Sui" : "Ethereum"} stealth address not available`);
+        toast.error(`${getSendChainConfig(chainValue).label} stealth address not available`);
         return false;
       }
 
@@ -666,8 +857,9 @@ export default function SendPayment() {
         analytics.sendPaymentPublished(chainValue, verified.amountFormatted, origin === "wallet" ? "wallet" : "manual");
         analytics.sendCompleted(chainValue, verified.amountFormatted, origin === "wallet" ? "wallet" : "manual");
         setPublishPhase("published");
+        const publishedChain = getSendChainConfig(chainValue);
         toast.success(
-          `${origin === "wallet" ? "Sent" : "Verified"} ${formatCryptoAmount(verified.amountFormatted)} ${chainValue === "sui" ? "SUI" : "ETH"} – announcement published (#${res.id})`,
+          `${origin === "wallet" ? "Sent" : "Verified"} ${formatCryptoAmount(verified.amountFormatted)} ${publishedChain.currencySymbol} – announcement published (#${res.id})`,
         );
         refreshIncompletePending();
         return true;
@@ -737,6 +929,10 @@ export default function SendPayment() {
       toast.error("Enter a valid amount");
       return;
     }
+    if (insufficientFunds) {
+      toast.error(`Insufficient ${publishChainConfig.currencySymbol} on ${publishChainConfig.label}.`);
+      return;
+    }
 
     analytics.sendWalletSendClicked(publishChain);
     setIsSending(true);
@@ -747,16 +943,49 @@ export default function SendPayment() {
     try {
       let txHashResult: string;
 
-      if (publishChain === "ethereum") {
+      if (isEvmChain(publishChain)) {
         if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
-          toast.error("Connect an Ethereum wallet first");
+          toast.error("Connect an EVM wallet first");
           setIsSending(false);
           setPublishPhase("idle");
           return;
         }
-        const walletClient = await primaryWallet.getWalletClient(chain.id.toString());
+        const evmChain = publishChain as EvmTxChain;
+        const targetChain = getViemChainForEvm(evmChain);
+        const targetChainName = getSendChainConfig(evmChain).label;
+        const walletAny = primaryWallet as unknown as {
+          switchNetwork?: (chainId: number) => Promise<void>;
+          connector?: { switchNetwork?: (args: { networkChainId: number }) => Promise<void> };
+          getWalletClient: (chainId?: string) => Promise<{
+            account?: unknown;
+            sendTransaction: (args: unknown) => Promise<string>;
+            switchChain?: (args: { id: number }) => Promise<void>;
+          } | null>;
+        };
+
+        try {
+          if (walletAny.switchNetwork) {
+            await walletAny.switchNetwork(targetChain.id);
+          } else if (walletAny.connector?.switchNetwork) {
+            await walletAny.connector.switchNetwork({ networkChainId: targetChain.id });
+          } else {
+            const tempClient = await walletAny.getWalletClient();
+            await tempClient?.switchChain?.({ id: targetChain.id });
+          }
+        } catch (switchErr) {
+          const e = switchErr as { code?: number; message?: string };
+          if (e?.code === 4001 || e?.message?.toLowerCase().includes("rejected")) {
+            toast.error(`Network switch to ${targetChainName} was rejected.`);
+            setPublishPhase("idle");
+            setIsSending(false);
+            return;
+          }
+          toast.warning(`Could not auto-switch to ${targetChainName}. Please switch manually and retry.`);
+        }
+
+        const walletClient = await primaryWallet.getWalletClient(targetChain.id.toString());
         if (!walletClient?.account) {
-          toast.error("Could not get wallet");
+          toast.error(`Could not access wallet client for ${targetChainName}`);
           setIsSending(false);
           setPublishPhase("idle");
           return;
@@ -765,12 +994,13 @@ export default function SendPayment() {
           to: stealthResult.stealth_address as `0x${string}`,
           value: parseEther(amt),
           account: walletClient.account,
-          chain,
+          chain: targetChain,
         } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
-        analytics.sendTxSubmitted("ethereum");
+        analytics.sendTxSubmitted(evmChain);
         setPublishPhase("broadcasting");
         setPendingTxHash(txHashResult);
-        await publicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
+        const evmPublicClient = getPublicClientForEvm(evmChain);
+        await evmPublicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
       } else {
         if (!suiAccount) {
           toast.error("Connect a Sui wallet first");
@@ -814,6 +1044,9 @@ export default function SendPayment() {
     }
   }, [
     attemptPublish,
+    insufficientFunds,
+    publishChainConfig.currencySymbol,
+    publishChainConfig.label,
     primaryWallet,
     publishChain,
     publishPhase,
@@ -875,7 +1108,9 @@ export default function SendPayment() {
       case "signing":
         return "Awaiting wallet signature…";
       case "broadcasting":
-        return publishChain === "sui" ? "Waiting for Sui confirmation…" : "Waiting for confirmation…";
+        return publishChain === "sui"
+          ? "Waiting for Sui confirmation…"
+          : `Waiting for ${publishChainConfig.shortLabel} confirmation…`;
       case "publishing":
         return "Publishing announcement…";
       case "sent_unpublished_failure":
@@ -883,7 +1118,7 @@ export default function SendPayment() {
       default:
         return "Send & Publish";
     }
-  }, [publishChain, publishPhase]);
+  }, [publishChain, publishChainConfig.shortLabel, publishPhase]);
 
   const manualButtonLabel = useMemo(() => {
     if (publishPhase === "publishing") return "Publishing announcement…";
@@ -892,6 +1127,14 @@ export default function SendPayment() {
   }, [publishPhase]);
 
   const showStickyFailure = publishPhase === "sent_unpublished_failure";
+  const isWalletBusy =
+    isSending ||
+    isPublishing ||
+    publishPhase === "publishing" ||
+    publishPhase === "broadcasting" ||
+    publishPhase === "signing";
+  const manualLoaderText =
+    publishPhase === "publishing" ? "Publishing announcement..." : "Verifying and publishing...";
 
   const recoveryJsonForActive = useMemo(() => {
     if (!activePending) return null;
@@ -917,7 +1160,7 @@ export default function SendPayment() {
             </HeadingScramble>
             <p className="text-muted-foreground text-sm flex items-center justify-center gap-2">
               <Zap className="h-4 w-4 text-primary/80" />
-              ENS · SuiNS · stealth · private
+              Private payments across supported chains
             </p>
           </motion.div>
 
@@ -958,6 +1201,15 @@ export default function SendPayment() {
                               {rec.recipient}
                             </span>
                             <span className="ml-auto flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => dismissPendingPrompt(rec.payment_id)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-white/35 hover:text-white/70 hover:bg-white/[0.06] transition-colors"
+                                aria-label="Dismiss this reminder"
+                                title="Dismiss this reminder"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -986,10 +1238,28 @@ export default function SendPayment() {
                       </p>
                       <button
                         type="button"
-                        onClick={() => setBannerDismissed(true)}
+                        onClick={() => {
+                          setConfirmDialog({
+                            open: true,
+                            title: "Dismiss all reminders for this session?",
+                            description:
+                              "This hides all incomplete-payment reminders until you open a new browser session.",
+                            confirmLabel: "Dismiss for this session",
+                            cancelLabel: "Keep reminders",
+                            onConfirm: () => {
+                              const ids = incompletePending.map((p) => p.payment_id);
+                              const next = Array.from(new Set([...dismissedPendingIds, ...ids]));
+                              writeDismissedPendingIds(next);
+                              setDismissedPendingIds(next);
+                              setIncompletePending([]);
+                              setBannerDismissed(true);
+                              setConfirmDialog(null);
+                            },
+                          });
+                        }}
                         className="text-[11px] text-white/40 hover:text-white/70 transition-colors"
                       >
-                        Dismiss
+                        Dismiss all
                       </button>
                     </div>
                   </div>
@@ -1257,10 +1527,27 @@ export default function SendPayment() {
                             }
                           }}
                         >
-                          <TabsList className="w-full">
-                            <TabsTrigger value="wallet" className="flex-1">Send from Wallet</TabsTrigger>
-                            <TabsTrigger value="manual" className="flex-1">Manual</TabsTrigger>
-                          </TabsList>
+                          <div className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-4 py-3 flex items-center justify-center gap-3 mb-3">
+                            <span className={`text-xs font-display ${sendMode === "manual" ? "text-white/90" : "text-white/45"}`}>
+                              Manual
+                            </span>
+                            <Switch
+                              checked={sendMode === "wallet"}
+                              onCheckedChange={(checked) => {
+                                const next = checked ? "wallet" : "manual";
+                                setSendMode(next);
+                                analytics.sendTabSwitched(next);
+                                if (next === "manual" && activePending?.status === "sent_unpublished" && activePending.tx_hash) {
+                                  setTxHash(activePending.tx_hash);
+                                  setPublishChain(activePending.chain);
+                                }
+                              }}
+                              aria-label="Toggle send mode"
+                            />
+                            <span className={`text-xs font-display ${sendMode === "wallet" ? "text-white/90" : "text-white/45"}`}>
+                              Send from wallet
+                            </span>
+                          </div>
 
                           {/* ─── Manual Tab ─── */}
                           <TabsContent value="manual">
@@ -1270,35 +1557,31 @@ export default function SendPayment() {
                                 <Select
                                   value={publishChain}
                                   onValueChange={(v) => {
-                                    setPublishChain(v as TxChain);
+                                    const next = v as TxChain;
+                                    setPublishChain(next);
+                                    analytics.sendChainSelected(next);
                                     setVerifyError(null);
                                   }}
                                 >
-                                  <SelectTrigger className="mt-1">
+                                  <SelectTrigger className="mt-1 bg-black/35 border-white/10 text-white">
                                     <SelectValue />
                                   </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="ethereum">
-                                      <span className="flex items-center gap-2">
-                                        <EthereumIcon size={14} />
-                                        Ethereum
-                                      </span>
-                                    </SelectItem>
-                                    {stealthResult.stealth_sui_address && (
-                                      <SelectItem value="sui">
+                                  <SelectContent className="border-white/10 bg-[#090b16]/95 backdrop-blur-xl text-white">
+                                    {availableSendChains.map((c) => (
+                                      <SelectItem key={c} value={c}>
                                         <span className="flex items-center gap-2">
-                                          <SuiIcon size={14} className="text-[#4DA2FF]" />
-                                          Sui
+                                          {getChainIcon(c)}
+                                          {getSendChainConfig(c).label}
                                         </span>
                                       </SelectItem>
-                                    )}
+                                    ))}
                                   </SelectContent>
                                 </Select>
                               </div>
 
                               <div>
                                 <Label className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
-                                  Stealth address (send {publishChain === "sui" ? <SuiIcon size={14} /> : <EthereumIcon size={14} />} here)
+                                  Stealth address (send {getChainIcon(publishChain)} here)
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <button type="button" className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-white/20 text-[9px] text-white/30 hover:text-white/60 hover:border-white/40 transition-colors leading-none">?</button>
@@ -1327,9 +1610,9 @@ export default function SendPayment() {
                                     label="Copy"
                                     variant="outline"
                                     size="sm"
-                                    tooltip={`Copy ${publishChain === "sui" ? "Sui" : "EVM"} stealth address`}
+                                    tooltip={`Copy ${publishChainConfig.shortLabel} stealth address`}
                                     tooltipCopied="Copied!"
-                                    successMessage={`${publishChain === "sui" ? "Sui" : "EVM"} address copied`}
+                                    successMessage={`${publishChainConfig.shortLabel} address copied`}
                                   />
                                 </div>
                               </div>
@@ -1342,7 +1625,7 @@ export default function SendPayment() {
                                   )}
                                 </Label>
                                 <Input
-                                  placeholder={publishChain === "sui" ? "e.g. DFBxP4qNbDPYyXdwwDxUu3MSVXV13g51PwHkWv34VMCv" : "0x..."}
+                                  placeholder={publishChainConfig.txHashPlaceholder}
                                   value={txHash}
                                   onChange={(e) => {
                                     setTxHash(e.target.value);
@@ -1365,15 +1648,14 @@ export default function SendPayment() {
                                 onClick={handleVerifyAndPublish}
                                 disabled={isPublishing || !txHash.trim()}
                               >
-                                {isPublishing ? (
-                                  <>
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                    {publishPhase === "publishing" ? "Publishing announcement…" : "Routing in stealth..."}
-                                  </>
-                                ) : (
-                                  manualButtonLabel
-                                )}
+                                {isPublishing ? "Processing..." : manualButtonLabel}
                               </Button>
+                              {isPublishing && (
+                                <SendingLoader
+                                  text={manualLoaderText}
+                                  className="mx-auto max-w-sm"
+                                />
+                              )}
 
                               <p className="text-xs text-muted-foreground text-center">
                                 Publishing is required for the recipient to discover this payment.
@@ -1389,35 +1671,31 @@ export default function SendPayment() {
                                 <Select
                                   value={publishChain}
                                   onValueChange={(v) => {
-                                    setPublishChain(v as TxChain);
+                                    const next = v as TxChain;
+                                    setPublishChain(next);
+                                    analytics.sendChainSelected(next);
                                     setSendError(null);
                                   }}
                                 >
-                                  <SelectTrigger className="mt-1">
+                                  <SelectTrigger className="mt-1 bg-black/35 border-white/10 text-white">
                                     <SelectValue />
                                   </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="ethereum">
-                                      <span className="flex items-center gap-2">
-                                        <EthereumIcon size={14} />
-                                        Ethereum
-                                      </span>
-                                    </SelectItem>
-                                    {stealthResult.stealth_sui_address && (
-                                      <SelectItem value="sui">
+                                  <SelectContent className="border-white/10 bg-[#090b16]/95 backdrop-blur-xl text-white">
+                                    {availableSendChains.map((c) => (
+                                      <SelectItem key={c} value={c}>
                                         <span className="flex items-center gap-2">
-                                          <SuiIcon size={14} className="text-[#4DA2FF]" />
-                                          Sui
+                                          {getChainIcon(c)}
+                                          {getSendChainConfig(c).label}
                                         </span>
                                       </SelectItem>
-                                    )}
+                                    ))}
                                   </SelectContent>
                                 </Select>
                               </div>
 
                               <div>
                                 <Label className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                                  Amount ({publishChain === "sui" ? <SuiIcon size={14} /> : <EthereumIcon size={14} />})
+                                  Amount ({getChainIcon(publishChain)} {publishChainConfig.currencySymbol})
                                 </Label>
                                 <Input
                                   type="number"
@@ -1432,6 +1710,36 @@ export default function SendPayment() {
                                   }}
                                   className="mt-1 font-mono text-sm"
                                 />
+                                <div className="mt-1.5 text-[11px] text-white/45 flex flex-wrap items-center gap-2">
+                                  <span>
+                                    {isBalanceLoading
+                                      ? "Fetching balance..."
+                                      : walletBalance !== null
+                                        ? `Balance on ${publishChainConfig.label}: ${formatCryptoAmount(walletBalance)} ${publishChainConfig.currencySymbol}`
+                                        : "Connect wallet to view balance"}
+                                  </span>
+                                  {walletAmountNum > 0 && (
+                                    <span className="text-white/60">
+                                      You typed: {formatCryptoAmount(walletAmountNum.toString())} {publishChainConfig.currencySymbol}
+                                    </span>
+                                  )}
+                                </div>
+                                {balanceError && (
+                                  <p className="text-[11px] text-red-300/80 mt-1">{balanceError}</p>
+                                )}
+                                {insufficientFunds && (
+                                  <p className="text-[11px] text-amber-300/90 mt-1">
+                                    Insufficient funds on {publishChainConfig.label}.{" "}
+                                    <a
+                                      href={getFundingUrl(publishChain)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="underline underline-offset-2 hover:text-amber-200"
+                                    >
+                                      Get test funds
+                                    </a>
+                                  </p>
+                                )}
                               </div>
 
                               <div>
@@ -1457,7 +1765,7 @@ export default function SendPayment() {
                                 />
                               </div>
 
-                              {publishChain === "ethereum" ? (
+                              {isEvmChain(publishChain) ? (
                                 <div className="space-y-3">
                                   {evmConnected ? (
                                     <div className="flex items-center justify-between">
@@ -1495,18 +1803,19 @@ export default function SendPayment() {
                                         : handleWalletSend
                                     }
                                     disabled={
-                                      (isSending || isPublishing) || (!evmConnected && publishPhase !== "sent_unpublished_failure")
+                                      (isSending || isPublishing) ||
+                                      (!evmConnected && publishPhase !== "sent_unpublished_failure") ||
+                                      insufficientFunds
                                     }
                                   >
-                                    {isSending || isPublishing || publishPhase === "publishing" || publishPhase === "broadcasting" || publishPhase === "signing" ? (
-                                      <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        {walletButtonLabel}
-                                      </>
-                                    ) : (
-                                      walletButtonLabel
-                                    )}
+                                    {isWalletBusy ? "Processing..." : walletButtonLabel}
                                   </Button>
+                                  {isWalletBusy && (
+                                    <SendingLoader
+                                      text={walletButtonLabel}
+                                      className="mx-auto max-w-sm"
+                                    />
+                                  )}
                                 </div>
                               ) : (
                                 <div className="space-y-3">
@@ -1552,18 +1861,19 @@ export default function SendPayment() {
                                         : handleWalletSend
                                     }
                                     disabled={
-                                      (isSending || isPublishing) || (!suiConnected && publishPhase !== "sent_unpublished_failure")
+                                      (isSending || isPublishing) ||
+                                      (!suiConnected && publishPhase !== "sent_unpublished_failure") ||
+                                      insufficientFunds
                                     }
                                   >
-                                    {isSending || isPublishing || publishPhase === "publishing" || publishPhase === "broadcasting" || publishPhase === "signing" ? (
-                                      <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        {walletButtonLabel}
-                                      </>
-                                    ) : (
-                                      walletButtonLabel
-                                    )}
+                                    {isWalletBusy ? "Processing..." : walletButtonLabel}
                                   </Button>
+                                  {isWalletBusy && (
+                                    <SendingLoader
+                                      text={walletButtonLabel}
+                                      className="mx-auto max-w-sm"
+                                    />
+                                  )}
                                 </div>
                               )}
 
@@ -1580,7 +1890,7 @@ export default function SendPayment() {
                                   <div>
                                     <p className="font-display text-[10px] font-bold tracking-[0.18em] uppercase text-primary/60 mb-1">Zero-Knowledge Route</p>
                                     <p className="text-xs text-white/40">
-                                      Only {resolvedENS.ens_name} can find this payment. Onchain observers see nothing.
+                                      Only {resolvedENS.ens_name} can find this payment. Funds are sent on {publishChainConfig.label}.
                                     </p>
                                   </div>
                                 </div>
@@ -1589,7 +1899,8 @@ export default function SendPayment() {
                           </TabsContent>
                         </Tabs>
                       ) : (
-                        <div className="flex flex-col items-center w-full">
+                        <div className="flex flex-col items-center w-full relative">
+                          <ReceiptConfetti />
                           <AnimatedTicket
                             ticketId={String(announcementId)}
                             amount={verifiedTx ? parseFloat(verifiedTx.amountFormatted) : parseFloat(amount) || 0}
@@ -1597,14 +1908,34 @@ export default function SendPayment() {
                             cardHolder={resolvedENS?.ens_name ?? "Recipient"}
                             last4Digits={stealthResult.stealth_address.replace(/^0x/, "").slice(-4)}
                             barcodeValue={`${announcementId}${stealthResult.stealth_address.slice(2, 14)}`}
-                            currency={verifiedTx?.chain === "sui" ? "SUI" : "ETH"}
+                            currency={getSendChainConfig(verifiedTx?.chain ?? publishChain).currencySymbol}
                           />
+                          <div className="w-full max-w-lg mt-4 rounded-lg border border-white/[0.08] bg-black/35 p-4">
+                            <p className="font-display text-[10px] font-bold tracking-[0.16em] uppercase text-emerald-400/75 mb-3">
+                              Payment published successfully
+                            </p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                              <div className="flex items-center gap-2 text-white/70">
+                                {getChainIcon(verifiedTx?.chain ?? publishChain, 15)}
+                                <span>Chain: {getSendChainConfig(verifiedTx?.chain ?? publishChain).label}</span>
+                              </div>
+                              <div className="text-white/70">
+                                Payment ID: <span className="font-mono">{stealthResult.payment_id.slice(0, 10)}...{stealthResult.payment_id.slice(-6)}</span>
+                              </div>
+                              <div className="text-white/70">
+                                Announcement: <span className="font-mono">#{announcementId}</span>
+                              </div>
+                              <div className="text-white/70">
+                                Tx: <span className="font-mono">{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(0, 10)}...{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(-6)}</span>
+                              </div>
+                            </div>
+                          </div>
                           <div className="flex flex-col gap-3 mt-6 w-full max-w-xs mx-auto">
                             <DownloadJsonButton
                               data={{
                                 stealth_address: stealthResult.stealth_address,
                                 stealth_sui_address: stealthResult.stealth_sui_address,
-                                amount_eth: verifiedTx?.chain === "ethereum" ? verifiedTx.amountFormatted : amount,
+                                amount_evm: verifiedTx && verifiedTx.chain !== "sui" ? verifiedTx.amountFormatted : amount,
                                 amount_sui: verifiedTx?.chain === "sui" ? verifiedTx.amountFormatted : undefined,
                                 announcement_id: announcementId,
                                 payment_id: stealthResult.payment_id,
@@ -1680,14 +2011,8 @@ export default function SendPayment() {
                     >
                       <div className="divide-y divide-white/[0.04]">
                         {paymentHistory.map((tx, i) => {
-                          const isEth = tx.chain === "ethereum";
-                          const explorerBase = isEth
-                            ? useTestnet
-                              ? "https://sepolia.etherscan.io/tx/"
-                              : "https://etherscan.io/tx/"
-                            : useTestnet
-                              ? "https://suiscan.xyz/testnet/tx/"
-                              : "https://suiscan.xyz/mainnet/tx/";
+                          const txChain = getSendChainConfig(tx.chain);
+                          const explorerUrl = getExplorerTxUrl(tx.chain, tx.txHash);
                           const ago = getRelativeTime(tx.timestamp);
                           const isPending = (tx.status ?? "published") === "sent_unpublished";
                           return (
@@ -1696,11 +2021,7 @@ export default function SendPayment() {
                               className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${isPending ? "bg-red-500/[0.04] hover:bg-red-500/[0.07]" : "hover:bg-white/[0.02]"}`}
                             >
                               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.06] shrink-0">
-                                {isEth ? (
-                                  <EthereumIcon size={14} />
-                                ) : (
-                                  <SuiIcon size={14} className="text-[#4DA2FF]" />
-                                )}
+                                {getChainIcon(tx.chain)}
                               </span>
 
                               <div className="flex-1 min-w-0">
@@ -1709,8 +2030,12 @@ export default function SendPayment() {
                                     {tx.recipient}
                                   </span>
                                   <span className="text-[10px] text-white/20">·</span>
-                                  <span className="font-mono text-xs font-medium text-amber-400/80">
-                                    {formatCryptoAmount(tx.amount)} {isEth ? "ETH" : "SUI"}
+                                  <span className="font-mono text-xs font-medium text-amber-400/80 inline-flex items-center gap-1">
+                                    {formatCryptoAmount(tx.amount)} {txChain.currencySymbol}
+                                    {getChainIcon(tx.chain, 12)}
+                                  </span>
+                                  <span className="text-[10px] text-white/25">
+                                    {txChain.shortLabel}
                                   </span>
                                   {isPending ? (
                                     <span className="inline-flex items-center h-4 px-1.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30 text-[9px] font-bold tracking-wider uppercase">
@@ -1726,14 +2051,16 @@ export default function SendPayment() {
                                   <span className="font-mono text-[10px] text-white/25 truncate max-w-[100px]">
                                     {tx.txHash.slice(0, 10)}…{tx.txHash.slice(-6)}
                                   </span>
-                                  <a
-                                    href={`${explorerBase}${tx.txHash}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-amber-400/40 hover:text-amber-400/70 transition-colors"
-                                  >
-                                    <ExternalLink className="h-2.5 w-2.5" />
-                                  </a>
+                                  {explorerUrl && (
+                                    <a
+                                      href={explorerUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-amber-400/40 hover:text-amber-400/70 transition-colors"
+                                    >
+                                      <ExternalLink className="h-2.5 w-2.5" />
+                                    </a>
+                                  )}
                                   {isPending && tx.payment_id && (
                                     <button
                                       type="button"

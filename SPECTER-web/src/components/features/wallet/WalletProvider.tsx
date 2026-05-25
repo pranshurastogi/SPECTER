@@ -6,6 +6,7 @@ import { chain } from '@/lib/blockchain/chainConfig';
 import {
   mainnet,
   sepolia,
+  arbitrumSepolia,
   base,
   baseSepolia,
   polygon,
@@ -15,6 +16,20 @@ import {
 } from 'viem/chains';
 
 const queryClient = new QueryClient();
+
+const monadTestnetConfig = {
+  blockExplorerUrls: ['https://testnet.monadvision.com'],
+  chainId: 10143,
+  chainName: 'Monad Testnet',
+  iconUrls: ['https://testnet.monad.xyz/favicon.ico'],
+  name: 'Monad Testnet',
+  nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
+  networkId: 10143,
+  rpcUrls: [
+    import.meta.env.VITE_MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz',
+  ],
+  vanityName: 'Monad Testnet',
+} as const;
 
 /**
  * Build EVM network config for Dynamic Labs
@@ -75,6 +90,25 @@ const buildEvmNetworks = () => {
     ],
     vanityName: 'Base Sepolia',
   });
+
+  // Arbitrum Sepolia
+  networks.push({
+    blockExplorerUrls: [arbitrumSepolia.blockExplorers.default.url],
+    chainId: arbitrumSepolia.id,
+    chainName: arbitrumSepolia.name,
+    iconUrls: ['https://app.dynamic.xyz/assets/networks/arbitrum.svg'],
+    name: arbitrumSepolia.name,
+    nativeCurrency: arbitrumSepolia.nativeCurrency,
+    networkId: arbitrumSepolia.id,
+    rpcUrls: [
+      import.meta.env.VITE_ARB_SEPOLIA_RPC_URL ||
+        'https://sepolia-rollup.arbitrum.io/rpc',
+    ],
+    vanityName: 'Arbitrum Sepolia',
+  });
+
+  // Monad Testnet (custom chain)
+  networks.push(monadTestnetConfig);
 
   // Polygon Amoy
   networks.push({
