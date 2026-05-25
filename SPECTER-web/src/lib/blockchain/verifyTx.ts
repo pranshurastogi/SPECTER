@@ -4,12 +4,19 @@
  */
 
 import { formatEther } from "viem";
-import { publicClient } from "./viemClient";
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
 import { useTestnet } from "./chainConfig";
+import {
+  getPublicClientForEvm,
+  getSendChainConfig,
+  isEvmChain,
+  type EvmTxChain,
+  type TxChain,
+} from "./sendChains";
 
-export type TxChain = "ethereum" | "sui";
+export type { TxChain } from "./sendChains";
+
 
 export interface VerifiedTx {
   chain: TxChain;
@@ -19,27 +26,30 @@ export interface VerifiedTx {
   success: boolean;
 }
 
-/** Verify an Ethereum transaction: recipient matches and get amount (ETH). */
-export async function verifyEthTx(
+/** Verify an EVM transaction: recipient matches and get amount. */
+export async function verifyEvmTx(
   txHash: string,
+  chain: EvmTxChain,
   expectedRecipient: string
 ): Promise<VerifiedTx> {
+  const chainCfg = getSendChainConfig(chain);
+  const client = getPublicClientForEvm(chain);
   const hash = (txHash.startsWith("0x") ? txHash : `0x${txHash}`) as `0x${string}`;
-  const tx = await publicClient.getTransaction({ hash });
+  const tx = await client.getTransaction({ hash });
   if (!tx) {
-    throw new Error("Transaction not found");
+    throw new Error(`Transaction not found on ${chainCfg.label}`);
   }
   const expected = expectedRecipient.toLowerCase().replace(/^0x/, "");
   const to = tx.to?.toLowerCase().replace(/^0x/, "") ?? "";
   if (to !== expected) {
     throw new Error(
-      `Transaction recipient (${tx.to}) does not match stealth address (${expectedRecipient})`
+      `Transaction recipient (${tx.to}) does not match stealth address (${expectedRecipient}) on ${chainCfg.label}`
     );
   }
   const valueWei = tx.value ?? 0n;
   const amountFormatted = formatEther(valueWei);
   return {
-    chain: "ethereum",
+    chain,
     amount: valueWei.toString(),
     amountFormatted,
     txHash: hash,
@@ -235,8 +245,8 @@ export async function verifyTx(
   chain: TxChain,
   expectedRecipient: string
 ): Promise<VerifiedTx> {
-  if (chain === "ethereum") {
-    return verifyEthTx(txHash, expectedRecipient);
+  if (isEvmChain(chain)) {
+    return verifyEvmTx(txHash, chain, expectedRecipient);
   }
   return verifySuiTx(txHash, expectedRecipient);
 }

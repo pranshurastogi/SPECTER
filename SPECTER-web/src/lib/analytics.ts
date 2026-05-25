@@ -29,6 +29,7 @@ export function trackPageView(pagePath: string, pageTitle: string) {
 // ── Generic escape hatch ─────────────────────────────────────────────────────
 
 type EventParams = Record<string, string | number | boolean | undefined>;
+type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui";
 
 export function trackEvent(eventName: string, params?: EventParams) {
   gtag("event", eventName, { send_to: GA_ID, ...params });
@@ -98,28 +99,28 @@ export const analytics = {
   sendResolveError(errorCode: string, nameType: "ens" | "sui" | "meta_address") {
     trackEvent("send_resolve_error", { error_code: errorCode, name_type: nameType });
   },
-  sendStealthGenerated(chain: "ethereum" | "sui") {
+  sendStealthGenerated(chain: AnalyticsChain) {
     trackEvent("send_stealth_generated", { chain });
   },
   sendTabSwitched(tab: "wallet" | "manual") {
     trackEvent("send_tab_switched", { tab });
   },
-  sendChainSelected(chain: "ethereum" | "sui") {
+  sendChainSelected(chain: AnalyticsChain) {
     trackEvent("send_chain_selected", { chain });
   },
-  sendWalletSendClicked(chain: "ethereum" | "sui") {
+  sendWalletSendClicked(chain: AnalyticsChain) {
     trackEvent("send_wallet_send_clicked", { chain });
   },
-  sendTxSubmitted(chain: "ethereum" | "sui") {
+  sendTxSubmitted(chain: AnalyticsChain) {
     trackEvent("send_tx_submitted", { chain });
   },
-  sendPaymentPublished(chain: "ethereum" | "sui", amount: string, method: "wallet" | "manual") {
+  sendPaymentPublished(chain: AnalyticsChain, amount: string, method: "wallet" | "manual") {
     trackEvent("send_payment_published", { chain, amount, method });
   },
   sendManualPublishClicked() {
     trackEvent("send_manual_publish_clicked");
   },
-  sendCompleted(chain: "ethereum" | "sui", amount: string, method: "wallet" | "manual") {
+  sendCompleted(chain: AnalyticsChain, amount: string, method: "wallet" | "manual") {
     trackEvent("send_completed", { chain, amount, method });
   },
   sendRecentRecipientClicked() {
@@ -149,7 +150,7 @@ export const analytics = {
   scanError(message: string) {
     trackEvent("scan_error", { error_message: message.slice(0, 100) });
   },
-  scanPaymentSelected(chain: "ethereum" | "sui") {
+  scanPaymentSelected(chain: AnalyticsChain) {
     trackEvent("scan_payment_selected", { chain });
   },
   scanPrivateKeyRevealed() {
@@ -158,10 +159,10 @@ export const analytics = {
 
   // ── Wallet ──────────────────────────────────────────────────────────────────
 
-  walletConnectClicked(chain: "ethereum" | "sui") {
+  walletConnectClicked(chain: AnalyticsChain) {
     trackEvent("wallet_connect_clicked", { chain });
   },
-  walletDisconnectClicked(chain: "ethereum" | "sui") {
+  walletDisconnectClicked(chain: AnalyticsChain) {
     trackEvent("wallet_disconnect_clicked", { chain });
   },
 

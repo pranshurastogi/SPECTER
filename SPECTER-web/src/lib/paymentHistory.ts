@@ -13,6 +13,8 @@
  * normalised to `published` on read so older sessions render correctly.
  */
 
+import type { TxChain } from "@/lib/blockchain/sendChains";
+
 const STORAGE_KEY = "specter_payment_history";
 const MAX_ENTRIES = 10;
 
@@ -20,7 +22,7 @@ export type PaymentHistoryStatus = "sent_unpublished" | "published";
 
 export interface PaymentEntry {
   recipient: string;
-  chain: "ethereum" | "sui";
+  chain: TxChain;
   amount: string;
   txHash: string;
   announcementId: number | null;
