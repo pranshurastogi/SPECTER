@@ -93,7 +93,7 @@ export interface HealthResponse {
   version: string;
   uptime_seconds: number;
   announcements_count: number;
-  /** When true, backend uses Sepolia ENS */
+  /** When true, backend uses testnet for SuiNS (ENS is always mainnet) */
   use_testnet?: boolean;
 }
 

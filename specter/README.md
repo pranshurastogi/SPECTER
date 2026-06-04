@@ -118,11 +118,32 @@ A background task in `specter-api::lib::ApiServer::run` periodically prunes expi
 
 ---
 
+## Deploy on Railway
+
+The API runs on Railway via Docker; **Turso stays on [Turso Cloud](https://turso.tech)** and is wired in with env vars (not a second Railway service).
+
+1. Create a Railway project with **root directory** = `specter/` (where `Dockerfile` and `railway.json` live).
+2. Copy variables from [`.env.railway.example`](.env.railway.example) into **Variables** (mark `TURSO_AUTH_TOKEN`, Pinata, and `API_KEY` as secrets).
+3. Set `REGISTRY_BACKEND=turso`, `TURSO_DATABASE_URL`, and `TURSO_AUTH_TOKEN` from your Turso dashboard (`turso db show <name>`).
+4. Set `ALLOWED_ORIGINS` to your frontend URL(s).
+5. Deploy — `railway.json` uses the Dockerfile, health check `GET /health`, and listens on Railway’s `PORT`.
+
+```bash
+cd specter
+railway link
+railway up
+```
+
+Point the frontend at `https://<your-service>.up.railway.app` via `VITE_API_BASE_URL`.
+
+---
+
 ## Configuration
 
 | Variable                  | Required        | Default          | Description                                  |
 |---------------------------|-----------------|------------------|----------------------------------------------|
-| `ETH_RPC_URL`             | ✅              | —                | Ethereum mainnet RPC                          |
+| `ENS_RPC_URL`             | optional        | publicnode mainnet | Ethereum mainnet RPC for ENS (always mainnet) |
+| `ETH_RPC_URL`             | optional        | —                | Legacy; Yellow may use `ALCHEMY_RPC_URL`      |
 | `ETH_RPC_URL_SEPOLIA`     | optional        | —                | Sepolia RPC (used when `USE_TESTNET=true`)    |
 | `SUI_RPC_URL`             | optional        | public mainnet   | Sui JSON-RPC                                  |
 | `PINATA_JWT`              | ✅ (uploads)    | —                | Pinata JWT for IPFS POST                      |
