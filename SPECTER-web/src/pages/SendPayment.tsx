@@ -37,6 +37,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/base/button";
+import { parseBlockchainError, formatErrorMessage } from "@/lib/blockchain/errorParser";
 import { SearchBar } from "@/components/ui/specialized/search-bar";
 import {
   Check,
@@ -1028,10 +1029,12 @@ export default function SendPayment() {
         origin: "wallet",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Transaction failed";
+      const parsed = parseBlockchainError(err);
+      const message = formatErrorMessage(parsed);
       setSendError(message);
-      // If we never broadcast (signing rejected) → idle again.
-      if (publishPhase === "signing") {
+      
+      // If user rejected or signing failed → return to idle (no funds at risk)
+      if (publishPhase === "signing" || parsed.title === "Transaction cancelled") {
         setPublishPhase("idle");
       } else {
         // Broadcast happened, on-chain confirmation failed → conservatively

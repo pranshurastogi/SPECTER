@@ -345,7 +345,7 @@ pub struct HealthResponse {
     pub uptime_seconds: u64,
     /// Total announcements in registry
     pub announcements_count: u64,
-    /// When true, backend uses Sepolia ENS
+    /// When true, backend uses testnet for SuiNS (ENS is always mainnet)
     pub use_testnet: bool,
 }
 

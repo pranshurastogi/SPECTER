@@ -39,10 +39,12 @@ import { formatCryptoAmount } from "@/lib/utils";
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
 import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
-import { listVaultEntries, getEntryUnlockMethod, type VaultEntry, type DecryptedKeys } from "@/lib/crypto/keyVault";
+import { listVaultEntries, getEntryUnlockMethod, hasStoredKeys, type VaultEntry, type DecryptedKeys } from "@/lib/crypto/keyVault";
 import { Fingerprint } from "lucide-react";
 import { analytics } from "@/lib/analytics";
 import { getSendChainConfig, type TxChain } from "@/lib/blockchain/sendChains";
+import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialog";
+import { HardDrive } from "lucide-react";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 
@@ -50,6 +52,8 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
+  viewing_pk: string;
+  meta_address: string;
 }
 
 function normalizeDiscoveryChain(chain: string): TxChain {
@@ -78,6 +82,8 @@ export default function ScanPayments() {
   const [scanState, setScanState] = useState<ScanState>("idle");
   const [keys, setKeys] = useState<KeysFromFile | null>(null);
   const [keysPaste, setKeysPaste] = useState("");
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [savePromptDismissed, setSavePromptDismissed] = useState(false);
 
   // Quick unlock & scan state
   const [vaultEntries] = useState<VaultEntry[]>(() => {
@@ -174,6 +180,8 @@ export default function ScanPayments() {
         const viewing_sk = typeof data.viewing_sk === "string" ? data.viewing_sk : "";
         const spending_pk = typeof data.spending_pk === "string" ? data.spending_pk : "";
         const spending_sk = typeof data.spending_sk === "string" ? data.spending_sk : "";
+        const viewing_pk = typeof data.viewing_pk === "string" ? data.viewing_pk : "";
+        const meta_address = typeof data.meta_address === "string" ? data.meta_address : "";
         if (!viewing_sk || !spending_pk || !spending_sk) {
           setLoadError("Keys file must contain viewing_sk, spending_pk, spending_sk");
           setKeys(null);
@@ -183,8 +191,11 @@ export default function ScanPayments() {
           viewing_sk,
           spending_pk,
           spending_sk,
+          viewing_pk,
+          meta_address,
         });
         setKeysPaste("");
+        setSavePromptDismissed(false);
         analytics.scanKeysLoadedFromFile();
         toast.success("Keys loaded");
       } catch {
@@ -202,12 +213,15 @@ export default function ScanPayments() {
       const viewing_sk = typeof data.viewing_sk === "string" ? data.viewing_sk : "";
       const spending_pk = typeof data.spending_pk === "string" ? data.spending_pk : "";
       const spending_sk = typeof data.spending_sk === "string" ? data.spending_sk : "";
+      const viewing_pk = typeof data.viewing_pk === "string" ? data.viewing_pk : "";
+      const meta_address = typeof data.meta_address === "string" ? data.meta_address : "";
       if (!viewing_sk || !spending_pk || !spending_sk) {
         setLoadError("Pasted JSON must contain viewing_sk, spending_pk, spending_sk");
         setKeys(null);
         return;
       }
-      setKeys({ viewing_sk, spending_pk, spending_sk });
+      setKeys({ viewing_sk, spending_pk, spending_sk, viewing_pk, meta_address });
+      setSavePromptDismissed(false);
       analytics.scanKeysLoadedFromPaste();
       toast.success("Keys loaded");
     } catch {
@@ -257,6 +271,8 @@ export default function ScanPayments() {
       viewing_sk: dk.viewing_sk,
       spending_pk: dk.spending_pk,
       spending_sk: dk.spending_sk,
+      viewing_pk: dk.viewing_pk,
+      meta_address: dk.meta_address,
     };
     setKeys(k);
     analytics.scanKeysLoadedFromVault();
@@ -363,9 +379,12 @@ export default function ScanPayments() {
                     viewing_sk: dk.viewing_sk,
                     spending_pk: dk.spending_pk,
                     spending_sk: dk.spending_sk,
+                    viewing_pk: dk.viewing_pk,
+                    meta_address: dk.meta_address,
                   });
                   setKeysPaste("");
                   setLoadError(null);
+                  setSavePromptDismissed(true); // Already from vault, no need to prompt
                 }}
               />
 
@@ -419,6 +438,48 @@ export default function ScanPayments() {
                   <span className="specter-confirm-text">Keys loaded — ready to scan</span>
                 </div>
               )}
+
+              {/* Save to device prompt - only show if keys loaded from file/paste and not dismissed */}
+              {keys && !savePromptDismissed && keys.viewing_pk && keys.meta_address && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mt-4 p-3 rounded-lg border border-primary/20 bg-primary/5"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <HardDrive className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground mb-1">
+                        Save keys locally?
+                      </p>
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Encrypt and store on this device for quick access next time.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowSaveDialog(true)}
+                          className="text-xs h-7"
+                        >
+                          <HardDrive className="h-3 w-3 mr-1.5" />
+                          Save now
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSavePromptDismissed(true)}
+                          className="text-xs h-7 text-muted-foreground"
+                        >
+                          Skip
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               {loadError && (
                 <div className="mt-3 flex items-center gap-2 text-sm text-destructive">
                   <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -438,6 +499,24 @@ export default function ScanPayments() {
                   Start scan
                 </Button>
               </div>
+
+              {/* SaveToDeviceDialog */}
+              {keys && keys.viewing_pk && keys.meta_address && (
+                <SaveToDeviceDialog
+                  open={showSaveDialog}
+                  onOpenChange={setShowSaveDialog}
+                  keys={{
+                    spending_pk: keys.spending_pk,
+                    spending_sk: keys.spending_sk,
+                    viewing_pk: keys.viewing_pk,
+                    viewing_sk: keys.viewing_sk,
+                    meta_address: keys.meta_address,
+                  }}
+                  onSaved={() => {
+                    setSavePromptDismissed(true);
+                  }}
+                />
+              )}
 
               {scanState === "scanning" && (
                 <CoreSpinLoader />

@@ -3,10 +3,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { isEthereumWallet } from "@dynamic-labs/ethereum";
 import { useQuery } from "@tanstack/react-query";
-import { publicClient } from "@/lib/blockchain/viemClient";
-import { chain, useTestnet } from "@/lib/blockchain/chainConfig";
+import { getEnsNameForAddress } from "@/lib/blockchain/ensLookup";
+import { ENS_APP_URL, ENS_CHAIN_ID, ensAppProfileUrl, ensPublicClient } from "@/lib/blockchain/ensConfig";
+import { useTestnet } from "@/lib/blockchain/chainConfig";
 import { setEnsTextRecord } from "@/lib/blockchain/ensSetText";
 import { setSuinsContentHash } from "@/lib/blockchain/suinsSetContent";
+import { parseBlockchainError, formatErrorMessage } from "@/lib/blockchain/errorParser";
 import {
   useCurrentAccount,
   useDisconnectWallet,
@@ -61,6 +63,7 @@ import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialo
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { listVaultEntries, getEntryUnlockMethod, type VaultEntry } from "@/lib/crypto/keyVault";
 import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
+import { NetworkPrompt, ErrorCard } from "@/components/ui/specialized/network-prompt";
 
 type SetupStep = 1 | 2 | 3 | 4;
 type EnsMode = "select" | "keep" | "attach-new";
@@ -72,13 +75,11 @@ function EnsExistingRecordPanel({
   onConfirmKeep,
   onSwitchToReplace,
   onBack,
-  useTestnet,
 }: {
   existingRecord: ResolveEnsResponse;
   onConfirmKeep: () => void;
   onSwitchToReplace: () => void;
   onBack: () => void;
-  useTestnet: boolean;
 }) {
   const [verifyStep, setVerifyStep] = useState<VerifyStep>("pick-method");
   const [result, setResult] = useState<"match" | "mismatch" | null>(null);
@@ -122,11 +123,7 @@ function EnsExistingRecordPanel({
           </code>
         </div>
         <a
-          href={
-            useTestnet
-              ? `https://sepolia.app.ens.domains/${encodeURIComponent(existingRecord.ens_name)}`
-              : `https://app.ens.domains/${encodeURIComponent(existingRecord.ens_name)}`
-          }
+          href={ensAppProfileUrl(existingRecord.ens_name)}
           target="_blank"
           rel="noopener noreferrer"
           className="shrink-0 text-xs text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5"
@@ -338,10 +335,50 @@ export default function GenerateKeys() {
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
   const evmAddress = primaryWallet?.address as `0x${string}` | undefined;
   const evmConnected = !!primaryWallet;
+  
+  // Check if wallet is on mainnet (ENS requires Ethereum mainnet)
+  const [isOnMainnet, setIsOnMainnet] = useState(true); // Default optimistic
+  
+  useEffect(() => {
+    if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
+      setIsOnMainnet(true);
+      return;
+    }
+    
+    const checkNetwork = async () => {
+      try {
+        const chainId = await primaryWallet.connector?.getNetwork();
+        setIsOnMainnet(chainId === ENS_CHAIN_ID || chainId === '1' || chainId === 1);
+      } catch {
+        setIsOnMainnet(true); // Optimistic on error
+      }
+    };
+    
+    checkNetwork();
+    
+    // Listen for network changes
+    const interval = setInterval(checkNetwork, 2000);
+    return () => clearInterval(interval);
+  }, [primaryWallet, evmAddress]);
+  
+  // Switch network handler
+  const handleSwitchToMainnet = async () => {
+    if (!primaryWallet || !isEthereumWallet(primaryWallet)) return;
+    try {
+      await primaryWallet.connector?.switchNetwork({ networkChainId: ENS_CHAIN_ID });
+      // Force recheck after switch
+      setTimeout(() => {
+        setIsOnMainnet(true);
+      }, 500);
+    } catch (err) {
+      const parsed = parseBlockchainError(err);
+      toast.error(formatErrorMessage(parsed));
+    }
+  };
 
   const { data: primaryEnsName, isLoading: fetchingEns } = useQuery({
-    queryKey: ["ens-name-from-address", evmAddress],
-    queryFn: () => publicClient.getEnsName({ address: evmAddress! }),
+    queryKey: ["ens-name-from-address", "v2-mainnet", evmAddress],
+    queryFn: () => getEnsNameForAddress(evmAddress!),
     enabled: !!evmAddress,
     staleTime: 2 * 60 * 1000,
   });
@@ -431,8 +468,8 @@ export default function GenerateKeys() {
       });
       const textRecordValue = res.text_record; // ipfs://<CID>
 
-      // 2. Sign tx to set ENS text record
-      const walletClient = await primaryWallet.getWalletClient(chain.id.toString());
+      // 2. Sign tx on Ethereum mainnet to set ENS text record
+      const walletClient = await primaryWallet.getWalletClient(ENS_CHAIN_ID.toString());
       const account = walletClient?.account;
       if (!walletClient || !account?.address) {
         toast.error("Could not get wallet. Please try again.");
@@ -442,7 +479,7 @@ export default function GenerateKeys() {
         ensName,
         value: textRecordValue,
         walletClient,
-        publicClient,
+        publicClient: ensPublicClient,
         account: account.address,
       });
 
@@ -450,7 +487,7 @@ export default function GenerateKeys() {
       toast.info("Transaction submitted. Waiting for confirmation…");
 
       // 3. Wait for tx confirmation
-      await publicClient.waitForTransactionReceipt({ hash: txHash });
+      await ensPublicClient.waitForTransactionReceipt({ hash: txHash });
 
       setEnsUploadResult({ cid: res.cid, text_record: textRecordValue, ensName });
       setEnsTxHash(null);
@@ -458,20 +495,20 @@ export default function GenerateKeys() {
       analytics.setupEnsAttached(ensName);
       toast.success("Meta address attached to ENS.");
     } catch (err: unknown) {
-      const anyErr = err as { name?: string; code?: string } | ApiError | Error | unknown;
-
-      let message: string;
-      if ((anyErr as { name?: string }).name === "ChainMismatchError" || (anyErr as { code?: string }).code === "CHAIN_MISMATCH") {
-        message = `Wrong network selected in wallet. Please switch your wallet to ${chain.name} (chain id ${chain.id}) and try again.`;
-      } else if (anyErr instanceof ApiError) {
-        message = anyErr.message;
-      } else if (anyErr instanceof Error) {
-        message = anyErr.message || "Attach failed";
+      // Handle API errors separately
+      if (err instanceof ApiError) {
+        toast.error(err.message);
       } else {
-        message = "Attach failed";
+        // Parse blockchain/wallet errors into user-friendly messages
+        const parsed = parseBlockchainError(err);
+        
+        // Special case: chain mismatch for ENS (always needs mainnet)
+        if (parsed.title === 'Wrong network') {
+          toast.error(`Wrong network: Please switch your wallet to Ethereum Mainnet and try again.`);
+        } else {
+          toast.error(formatErrorMessage(parsed));
+        }
       }
-
-      toast.error(message);
       setEnsTxHash(null);
     } finally {
       setEnsUploading(false);
@@ -530,8 +567,12 @@ export default function GenerateKeys() {
       analytics.setupSuinsAttached(primarySuiName);
       toast.success("Meta address attached to SuiNS.");
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Attach failed";
-      toast.error(message);
+      if (err instanceof ApiError) {
+        toast.error(err.message);
+      } else {
+        const parsed = parseBlockchainError(err);
+        toast.error(formatErrorMessage(parsed));
+      }
       setSuinsTxDigest(null);
     } finally {
       setSuinsUploading(false);
@@ -855,6 +896,15 @@ export default function GenerateKeys() {
                             </span>
                             <span className="text-xs text-muted-foreground tracking-wide">Fetching ENS name…</span>
                           </div>
+                        ) : !isOnMainnet && evmConnected ? (
+                          /* ── Wallet connected but on wrong network ── */
+                          <NetworkPrompt
+                            title="Switch to Mainnet"
+                            description="ENS names live on Ethereum Mainnet. Please switch your wallet to continue."
+                            networkName="Ethereum Mainnet"
+                            onSwitchNetwork={handleSwitchToMainnet}
+                            canAutoSwitch={true}
+                          />
                         ) : primaryEnsName ? (
                           <div className="space-y-3">
                             {/* ENS name chip — shown when no existing record (fresh attach) or after step is complete.
@@ -874,7 +924,7 @@ export default function GenerateKeys() {
                                 </div>
                                 <Button variant="outline" size="sm" className="w-full" asChild>
                                   <a
-                                    href={useTestnet ? `https://sepolia.app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}` : `https://app.ens.domains/${encodeURIComponent(ensUploadResult.ensName)}`}
+                                    href={ensAppProfileUrl(ensUploadResult.ensName)}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center gap-1.5"
@@ -1018,7 +1068,6 @@ export default function GenerateKeys() {
                               ) : ensMode === "keep" ? (
                                 <EnsExistingRecordPanel
                                   existingRecord={existingEnsRecord}
-                                  useTestnet={useTestnet}
                                   onConfirmKeep={() => {
                                     setEnsUploadResult({
                                       cid: existingEnsRecord.ipfs_cid ?? "",
@@ -1035,13 +1084,11 @@ export default function GenerateKeys() {
                               ) : (
                                 /* attach-new / overwrite */
                                 <div className="space-y-2">
-                                  <div className="flex gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
-                                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                                      This overwrites the existing record on{" "}
-                                      <span className="font-mono font-medium">{primaryEnsName}</span>.
-                                    </p>
-                                  </div>
+                                  <ErrorCard
+                                    title="Warning"
+                                    message={`This will overwrite the existing SPECTER record on ${primaryEnsName}.`}
+                                    variant="warning"
+                                  />
                                   {ensTxHash ? (
                                     <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
                                       <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -1081,14 +1128,6 @@ export default function GenerateKeys() {
                             ) : (
                               /* ── No prior record (or check error — show attach) ── */
                               <div className="space-y-2">
-                                {existingEnsCheckError && !isNoRecordError && (
-                                  <div className="flex gap-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
-                                    <p className="text-xs text-amber-700 dark:text-amber-300">
-                                      Could not check for existing record. You can still attach below.
-                                    </p>
-                                  </div>
-                                )}
                                 {ensTxHash ? (
                                   <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -1100,11 +1139,16 @@ export default function GenerateKeys() {
                                       variant="quantum"
                                       size="default"
                                       onClick={handleAttachToEns}
-                                      disabled={ensUploading}
+                                      disabled={ensUploading || !isOnMainnet}
                                       className="w-full"
                                     >
                                       {ensUploading ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : !isOnMainnet ? (
+                                        <>
+                                          <AlertCircle className="h-4 w-4 mr-2" />
+                                          Switch to Mainnet First
+                                        </>
                                       ) : (
                                         <>
                                           <Upload className="h-4 w-4 mr-2" />
@@ -1140,7 +1184,7 @@ export default function GenerateKeys() {
                                   This wallet has no ENS name. You need one so senders can reach you via a human‑readable identifier like <span className="font-mono text-amber-400/70">yourname.eth</span>.
                                 </p>
                                 <a
-                                  href={useTestnet ? "https://sepolia.app.ens.domains/" : "https://app.ens.domains/"}
+                                  href={ENS_APP_URL}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="group flex items-center justify-center gap-2 w-full rounded-lg border border-amber-500/25 bg-amber-500/[0.08] hover:bg-amber-500/[0.14] px-4 py-2.5 text-sm font-medium text-amber-300 transition-all duration-200 hover:border-amber-500/40 hover:shadow-[0_0_16px_rgba(251,191,36,0.12)]"
@@ -1150,7 +1194,7 @@ export default function GenerateKeys() {
                                   <ExternalLink className="h-3 w-3 text-amber-400/50 group-hover:text-amber-400/80 transition-colors" />
                                 </a>
                                 <p className="text-[11px] text-white/25 text-center">
-                                  {useTestnet ? "Sepolia testnet" : "Ethereum mainnet"} · reconnect once you have a name
+                                  Ethereum mainnet · reconnect once you have a name
                                 </p>
                               </div>
                             </div>
