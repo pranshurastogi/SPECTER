@@ -43,6 +43,9 @@ pub struct Announcement {
     /// Optional: Chain identifier (e.g. "ethereum", "sui")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
+    /// Optional: Stealth address derived from ephemeral key (for validation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stealth_address: Option<String>,
 }
 
 impl Announcement {
@@ -58,6 +61,7 @@ impl Announcement {
             tx_hash: None,
             amount: None,
             chain: None,
+            stealth_address: None,
         }
     }
 
@@ -73,6 +77,7 @@ impl Announcement {
             tx_hash: None,
             amount: None,
             chain: None,
+            stealth_address: None,
         }
     }
 
@@ -168,6 +173,7 @@ impl Announcement {
             tx_hash: None,
             amount: None,
             chain: None,
+            stealth_address: None,
         };
 
         announcement.validate()?;
@@ -194,6 +200,7 @@ pub struct AnnouncementBuilder {
     tx_hash: Option<String>,
     amount: Option<String>,
     chain: Option<String>,
+    stealth_address: Option<String>,
 }
 
 impl AnnouncementBuilder {
@@ -250,6 +257,12 @@ impl AnnouncementBuilder {
         self
     }
 
+    /// Sets the stealth address (optional, for validation purposes).
+    pub fn stealth_address(mut self, addr: impl Into<String>) -> Self {
+        self.stealth_address = Some(addr.into());
+        self
+    }
+
     /// Builds the announcement.
     pub fn build(self) -> Result<Announcement> {
         let ephemeral_key = self
@@ -270,6 +283,7 @@ impl AnnouncementBuilder {
         announcement.tx_hash = self.tx_hash;
         announcement.amount = self.amount;
         announcement.chain = self.chain;
+        announcement.stealth_address = self.stealth_address;
 
         announcement.validate()?;
         Ok(announcement)
@@ -432,5 +446,88 @@ mod tests {
         assert_eq!(stats.total_count, 3);
         assert_eq!(stats.view_tag_distribution[0x42], 2);
         assert_eq!(stats.view_tag_distribution[0x00], 1);
+    }
+
+    #[test]
+    fn test_announcement_stealth_address_default_none() {
+        let ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
+        assert!(ann.stealth_address.is_none());
+    }
+
+    #[test]
+    fn test_announcement_builder_with_stealth_address() {
+        let stealth_addr = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+        let ann = AnnouncementBuilder::new()
+            .ephemeral_key(make_valid_ephemeral_key())
+            .view_tag(0x42)
+            .stealth_address(stealth_addr)
+            .build()
+            .unwrap();
+
+        assert_eq!(ann.stealth_address, Some(stealth_addr.to_string()));
+        assert_eq!(ann.view_tag, 0x42);
+    }
+
+    #[test]
+    fn test_announcement_builder_stealth_address_chaining() {
+        let ann = AnnouncementBuilder::new()
+            .ephemeral_key(make_valid_ephemeral_key())
+            .view_tag(0xFF)
+            .amount("1.5")
+            .stealth_address("0xabcd")
+            .channel_id([0xEE; 32])
+            .build()
+            .unwrap();
+
+        assert_eq!(ann.stealth_address, Some("0xabcd".to_string()));
+        assert_eq!(ann.amount, Some("1.5".to_string()));
+        assert!(ann.channel_id.is_some());
+    }
+
+    #[test]
+    fn test_announcement_stealth_address_serialization() {
+        let stealth_addr = "0x1234567890abcdef";
+        let ann = AnnouncementBuilder::new()
+            .ephemeral_key(make_valid_ephemeral_key())
+            .view_tag(0x42)
+            .stealth_address(stealth_addr)
+            .build()
+            .unwrap();
+
+        let json = serde_json::to_string(&ann).unwrap();
+        assert!(json.contains("stealth_address"));
+        assert!(json.contains("0x1234567890abcdef"));
+
+        let ann_deserialized: Announcement = serde_json::from_str(&json).unwrap();
+        assert_eq!(ann_deserialized.stealth_address, Some(stealth_addr.to_string()));
+    }
+
+    #[test]
+    fn test_announcement_stealth_address_skipped_when_none() {
+        let ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
+        let json = serde_json::to_string(&ann).unwrap();
+        
+        // stealth_address should not be serialized when None due to skip_serializing_if
+        assert!(!json.contains("stealth_address"));
+    }
+
+    #[test]
+    fn test_announcement_binary_format_unchanged() {
+        // Verify that to_bytes/from_bytes doesn't include stealth_address
+        let ann = AnnouncementBuilder::new()
+            .ephemeral_key(make_valid_ephemeral_key())
+            .view_tag(0x42)
+            .stealth_address("0xabcd")
+            .build()
+            .unwrap();
+
+        let bytes = ann.to_bytes();
+        let ann2 = Announcement::from_bytes(&bytes).unwrap();
+
+        // stealth_address should not be preserved in binary format
+        assert!(ann2.stealth_address.is_none());
+        // but ephemeral_key and view_tag should be
+        assert_eq!(ann2.ephemeral_key, ann.ephemeral_key);
+        assert_eq!(ann2.view_tag, ann.view_tag);
     }
 }
