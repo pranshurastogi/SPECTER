@@ -5565,6 +5565,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "specter-chain"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "anyhow",
+ "serde_json",
+ "specter-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "specter-cli"
 version = "0.1.0"
 dependencies = [
