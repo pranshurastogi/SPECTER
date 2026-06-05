@@ -1,4 +1,4 @@
-//! Integration tests for Announcement (Phase 2) and AnnouncementMetadata (Phase 3)
+//! Integration tests for Announcement and AnnouncementMetadata
 //!
 //! These tests verify that the types work correctly together in realistic scenarios.
 
