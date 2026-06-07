@@ -12,6 +12,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 specter-core = { path = "../specter-core" }
+hex = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

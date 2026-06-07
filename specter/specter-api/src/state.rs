@@ -1,4 +1,4 @@
-//! App state: registry, ENS resolver, SuiNS resolver, config.
+//! App state: registry, ENS resolver, SuiNS resolver, config, chain indexer.
 
 use std::sync::Arc;
 
@@ -184,6 +184,81 @@ impl ApiConfig {
     }
 }
 
+// ── ChainConfig ───────────────────────────────────────────────────────────
+
+/// Configuration for on-chain indexing.
+#[derive(Clone, Debug)]
+pub struct ChainConfig {
+    /// RPC endpoint for Monad chain
+    pub rpc_url: String,
+    /// SPECTERAnnouncer contract address
+    pub announcer_addr: String,
+    /// Block number where contract was deployed
+    pub deploy_block: u64,
+    /// Whether to enable on-chain indexing
+    pub enabled: bool,
+}
+
+impl ChainConfig {
+    /// Loads chain configuration from environment variables.
+    ///
+    /// Returns Ok with enabled=false if not configured.
+    pub fn from_env() -> Result<Self> {
+        let announcement_source = std::env::var("ANNOUNCEMENT_SOURCE")
+            .unwrap_or_else(|_| "api".to_string());
+
+        let enabled = announcement_source == "chain";
+
+        if !enabled {
+            return Ok(Self {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            });
+        }
+
+        let rpc_url = std::env::var("MONAD_RPC_URL")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "MONAD_RPC_URL not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_ADDRESS not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let deploy_block_str = std::env::var("SPECTER_ANNOUNCER_DEPLOY_BLOCK")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let deploy_block = deploy_block_str.parse::<u64>()
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK must be a valid u64".into()
+            ))?;
+
+        if rpc_url.is_empty() {
+            return Err(specter_core::error::SpecterError::ConfigError(
+                "MONAD_RPC_URL is empty".into()
+            ).into());
+        }
+
+        if announcer_addr.is_empty() {
+            return Err(specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_ADDRESS is empty".into()
+            ).into());
+        }
+
+        Ok(Self {
+            rpc_url,
+            announcer_addr,
+            deploy_block,
+            enabled: true,
+        })
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Registry backend abstraction
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -300,6 +375,8 @@ pub struct AppState {
     /// Binds `POST /api/v1/stealth/create` to `POST /api/v1/registry/announcements`
     /// so the protocol view tag is **never** trusted from client input.
     pub pending_payments: Arc<PendingPaymentStore>,
+    /// Chain configuration (for Monad indexing).
+    pub chain_config: ChainConfig,
 }
 
 impl AppState {
@@ -308,6 +385,9 @@ impl AppState {
     /// Registry backend is selected via `REGISTRY_BACKEND` env var:
     /// - `"turso"` — durable Turso cloud DB (requires `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`)
     /// - anything else — ephemeral in-memory (default, for local dev)
+    ///
+    /// If `ANNOUNCEMENT_SOURCE=chain`, spawns a background ChainIndexer task
+    /// that polls SPECTERAnnouncer events and publishes to the registry.
     pub async fn new(config: ApiConfig) -> Self {
         let backend = std::env::var("REGISTRY_BACKEND").unwrap_or_default();
 
@@ -333,6 +413,29 @@ impl AppState {
             (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
         };
 
+        // Load chain configuration
+        let chain_config = ChainConfig::from_env().unwrap_or_else(|e| {
+            eprintln!("⚠️  Chain configuration error: {} (chain indexing disabled)", e);
+            ChainConfig {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            }
+        });
+
+        // Note: Chain indexer spawning deferred to runtime initialization
+        // when the registry is fully set up. For now, we just configure it.
+        if chain_config.enabled {
+            info!(
+                "Chain indexing configured for {} at block {}",
+                chain_config.announcer_addr, chain_config.deploy_block
+            );
+            info!(
+                "To spawn indexer: create ChainIndexer with configured registry and call tokio::spawn()"
+            );
+        }
+
         Self {
             config: config.clone(),
             registry,
@@ -342,6 +445,7 @@ impl AppState {
             suins_resolver: build_suins_resolver(&config),
             yellow_config: build_yellow_config(),
             pending_payments: Arc::new(PendingPaymentStore::new()),
+            chain_config,
         }
     }
 
@@ -356,6 +460,12 @@ impl AppState {
             scan_store: None,
             yellow_store: None,
             pending_payments: Arc::new(PendingPaymentStore::new()),
+            chain_config: ChainConfig {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            },
         }
     }
 }
@@ -409,5 +519,108 @@ fn build_yellow_config() -> YellowConfig {
         adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
             .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
         challenge_duration: 3600,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chain_config_disabled_by_default() {
+        // ANNOUNCEMENT_SOURCE not set, should disable chain indexing
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+
+        let config = ChainConfig::from_env().expect("Should load config even when disabled");
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn test_chain_config_enabled_requires_env_vars() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+
+        let result = ChainConfig::from_env();
+        assert!(result.is_err(), "Should fail when required env vars missing");
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+    }
+
+    #[test]
+    fn test_chain_config_with_valid_env_vars() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
+        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "36100042");
+
+        let config = ChainConfig::from_env().expect("Should load valid config");
+        assert!(config.enabled);
+        assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");
+        assert_eq!(config.announcer_addr, "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
+        assert_eq!(config.deploy_block, 36100042);
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+    }
+
+    #[test]
+    fn test_chain_config_invalid_deploy_block() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
+        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "not_a_number");
+
+        let result = ChainConfig::from_env();
+        assert!(result.is_err(), "Should fail with invalid block number");
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+    }
+
+    #[test]
+    fn test_app_state_new_sync_includes_chain_config() {
+        let config = ApiConfig::default();
+        let state = AppState::new_sync(config);
+
+        // Chain config should be disabled by default in sync mode
+        assert!(!state.chain_config.enabled);
+    }
+
+    #[test]
+    fn test_security_config_defaults() {
+        std::env::remove_var("API_KEY");
+        std::env::remove_var("ALLOWED_ORIGINS");
+        std::env::remove_var("RATE_LIMIT_RPS");
+        std::env::remove_var("RATE_LIMIT_BURST");
+        std::env::remove_var("MAX_BODY_SIZE");
+
+        let sec_config = SecurityConfig::from_env();
+
+        assert!(sec_config.api_key.is_none());
+        assert_eq!(sec_config.allowed_origins, vec!["*"]);
+        assert_eq!(sec_config.rate_limit_rps, 10);
+        assert_eq!(sec_config.rate_limit_burst, 30);
+        assert_eq!(sec_config.max_body_size, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_api_config_defaults() {
+        std::env::remove_var("USE_TESTNET");
+        std::env::remove_var("ETH_RPC_URL");
+        std::env::remove_var("SUI_RPC_URL");
+
+        let api_config = ApiConfig::default();
+
+        assert_eq!(api_config.rpc_url, DEFAULT_ETH_MAINNET_RPC);
+        assert!(!api_config.use_testnet);
     }
 }

@@ -12,6 +12,7 @@ specter-crypto = { path = "../specter-crypto" }
 specter-stealth = { path = "../specter-stealth" }
 specter-registry = { path = "../specter-registry", features = ["turso"] }
 specter-scanner = { path = "../specter-scanner" }
+specter-chain = { path = "../specter-chain" }
 specter-ens = { path = "../specter-ens" }
 specter-suins = { path = "../specter-suins" }
 specter-yellow = { path = "../specter-yellow" }

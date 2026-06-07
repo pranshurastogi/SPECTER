@@ -531,6 +531,7 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         tx_hash: get_opt_text(row, 6),
         amount: get_opt_text(row, 7),
         chain: get_opt_text(row, 8),
+        stealth_address: None,  // Phase 2: will be populated from on-chain events
     })
 }
 

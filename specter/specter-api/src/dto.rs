@@ -246,6 +246,7 @@ impl TryFrom<AnnouncementDto> for Announcement {
             tx_hash: dto.tx_hash,
             amount: dto.amount,
             chain: dto.chain,
+            stealth_address: None,  // Will be populated from on-chain events
         })
     }
 }
