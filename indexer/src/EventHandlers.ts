@@ -55,12 +55,12 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
     sourceChainId:
       decoded.sourceChainId !== null ? Number(decoded.sourceChainId) : null,
     blockNumber,
-    txHash: decoded.txHash,
+    txHash: txHash,                    // Monad announce tx hash (dedup key)
+    paymentTxHash: decoded.txHash,     // source-chain payment tx from metadata [1..33]
     amount: decoded.amount,
     chain: MONAD_TESTNET_CHAIN_NAME,
     stealthAddress: stealthAddressLower,
     blockTxIndex: logIndex,
-    transactionHash: txHash,
   });
 
   if (!tursoSynced) {

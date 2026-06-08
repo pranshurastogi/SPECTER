@@ -66,11 +66,15 @@ fn redact(s: &str) -> String {
 async fn main() -> Result<()> {
     let total_start = Instant::now();
 
-    // Load .env (best-effort; vars may already be set in the environment)
-    let env_file = std::env::var("ENV_FILE").unwrap_or_else(|_| ".env".into());
-    if std::path::Path::new(&env_file).exists() {
-        dotenvy::from_filename(&env_file).ok();
-        eprintln!("Loaded {env_file}");
+    // Load order: .env first (base config), then .env.e2e on top (overrides + PRIVATE_KEY).
+    // ENV_FILE overrides .env.e2e path.
+    dotenvy::dotenv().ok(); // load .env (Turso, Pinata, etc.)
+    let e2e_file = std::env::var("ENV_FILE").unwrap_or_else(|_| ".env.e2e".into());
+    if std::path::Path::new(&e2e_file).exists() {
+        dotenvy::from_filename(&e2e_file).ok();
+        eprintln!("Loaded .env + {e2e_file}");
+    } else {
+        eprintln!("Note: {e2e_file} not found — ensure PRIVATE_KEY is in .env");
     }
 
     println!("{}", "\n╔══════════════════════════════════════════════════════╗".cyan());
@@ -295,8 +299,10 @@ async fn main() -> Result<()> {
     )
     .context("announcement_from_event failed")?;
 
-    // Set the Monad announce tx hash as the dedup key
+    // tx_hash = Monad announce tx hash (dedup key, always unique)
+    // payment_tx_hash = source-chain payment tx hash (from metadata, for recipient)
     announcement.tx_hash = Some(format!("{announce_tx_hash:?}"));
+    // payment_tx_hash is already populated by announcement_from_event from metadata bytes
 
     let ann_id = registry
         .insert_onchain_announcement(&announcement)
@@ -340,24 +346,30 @@ async fn main() -> Result<()> {
         }};
     }
 
-    verify!("view_tag",         format!("{view_tag}"),        found.view_tag.to_string());
-    verify!("source_chain_id",  MONAD_CHAIN_ID.to_string(),   found.source_chain_id.map(|v| v.to_string()).unwrap_or_default());
-    verify!("chain",            "monad-testnet",              found.chain.as_deref().unwrap_or("(none)"));
+    verify!("view_tag",        format!("0x{view_tag:02x}"),    format!("0x{:02x}", found.view_tag));
+    verify!("source_chain_id", MONAD_CHAIN_ID.to_string(),    found.source_chain_id.map(|v| v.to_string()).unwrap_or_default());
+    verify!("chain",           "monad-testnet",               found.chain.as_deref().unwrap_or("(none)"));
 
     if found.stealth_address.is_some() {
-        ok(&format!("stealth_address: {}", found.stealth_address.as_deref().unwrap_or("")));
+        ok(&format!("stealth_address:   {}", found.stealth_address.as_deref().unwrap_or("")));
     } else {
         fail_msg("stealth_address: missing");
         errs += 1;
     }
     if found.tx_hash.is_some() {
-        ok(&format!("tx_hash: {}", found.tx_hash.as_deref().unwrap_or("")));
+        ok(&format!("tx_hash (announce):  {}", found.tx_hash.as_deref().unwrap_or("")));
     } else {
-        fail_msg("tx_hash: missing");
+        fail_msg("tx_hash (announce tx): missing");
+        errs += 1;
+    }
+    if found.payment_tx_hash.is_some() {
+        ok(&format!("payment_tx_hash:    {}", found.payment_tx_hash.as_deref().unwrap_or("")));
+    } else {
+        fail_msg("payment_tx_hash: missing — metadata tx_hash bytes were not decoded");
         errs += 1;
     }
     if found.amount.is_some() {
-        ok(&format!("amount: {}", found.amount.as_deref().unwrap_or("")));
+        ok(&format!("amount (raw hex):   {}", found.amount.as_deref().unwrap_or("")));
     } else {
         fail_msg("amount: missing");
         errs += 1;

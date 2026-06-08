@@ -193,10 +193,13 @@ pub struct AnnouncementDto {
     /// EIP-155 chain ID of the payment's source chain (e.g. 42161 = Arbitrum)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_chain_id: Option<u64>,
-    /// Source-chain transaction hash (hex)
+    /// Monad announce tx hash — the SPECTERAnnouncer.announce() call (dedup key)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
-    /// Raw amount hex (e.g. "0x...de0b6b3a7640000" = 1 ETH in wei)
+    /// Payment tx hash on the source chain — from metadata bytes [1..33]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_tx_hash: Option<String>,
+    /// Raw amount hex uint256 (e.g. "0x...de0b6b3a7640000" = 1 ETH in wei)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
     /// Human-readable chain name (e.g. "monad-testnet", "arbitrum-one")
@@ -216,6 +219,7 @@ impl From<Announcement> for AnnouncementDto {
             timestamp: ann.timestamp,
             source_chain_id: ann.source_chain_id,
             tx_hash: ann.tx_hash,
+            payment_tx_hash: ann.payment_tx_hash,
             amount: ann.amount,
             chain: ann.chain,
             stealth_address: ann.stealth_address,
@@ -237,6 +241,7 @@ impl TryFrom<AnnouncementDto> for Announcement {
             source_chain_id: dto.source_chain_id,
             block_number: None,
             tx_hash: dto.tx_hash,
+            payment_tx_hash: dto.payment_tx_hash,
             amount: dto.amount,
             chain: dto.chain,
             stealth_address: dto.stealth_address,

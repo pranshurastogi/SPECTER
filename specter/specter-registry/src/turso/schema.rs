@@ -1,7 +1,7 @@
 //! Turso (libSQL) schema definition and migration logic.
 
 /// Current schema version. Increment on breaking schema changes.
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// DDL statements executed in order on startup (CREATE IF NOT EXISTS — idempotent).
 pub const SCHEMA_STATEMENTS: &[&str] = &[
@@ -15,12 +15,14 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
         on_chain         INTEGER NOT NULL DEFAULT 0,
         block_number     INTEGER,
         tx_hash          TEXT    UNIQUE,
+        payment_tx_hash  TEXT,
         amount           TEXT,
         chain            TEXT,
         stealth_address  TEXT,
         block_tx_index   INTEGER,
         created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx ON announcements(payment_tx_hash)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_view_tag     ON announcements(view_tag)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_timestamp    ON announcements(timestamp DESC)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_source_chain ON announcements(source_chain_id)",
@@ -85,6 +87,17 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
         deleted_by       TEXT
     )",
     "CREATE INDEX IF NOT EXISTS idx_announcement_deletions_aid ON announcement_deletions(announcement_id)",
+];
+
+/// Migration statements for upgrading from schema v2 → v3.
+///
+/// Adds `payment_tx_hash` — the source-chain payment tx hash from announcement metadata,
+/// distinct from `tx_hash` which holds the Monad announce tx hash (dedup key).
+pub const MIGRATION_V2_TO_V3: &[&str] = &[
+    "ALTER TABLE announcements ADD COLUMN payment_tx_hash TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx ON announcements(payment_tx_hash)",
+    // Clean up garbage row inserted by buggy init_schema in v1
+    "DELETE FROM registry_metadata WHERE key = '1'",
 ];
 
 /// Migration statements for upgrading from schema v1 → v2.

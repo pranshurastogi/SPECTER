@@ -37,7 +37,7 @@ fn test_announcement_from_event_with_all_metadata_fields() {
     let ann = result.unwrap();
 
     assert_eq!(ann.view_tag, 0xAA);
-    assert!(ann.tx_hash.is_some());
+    assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
     assert!(ann.amount.is_some());
     assert_eq!(ann.source_chain_id, Some(42161));
     assert_eq!(ann.block_number, Some(1_000_000));
@@ -63,7 +63,7 @@ fn test_announcement_from_event_minimal_metadata() {
     let ann = result.unwrap();
 
     assert_eq!(ann.view_tag, 0x42);
-    assert!(ann.tx_hash.is_none());
+    assert!(ann.payment_tx_hash.is_none()); // no tx_hash in minimal metadata
     assert!(ann.amount.is_none());
     assert!(ann.source_chain_id.is_none());
     assert_eq!(ann.block_number, Some(999));
@@ -108,7 +108,7 @@ fn test_full_roundtrip_builder_to_announcement() {
     let ann = result.unwrap();
 
     assert_eq!(ann.view_tag, metadata.view_tag);
-    assert!(ann.tx_hash.is_some());
+    assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
     assert!(ann.amount.is_some());
     assert_eq!(ann.source_chain_id, Some(1));
     assert_eq!(ann.block_number, Some(12_345_678));
@@ -139,7 +139,7 @@ fn test_metadata_json_serialization_to_announcement() {
     let ann = result.unwrap();
 
     assert_eq!(ann.view_tag, 0x55);
-    assert!(ann.tx_hash.is_some());
+    assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
     assert!(ann.amount.is_some());
     assert_eq!(ann.source_chain_id, Some(42161));
 }
@@ -190,7 +190,7 @@ fn test_metadata_partial_zero_fields_to_announcement() {
 
     assert!(result.is_ok());
     let ann = result.unwrap();
-    assert!(ann.tx_hash.is_some());
+    assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
     assert!(ann.amount.is_some());
     assert_eq!(ann.source_chain_id, Some(1));
 }
@@ -220,7 +220,7 @@ fn test_metadata_multiple_roundtrips_to_announcement() {
     assert!(result.is_ok());
     let ann = result.unwrap();
     assert_eq!(ann.view_tag, 0x88);
-    assert!(ann.tx_hash.is_some());
+    assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
     assert!(ann.amount.is_some());
     assert_eq!(ann.source_chain_id, Some(42161));
 }
@@ -246,9 +246,11 @@ fn test_announcement_field_format_consistency() {
     assert_eq!(ann.view_tag, 0xDD);
     assert_eq!(ann.source_chain_id, Some(42161));
 
-    // tx_hash should be hex-formatted
-    let h = ann.tx_hash.unwrap();
+    // payment_tx_hash (from metadata bytes) should be hex-formatted
+    let h = ann.payment_tx_hash.unwrap();
     assert!(h.starts_with("0x") || h.chars().all(|c| c.is_ascii_hexdigit()));
+    // tx_hash (announce tx, set by caller) is None here since announcement_from_event doesn't set it
+    assert!(ann.tx_hash.is_none());
 
     // amount should be hex-formatted
     let a = ann.amount.unwrap();

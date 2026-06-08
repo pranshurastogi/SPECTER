@@ -37,10 +37,15 @@ pub struct Announcement {
     /// Optional: Block number on Monad where the announcement was published
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_number: Option<u64>,
-    /// Optional: Source-chain transaction hash (hex)
+    /// Monad announce tx hash — the tx that called SPECTERAnnouncer.announce().
+    /// Used as the dedup key in Turso (always unique, always present for on-chain announcements).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
-    /// Optional: Payment amount (raw hex, e.g. "0x0000...0de0b6b3a7640000" = 1 ETH in wei)
+    /// Source-chain payment tx hash — the tx that transferred funds on `source_chain_id`.
+    /// Decoded from metadata bytes [1..33]. May be None if the sender omitted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_tx_hash: Option<String>,
+    /// Optional: Payment amount (raw hex uint256, e.g. "0x0000...0de0b6b3a7640000" = 1 ETH in wei)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
     /// Optional: Human-readable chain name (e.g. "monad-testnet", "arbitrum-one")
@@ -62,6 +67,7 @@ impl Announcement {
             source_chain_id: None,
             block_number: None,
             tx_hash: None,
+            payment_tx_hash: None,
             amount: None,
             chain: None,
             stealth_address: None,
@@ -140,6 +146,7 @@ impl Announcement {
             source_chain_id: None,
             block_number: None,
             tx_hash: None,
+            payment_tx_hash: None,
             amount: None,
             chain: None,
             stealth_address: None,
@@ -167,6 +174,7 @@ pub struct AnnouncementBuilder {
     source_chain_id: Option<u64>,
     block_number: Option<u64>,
     tx_hash: Option<String>,
+    payment_tx_hash: Option<String>,
     amount: Option<String>,
     chain: Option<String>,
     stealth_address: Option<String>,
@@ -209,9 +217,15 @@ impl AnnouncementBuilder {
         self
     }
 
-    /// Sets the transaction hash (optional).
+    /// Sets the Monad announce tx hash (dedup key).
     pub fn tx_hash(mut self, hash: String) -> Self {
         self.tx_hash = Some(hash);
+        self
+    }
+
+    /// Sets the source-chain payment tx hash (from metadata bytes [1..33]).
+    pub fn payment_tx_hash(mut self, hash: impl Into<String>) -> Self {
+        self.payment_tx_hash = Some(hash.into());
         self
     }
 
@@ -251,6 +265,7 @@ impl AnnouncementBuilder {
         announcement.source_chain_id = self.source_chain_id;
         announcement.block_number = self.block_number;
         announcement.tx_hash = self.tx_hash;
+        announcement.payment_tx_hash = self.payment_tx_hash;
         announcement.amount = self.amount;
         announcement.chain = self.chain;
         announcement.stealth_address = self.stealth_address;

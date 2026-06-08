@@ -105,16 +105,17 @@ impl TursoRegistry {
             })?;
         }
 
-        // Run v1→v2 migrations (safe to run on new DBs — columns already created above)
-        for stmt in schema::MIGRATION_V1_TO_V2 {
+        // Run all migrations in order. "duplicate column" and existing index errors are skipped.
+        for stmt in schema::MIGRATION_V1_TO_V2
+            .iter()
+            .chain(schema::MIGRATION_V2_TO_V3)
+        {
             if let Err(e) = conn.execute(stmt, ()).await {
-                let msg = e.to_string();
-                // "duplicate column" = migration already ran on this DB — safe to ignore
-                if msg.contains("duplicate column") {
-                    continue;
-                }
-                // CREATE INDEX errors for existing indices are also ignorable
-                if msg.contains("already exists") && stmt.starts_with("CREATE INDEX") {
+                let msg = e.to_string().to_lowercase();
+                if msg.contains("duplicate column")
+                    || (msg.contains("already exists") && stmt.starts_with("CREATE INDEX"))
+                    || (msg.contains("no rows") && stmt.starts_with("DELETE"))
+                {
                     continue;
                 }
                 return Err(SpecterError::RegistryError(format!(
@@ -200,7 +201,7 @@ impl TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
                  FROM announcements ORDER BY id",
                 (),
             )
@@ -327,7 +328,7 @@ impl TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE source_chain_id = ?1 ORDER BY block_number DESC",
                 params![chain_id as i64],
             )
@@ -343,8 +344,8 @@ impl TursoRegistry {
         conn.execute(
             "INSERT INTO announcements \
              (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain, \
-              block_number, tx_hash, amount, chain, stealth_address) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
@@ -353,6 +354,7 @@ impl TursoRegistry {
                 Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
                 opt_text(ann.tx_hash.clone()),
+                opt_text(ann.payment_tx_hash.clone()),
                 opt_text(ann.amount.clone()),
                 opt_text(ann.chain.clone()),
                 opt_text(ann.stealth_address.clone()),
@@ -464,7 +466,7 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE view_tag = ?1 ORDER BY timestamp DESC",
                 params![view_tag as i64],
             )
@@ -487,7 +489,7 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE timestamp BETWEEN ?1 AND ?2 ORDER BY timestamp",
                 params![start as i64, end as i64],
             )
@@ -502,7 +504,7 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE id = ?1 LIMIT 1",
                 params![id as i64],
             )
@@ -548,7 +550,7 @@ impl AnnouncementRegistry for TursoRegistry {
 ///
 /// Column order must match every SELECT that fetches announcements:
 ///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=source_chain_id
-///   5=block_number  6=tx_hash  7=amount  8=chain  9=stealth_address
+///   5=block_number  6=tx_hash  7=payment_tx_hash  8=amount  9=chain  10=stealth_address
 fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
     let id: i64 = row
         .get(0)
@@ -571,9 +573,10 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         source_chain_id: get_opt_int(row, 4).map(|v| v as u64),
         block_number: get_opt_int(row, 5).map(|b| b as u64),
         tx_hash: get_opt_text(row, 6),
-        amount: get_opt_text(row, 7),
-        chain: get_opt_text(row, 8),
-        stealth_address: get_opt_text(row, 9),
+        payment_tx_hash: get_opt_text(row, 7),
+        amount: get_opt_text(row, 8),
+        chain: get_opt_text(row, 9),
+        stealth_address: get_opt_text(row, 10),
     })
 }
 

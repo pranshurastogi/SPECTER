@@ -54,8 +54,10 @@ pub fn announcement_from_event(
         .block_number(block_number)
         .chain("monad-testnet".to_string());
 
+    // tx_hash from metadata = the source-chain payment tx; stored as payment_tx_hash.
+    // The Monad announce tx hash is set later by the caller (Envio handler or e2e flow).
     if let Some(h) = metadata.tx_hash {
-        builder = builder.tx_hash(format!("{}", B256::from(h)));
+        builder = builder.payment_tx_hash(format!("{}", B256::from(h)));
     }
 
     if let Some(a) = metadata.amount {
@@ -204,7 +206,7 @@ mod tests {
         assert!(result.is_ok());
         let ann = result.unwrap();
         assert_eq!(ann.view_tag, 0x55);
-        assert!(ann.tx_hash.is_some());
+        assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
         assert!(ann.amount.is_some());
         assert_eq!(ann.source_chain_id, Some(42161));
         assert_eq!(ann.block_number, Some(2_000_000));
@@ -243,7 +245,7 @@ mod tests {
         assert!(result.is_ok());
         let ann = result.unwrap();
         assert_eq!(ann.view_tag, meta.view_tag);
-        assert!(ann.tx_hash.is_some());
+        assert!(ann.payment_tx_hash.is_some()); // metadata tx_hash → payment_tx_hash
         assert!(ann.amount.is_some());
         assert_eq!(ann.source_chain_id, Some(1));
     }

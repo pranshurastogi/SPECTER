@@ -28,18 +28,26 @@ export interface TursoAnnouncement {
   sourceChainId: number | null;
   /** Monad block number. */
   blockNumber: number;
-  /** Source-chain tx hash (from metadata), or null. */
-  txHash: string | null;
-  /** Raw amount hex string, or null. */
+  /**
+   * Monad announce tx hash — the tx that called SPECTERAnnouncer.announce().
+   * Used as the dedup key in Turso (always unique, never null for on-chain events).
+   * This is event.transaction.hash in the Envio handler.
+   */
+  txHash: string;
+  /**
+   * Source-chain payment tx hash — decoded from metadata bytes [1..33].
+   * May be null if the sender did not embed a payment tx hash.
+   * This is what recipients use to look up the actual payment on source_chain_id.
+   */
+  paymentTxHash: string | null;
+  /** Raw amount hex uint256, or null if absent in metadata. */
   amount: string | null;
   /** Human-readable chain name, e.g. "monad-testnet". */
   chain: string;
-  /** Recipient stealth address (checksummed). */
+  /** Recipient stealth address (lowercase). */
   stealthAddress: string;
-  /** Log index within the Monad block (used as block_tx_index for dedup). */
+  /** Log index within the Monad block (used as block_tx_index). */
   blockTxIndex: number;
-  /** Monad transaction hash (the announcement tx, not the source-chain tx). */
-  transactionHash: string;
 }
 
 // ── Client factory ─────────────────────────────────────────────────────────
@@ -86,8 +94,8 @@ export async function writeTursoAnnouncement(
   const sql = `
     INSERT OR IGNORE INTO announcements
       (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain,
-       block_number, tx_hash, amount, chain, stealth_address, block_tx_index)
-    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+       block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, block_tx_index)
+    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   // ephemeral_key is stored as BLOB — convert hex string to Buffer
@@ -99,7 +107,8 @@ export async function writeTursoAnnouncement(
     ephemeralKeyBuffer,
     ann.sourceChainId ?? null,
     ann.blockNumber,
-    ann.txHash ?? null,
+    ann.txHash,          // Monad announce tx hash — dedup key, always present
+    ann.paymentTxHash ?? null,  // source-chain payment tx hash from metadata
     ann.amount ?? null,
     ann.chain,
     ann.stealthAddress,
