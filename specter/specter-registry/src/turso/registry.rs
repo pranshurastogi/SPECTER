@@ -374,8 +374,9 @@ impl TursoRegistry {
     // `db.connect()` call would get a blank DB. We use a unique temp file so
     // all connections share the same persistent schema.
 
-    /// Creates an isolated on-disk SQLite instance for unit tests.
-    #[cfg(test)]
+    /// Creates an isolated on-disk SQLite instance for tests.
+    /// Available via the `test-utils` feature (for integration tests) or within unit tests.
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn new_test() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);

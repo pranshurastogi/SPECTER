@@ -4,6 +4,10 @@ description: "Indexes SPECTER stealth address announcements on Monad testnet"
 # Envio HyperIndex configuration for SPECTERAnnouncer
 # Dual-write: Envio Postgres (GraphQL) + Turso remote DB (SPECTER API scanning)
 
+field_selection:
+  transaction_fields:
+    - hash   # Needed for Turso deduplication and event ID construction
+
 networks:
   - id: 10143   # Monad testnet
     start_block: 36100042   # SPECTERAnnouncer deploy block
@@ -14,7 +18,6 @@ networks:
     contracts:
       - name: SPECTERAnnouncer
         address: "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a"
-        abi_file_path: ./abis/SPECTERAnnouncer.json
         handler: ./src/EventHandlers.ts
         events:
           - event: "Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)"
