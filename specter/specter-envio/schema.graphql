@@ -1,0 +1,53 @@
+# SPECTER Envio GraphQL schema
+#
+# Entities are indexed from SPECTERAnnouncer Announcement events on Monad testnet.
+# Recipients use these queries to scan for stealth payments addressed to them.
+
+type AnnouncementEvent @entity {
+  # "<transactionHash>-<logIndex>" — globally unique across all blocks
+  id: ID!
+
+  # ── On-chain event fields ────────────────────────────────────────────────
+  schemeId:       BigInt!   # 1000 = ML-KEM-1024 (SPECTER's post-quantum scheme)
+  stealthAddress: String!   # Checksummed recipient stealth address (indexed)
+  caller:         String!   # Address that submitted the announcement tx
+
+  # Raw 1088-byte ML-KEM ciphertext (hex, no 0x prefix).
+  # Recipients use this to attempt decapsulation with their viewing key.
+  ephemeralPubKey: String!
+
+  # ── Decoded from 77-byte metadata payload ───────────────────────────────
+  #
+  # Layout: [0]=viewTag [1..33]=txHash [33..65]=amount [65..73]=sourceChainId [73..77]=reserved
+  #
+  # First byte of SHAKE-256(shared_secret). Recipients compute their own
+  # view tag and compare — matching tags mean O(1) filtering before expensive
+  # decapsulation. 256 possible values → ~99.6% of non-matching events skipped.
+  viewTag: Int!
+
+  # Source chain transaction hash (hex). The chain where funds were actually sent.
+  # Null if the sender did not embed a tx hash (e.g., off-chain payment).
+  txHash: String
+
+  # Raw big-endian 32-byte amount (hex). Null if absent (all-zero in metadata).
+  # Denomination depends on token; use sourceChainId + token contract to interpret.
+  amount: String
+
+  # EIP-155 chain ID of the chain where funds were sent FROM.
+  # Examples: 42161 = Arbitrum One, 10143 = Monad testnet, 1 = Ethereum mainnet.
+  # Null if not set (all-zero bytes in metadata).
+  sourceChainId: BigInt
+
+  # ── Monad block context ──────────────────────────────────────────────────
+  blockNumber:      BigInt!  # Monad block number (indexed, for sync checkpointing)
+  blockTimestamp:   BigInt!  # Unix timestamp of the Monad block
+  transactionHash:  String!  # Monad tx hash (different from source-chain txHash above)
+  logIndex:         Int!     # Log index within the Monad tx
+
+  # Full 77-byte metadata as hex string (for debugging / future schema extensions)
+  metadataRaw: String!
+
+  # Whether this event was successfully written to the SPECTER Turso registry.
+  # False means the API scanning path may not have this announcement yet.
+  tursoSynced: Boolean!
+}

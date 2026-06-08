@@ -1,0 +1,33 @@
+# Find events that failed to write to Turso (tursoSynced=false).
+#
+# Run this query periodically in a background job to retry failed Turso writes.
+# After a successful retry, update the entity's tursoSynced flag via the
+# Envio admin API or by re-processing the block.
+#
+# Variables:
+#   $fromBlock — only check recent blocks to avoid scanning all history
+#   $limit     — batch size for retry (default 100)
+
+query UnsyncedTurso($fromBlock: numeric = "0", $limit: Int = 100) {
+  AnnouncementEvent(
+    where: {
+      tursoSynced: { _eq: false }
+      blockNumber: { _gte: $fromBlock }
+    }
+    order_by: { blockNumber: asc }
+    limit: $limit
+  ) {
+    id
+    viewTag
+    stealthAddress
+    ephemeralPubKey
+    txHash
+    sourceChainId
+    amount
+    blockNumber
+    blockTimestamp
+    transactionHash
+    logIndex
+    metadataRaw
+  }
+}

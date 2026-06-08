@@ -1,0 +1,24 @@
+{
+  "name": "specter-envio",
+  "version": "1.0.0",
+  "description": "SPECTER SPECTERAnnouncer on-chain event indexer — Envio HyperIndex with Turso dual-write",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "dev": "envio dev",
+    "start": "envio start",
+    "codegen": "envio codegen",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "envio": "^2.0.0",
+    "@libsql/client": "^0.14.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Latest indexed block — used by the SPECTER API server to track the sync
+# checkpoint between Envio and Turso. The API polls this periodically to know
+# which blocks have been indexed so it can request re-syncs for any gaps.
+
+query LatestIndexedBlock {
+  AnnouncementEvent(order_by: { blockNumber: desc }, limit: 1) {
+    blockNumber
+    blockTimestamp
+    transactionHash
+  }
+}
