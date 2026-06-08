@@ -142,7 +142,7 @@ pub async fn scan_payments(
             eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
             announcement_id: d.announcement.id,
             timestamp: d.announcement.timestamp,
-            channel_id: d.announcement.channel_id.map(hex::encode),
+            channel_id: None, // Yellow channel_id removed from Announcement
             tx_hash: d.announcement.tx_hash.clone(),
             amount: d.announcement.amount.clone().unwrap_or_default(),
             chain: d.announcement.chain.clone().unwrap_or_default(),
@@ -471,12 +471,8 @@ pub async fn yellow_create_channel(
     let ephemeral_key = hex::encode(&payment.announcement.ephemeral_key);
     let view_tag = payment.announcement.view_tag;
 
-    // Publish announcement with channel_id to registry
-    let mut announcement = Announcement::with_channel(
-        payment.announcement.ephemeral_key,
-        view_tag,
-        channel_id_bytes,
-    );
+    // Publish announcement to registry (Yellow channel_id tracked separately)
+    let mut announcement = Announcement::new(payment.announcement.ephemeral_key, view_tag);
     announcement.amount = Some(req.amount.clone());
     announcement.chain = Some("ethereum".into());
 
@@ -524,16 +520,11 @@ pub async fn yellow_discover_channels(
 
     let channels: Vec<YellowDiscoveredChannelDto> = discoveries
         .into_iter()
-        .filter(|d| d.announcement.channel_id.is_some())
         .map(|d| {
             let amount = d.announcement.amount.clone().unwrap_or_else(|| "0".into());
             let token = "USDC".into();
             YellowDiscoveredChannelDto {
-                channel_id: d
-                    .announcement
-                    .channel_id
-                    .map(hex::encode)
-                    .unwrap_or_default(),
+                channel_id: String::new(), // Yellow channel_id removed from Announcement
                 stealth_address: d.keys.address.to_checksum_string(),
                 eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
                 status: "open".into(),
@@ -592,9 +583,9 @@ pub async fn yellow_close_channel(
     if channel_id_bytes.len() == 32 {
         channel_id_arr.copy_from_slice(&channel_id_bytes);
     }
-    let matching = announcements
-        .iter()
-        .find(|a| a.channel_id == Some(channel_id_arr));
+    // channel_id lookup removed from Announcement; Yellow channels tracked separately
+    let _ = channel_id_arr; // kept for future Yellow integration
+    let matching = announcements.iter().next();
     let amount = matching
         .and_then(|a| a.amount.clone())
         .unwrap_or_else(|| "0".into());
@@ -636,8 +627,9 @@ pub async fn yellow_channel_status(
 
     let matching = announcements
         .iter()
-        .find(|a| a.channel_id == Some(channel_id_arr));
+        .next(); // channel_id lookup removed from Announcement
 
+    let _ = channel_id_arr; // kept for future Yellow integration
     let created_at = matching.map(|a| a.timestamp).unwrap_or(0);
     let amount = matching
         .and_then(|a| a.amount.clone())

@@ -6,120 +6,97 @@
 //! # Binary Layout (77 bytes)
 //!
 //! ```text
-//! [0]       view_tag     uint8   1 byte     (always present)
-//! [1..33]   tx_hash      bytes32 32 bytes   (optional: 0x00..00 = absent)
-//! [33..65]  amount       uint256 32 bytes   (optional: all zeros = absent)
-//! [65..77]  channel_id   bytes12 12 bytes   (optional: 0x00..00 = absent)
+//! [0]       view_tag         uint8   1 byte   (always present)
+//! [1..33]   tx_hash          bytes32 32 bytes (optional: 0x00..00 = absent)
+//! [33..65]  amount           uint256 32 bytes (optional: all zeros = absent)
+//! [65..73]  source_chain_id  uint64  8 bytes  (big-endian; 0 = absent)
+//! [73..77]  reserved         bytes4  4 bytes  (always zero)
 //! ```
 
 use serde::{Deserialize, Serialize};
 
-/// Fixed 77-byte metadata layout for announcement on-chain events.
+/// Fixed 77-byte metadata layout for on-chain announcement events.
 ///
-/// This struct encodes metadata that accompanies an ephemeral key announcement,
-/// providing optional information about the transaction, amount, and trading channel.
+/// Encodes the payment details embedded in each SPECTERAnnouncer `announce()` call.
+/// The `source_chain_id` field identifies which chain the actual payment originated on
+/// (e.g., 42161 = Arbitrum, 10143 = Monad testnet, 1 = Ethereum mainnet).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnnouncementMetadata {
-    /// View tag for efficient filtering (first byte of hash) - always present
+    /// View tag for efficient filtering — first byte of SHAKE-256(shared_secret).
+    /// Recipients compute their own tag; matching tags avoid expensive decapsulation.
     pub view_tag: u8,
-    /// Optional transaction hash (32 bytes, Ethereum H256)
-    /// Serialized as hex string for JSON, but stored as Option<[u8; 32]> internally
+    /// Optional source-chain transaction hash (32 bytes, big-endian H256).
+    /// All-zero = absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<[u8; 32]>,
-    /// Optional amount (32 bytes, Solidity uint256 big-endian)
-    /// Stored as Option<[u8; 32]> to preserve exact byte layout
+    /// Optional payment amount (32 bytes, Solidity uint256 big-endian).
+    /// All-zero = absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<[u8; 32]>,
-    /// Optional Yellow channel ID (12 bytes)
+    /// Optional EIP-155 chain ID of the chain where funds were sent from.
+    /// Examples: 42161 = Arbitrum One, 10143 = Monad testnet, 1 = Ethereum mainnet.
+    /// Zero = absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_id: Option<[u8; 12]>,
+    pub source_chain_id: Option<u64>,
 }
 
 impl AnnouncementMetadata {
-    /// Creates a new metadata with view tag and optional fields.
-    ///
-    /// # Arguments
-    ///
-    /// * `view_tag` - Required view tag (0-255)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let meta = AnnouncementMetadata::new(0x42);
-    /// ```
+    /// Creates new metadata with only a view tag set.
     pub fn new(view_tag: u8) -> Self {
         Self {
             view_tag,
             tx_hash: None,
             amount: None,
-            channel_id: None,
+            source_chain_id: None,
         }
     }
 
-    /// Encodes metadata to a fixed 77-byte array.
+    /// Encodes metadata to the fixed 77-byte wire format.
     ///
     /// # Layout
     ///
-    /// - Byte 0: view_tag (always present)
-    /// - Bytes 1-32: tx_hash (all zeros if None)
-    /// - Bytes 33-64: amount (all zeros if None)
-    /// - Bytes 65-76: channel_id (all zeros if None)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let meta = AnnouncementMetadata::new(0x42);
-    /// let bytes = meta.encode();
-    /// assert_eq!(bytes.len(), 77);
-    /// ```
+    /// - Byte 0:    `view_tag`
+    /// - Bytes 1–32:  `tx_hash` (all-zero if None)
+    /// - Bytes 33–64: `amount` (all-zero if None)
+    /// - Bytes 65–72: `source_chain_id` big-endian u64 (all-zero if None)
+    /// - Bytes 73–76: reserved (always zero)
     pub fn encode(&self) -> [u8; 77] {
         let mut buf = [0u8; 77];
 
-        // [0] view_tag
         buf[0] = self.view_tag;
 
-        // [1..33] tx_hash
         if let Some(hash) = &self.tx_hash {
             buf[1..33].copy_from_slice(hash);
         }
 
-        // [33..65] amount
         if let Some(amt) = &self.amount {
             buf[33..65].copy_from_slice(amt);
         }
 
-        // [65..77] channel_id
-        if let Some(cid) = &self.channel_id {
-            buf[65..77].copy_from_slice(cid);
+        if let Some(chain_id) = self.source_chain_id {
+            buf[65..73].copy_from_slice(&chain_id.to_be_bytes());
         }
+        // [73..77] reserved — already zero from initialization
 
         buf
     }
 
     /// Decodes metadata from raw bytes.
     ///
-    /// Parses a 77-byte buffer, treating all-zero optional fields as absent.
+    /// Optional fields whose bytes are all-zero are decoded as `None`.
     ///
     /// # Panics
     ///
-    /// Panics if input is less than 77 bytes.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let bytes = [0u8; 77];
-    /// let meta = AnnouncementMetadata::decode(&bytes);
-    /// ```
+    /// Panics if `raw.len() < 77`.
     pub fn decode(raw: &[u8]) -> Self {
         assert!(
             raw.len() >= 77,
-            "metadata must be exactly 77 bytes, got {}",
+            "metadata must be at least 77 bytes, got {}",
             raw.len()
         );
 
         let view_tag = raw[0];
 
-        // [1..33] tx_hash - treat all zeros as None
         let tx_hash = {
             let slice = &raw[1..33];
             if slice.iter().all(|&b| b == 0) {
@@ -131,7 +108,6 @@ impl AnnouncementMetadata {
             }
         };
 
-        // [33..65] amount - treat all zeros as None
         let amount = {
             let slice = &raw[33..65];
             if slice.iter().all(|&b| b == 0) {
@@ -143,63 +119,31 @@ impl AnnouncementMetadata {
             }
         };
 
-        // [65..77] channel_id - treat all zeros as None
-        let channel_id = {
-            let slice = &raw[65..77];
-            if slice.iter().all(|&b| b == 0) {
-                None
-            } else {
-                let mut arr = [0u8; 12];
-                arr.copy_from_slice(slice);
-                Some(arr)
-            }
+        let source_chain_id = {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&raw[65..73]);
+            let val = u64::from_be_bytes(arr);
+            if val == 0 { None } else { Some(val) }
         };
 
-        Self {
-            view_tag,
-            tx_hash,
-            amount,
-            channel_id,
-        }
+        Self { view_tag, tx_hash, amount, source_chain_id }
     }
 
-    /// Converts 12-byte channel ID to 32-byte padded format for struct compatibility.
-    ///
-    /// Pads with zeros on the right (high bytes) to match existing `Announcement::channel_id`
-    /// which uses `[u8; 32]`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut meta = AnnouncementMetadata::new(0x42);
-    /// meta.channel_id = Some([0xCC; 12]);
-    ///
-    /// let padded = meta.channel_id_padded();
-    /// assert_eq!(padded, Some([0xCC, 0xCC, ..., 0x00, 0x00]));
-    /// ```
-    pub fn channel_id_padded(&self) -> Option<[u8; 32]> {
-        self.channel_id.map(|c| {
-            let mut padded = [0u8; 32];
-            padded[..12].copy_from_slice(&c);
-            padded
-        })
-    }
-
-    /// Sets the tx_hash field.
+    /// Builder-style setter for `tx_hash`.
     pub fn with_tx_hash(mut self, hash: [u8; 32]) -> Self {
         self.tx_hash = Some(hash);
         self
     }
 
-    /// Sets the amount field.
+    /// Builder-style setter for `amount`.
     pub fn with_amount(mut self, amount: [u8; 32]) -> Self {
         self.amount = Some(amount);
         self
     }
 
-    /// Sets the channel_id field.
-    pub fn with_channel_id(mut self, cid: [u8; 12]) -> Self {
-        self.channel_id = Some(cid);
+    /// Builder-style setter for `source_chain_id`.
+    pub fn with_source_chain_id(mut self, id: u64) -> Self {
+        self.source_chain_id = Some(id);
         self
     }
 }
@@ -214,7 +158,7 @@ mod tests {
         assert_eq!(meta.view_tag, 0x42);
         assert!(meta.tx_hash.is_none());
         assert!(meta.amount.is_none());
-        assert!(meta.channel_id.is_none());
+        assert!(meta.source_chain_id.is_none());
     }
 
     #[test]
@@ -226,7 +170,8 @@ mod tests {
         assert_eq!(bytes[0], 0x42);
         assert!(bytes[1..33].iter().all(|&b| b == 0));
         assert!(bytes[33..65].iter().all(|&b| b == 0));
-        assert!(bytes[65..77].iter().all(|&b| b == 0));
+        assert!(bytes[65..73].iter().all(|&b| b == 0)); // source_chain_id absent
+        assert!(bytes[73..77].iter().all(|&b| b == 0)); // reserved
     }
 
     #[test]
@@ -252,15 +197,27 @@ mod tests {
     }
 
     #[test]
-    fn test_metadata_encode_with_channel_id() {
+    fn test_metadata_encode_with_source_chain_id_arbitrum() {
         let mut meta = AnnouncementMetadata::new(0xEE);
-        meta.channel_id = Some([0xDD; 12]);
+        meta.source_chain_id = Some(42161); // Arbitrum One
 
         let bytes = meta.encode();
         assert_eq!(bytes[0], 0xEE);
         assert!(bytes[1..33].iter().all(|&b| b == 0));
         assert!(bytes[33..65].iter().all(|&b| b == 0));
-        assert_eq!(&bytes[65..77], &[0xDD; 12]);
+        // 42161 = 0x0000_0000_0000_A4B1
+        let encoded_id = u64::from_be_bytes(bytes[65..73].try_into().unwrap());
+        assert_eq!(encoded_id, 42161);
+        assert!(bytes[73..77].iter().all(|&b| b == 0)); // reserved
+    }
+
+    #[test]
+    fn test_metadata_encode_with_source_chain_id_monad() {
+        let meta = AnnouncementMetadata::new(0x01).with_source_chain_id(10143); // Monad testnet
+
+        let bytes = meta.encode();
+        let encoded_id = u64::from_be_bytes(bytes[65..73].try_into().unwrap());
+        assert_eq!(encoded_id, 10143);
     }
 
     #[test]
@@ -268,13 +225,15 @@ mod tests {
         let mut meta = AnnouncementMetadata::new(0x77);
         meta.tx_hash = Some([0x01; 32]);
         meta.amount = Some([0x02; 32]);
-        meta.channel_id = Some([0x03; 12]);
+        meta.source_chain_id = Some(1); // Ethereum mainnet
 
         let bytes = meta.encode();
         assert_eq!(bytes[0], 0x77);
         assert_eq!(&bytes[1..33], &[0x01; 32]);
         assert_eq!(&bytes[33..65], &[0x02; 32]);
-        assert_eq!(&bytes[65..77], &[0x03; 12]);
+        let encoded_id = u64::from_be_bytes(bytes[65..73].try_into().unwrap());
+        assert_eq!(encoded_id, 1);
+        assert!(bytes[73..77].iter().all(|&b| b == 0));
     }
 
     #[test]
@@ -285,7 +244,7 @@ mod tests {
         assert_eq!(meta.view_tag, 0);
         assert!(meta.tx_hash.is_none());
         assert!(meta.amount.is_none());
-        assert!(meta.channel_id.is_none());
+        assert!(meta.source_chain_id.is_none()); // 0 decodes as None
     }
 
     #[test]
@@ -298,33 +257,21 @@ mod tests {
         assert_eq!(meta.view_tag, 0x42);
         assert_eq!(meta.tx_hash, Some([0xAB; 32]));
         assert!(meta.amount.is_none());
-        assert!(meta.channel_id.is_none());
+        assert!(meta.source_chain_id.is_none());
     }
 
     #[test]
-    fn test_metadata_decode_with_amount() {
-        let mut bytes = [0u8; 77];
-        bytes[0] = 0x55;
-        bytes[33..65].copy_from_slice(&[0xCD; 32]);
-
-        let meta = AnnouncementMetadata::decode(&bytes);
-        assert_eq!(meta.view_tag, 0x55);
-        assert!(meta.tx_hash.is_none());
-        assert_eq!(meta.amount, Some([0xCD; 32]));
-        assert!(meta.channel_id.is_none());
-    }
-
-    #[test]
-    fn test_metadata_decode_with_channel_id() {
+    fn test_metadata_decode_with_source_chain_id() {
         let mut bytes = [0u8; 77];
         bytes[0] = 0xCC;
-        bytes[65..77].copy_from_slice(&[0xDD; 12]);
+        // Encode 42161 (Arbitrum) at [65..73]
+        bytes[65..73].copy_from_slice(&42161u64.to_be_bytes());
 
         let meta = AnnouncementMetadata::decode(&bytes);
         assert_eq!(meta.view_tag, 0xCC);
         assert!(meta.tx_hash.is_none());
         assert!(meta.amount.is_none());
-        assert_eq!(meta.channel_id, Some([0xDD; 12]));
+        assert_eq!(meta.source_chain_id, Some(42161));
     }
 
     #[test]
@@ -333,13 +280,13 @@ mod tests {
         bytes[0] = 0x77;
         bytes[1..33].copy_from_slice(&[0x01; 32]);
         bytes[33..65].copy_from_slice(&[0x02; 32]);
-        bytes[65..77].copy_from_slice(&[0x03; 12]);
+        bytes[65..73].copy_from_slice(&10143u64.to_be_bytes()); // Monad testnet
 
         let meta = AnnouncementMetadata::decode(&bytes);
         assert_eq!(meta.view_tag, 0x77);
         assert_eq!(meta.tx_hash, Some([0x01; 32]));
         assert_eq!(meta.amount, Some([0x02; 32]));
-        assert_eq!(meta.channel_id, Some([0x03; 12]));
+        assert_eq!(meta.source_chain_id, Some(10143));
     }
 
     #[test]
@@ -347,7 +294,6 @@ mod tests {
         let meta = AnnouncementMetadata::new(0x42);
         let bytes = meta.encode();
         let meta2 = AnnouncementMetadata::decode(&bytes);
-
         assert_eq!(meta, meta2);
     }
 
@@ -356,29 +302,31 @@ mod tests {
         let mut meta = AnnouncementMetadata::new(0xAA);
         meta.tx_hash = Some([0x11; 32]);
         meta.amount = Some([0x22; 32]);
-        meta.channel_id = Some([0x33; 12]);
+        meta.source_chain_id = Some(42161);
 
         let bytes = meta.encode();
         let meta2 = AnnouncementMetadata::decode(&bytes);
-
         assert_eq!(meta, meta2);
     }
 
     #[test]
-    fn test_metadata_channel_id_padded() {
-        let mut meta = AnnouncementMetadata::new(0x42);
-        meta.channel_id = Some([0xCC; 12]);
+    fn test_metadata_source_chain_id_zero_is_none() {
+        // Explicitly writing zero bytes should decode as None
+        let mut bytes = [0u8; 77];
+        bytes[0] = 0x55;
+        // [65..73] are already zero
 
-        let padded = meta.channel_id_padded().unwrap();
-        assert_eq!(padded.len(), 32);
-        assert_eq!(&padded[..12], &[0xCC; 12]);
-        assert_eq!(&padded[12..], &[0x00; 20]);
+        let meta = AnnouncementMetadata::decode(&bytes);
+        assert!(meta.source_chain_id.is_none());
     }
 
     #[test]
-    fn test_metadata_channel_id_padded_none() {
-        let meta = AnnouncementMetadata::new(0x42);
-        assert!(meta.channel_id_padded().is_none());
+    fn test_metadata_reserved_bytes_always_zero() {
+        let meta = AnnouncementMetadata::new(0x42)
+            .with_source_chain_id(42161)
+            .with_tx_hash([0xAA; 32]);
+        let bytes = meta.encode();
+        assert!(bytes[73..77].iter().all(|&b| b == 0));
     }
 
     #[test]
@@ -386,12 +334,12 @@ mod tests {
         let meta = AnnouncementMetadata::new(0x77)
             .with_tx_hash([0xAA; 32])
             .with_amount([0xBB; 32])
-            .with_channel_id([0xCC; 12]);
+            .with_source_chain_id(1); // Ethereum mainnet
 
         assert_eq!(meta.view_tag, 0x77);
         assert_eq!(meta.tx_hash, Some([0xAA; 32]));
         assert_eq!(meta.amount, Some([0xBB; 32]));
-        assert_eq!(meta.channel_id, Some([0xCC; 12]));
+        assert_eq!(meta.source_chain_id, Some(1));
     }
 
     #[test]
@@ -399,10 +347,9 @@ mod tests {
         let meta = AnnouncementMetadata::new(0x42);
         let json = serde_json::to_string(&meta).unwrap();
 
-        // Optional fields should be skipped when None
         assert!(!json.contains("tx_hash"));
         assert!(!json.contains("amount"));
-        assert!(!json.contains("channel_id"));
+        assert!(!json.contains("source_chain_id"));
         assert!(json.contains("view_tag"));
     }
 
@@ -411,16 +358,23 @@ mod tests {
         let mut meta = AnnouncementMetadata::new(0x42);
         meta.tx_hash = Some([0x11; 32]);
         meta.amount = Some([0x22; 32]);
-        meta.channel_id = Some([0x33; 12]);
+        meta.source_chain_id = Some(42161);
 
         let json = serde_json::to_string(&meta).unwrap();
         let meta2: AnnouncementMetadata = serde_json::from_str(&json).unwrap();
-
         assert_eq!(meta, meta2);
     }
 
     #[test]
-    #[should_panic(expected = "metadata must be exactly 77 bytes")]
+    fn test_metadata_no_channel_id_field() {
+        // Verify the old "channel_id" field is gone
+        let meta = AnnouncementMetadata::new(0x42);
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(!json.contains("channel_id"));
+    }
+
+    #[test]
+    #[should_panic(expected = "metadata must be at least 77 bytes")]
     fn test_metadata_decode_too_short() {
         let bytes = [0u8; 76];
         AnnouncementMetadata::decode(&bytes);
@@ -430,16 +384,15 @@ mod tests {
     fn test_metadata_decode_ignores_extra_bytes() {
         let mut bytes = vec![0u8; 100];
         bytes[0] = 0x42;
-        bytes[65..77].copy_from_slice(&[0xDD; 12]);
+        bytes[65..73].copy_from_slice(&42161u64.to_be_bytes());
 
         let meta = AnnouncementMetadata::decode(&bytes);
         assert_eq!(meta.view_tag, 0x42);
-        assert_eq!(meta.channel_id, Some([0xDD; 12]));
+        assert_eq!(meta.source_chain_id, Some(42161));
     }
 
     #[test]
     fn test_metadata_partial_zero_detection() {
-        // Verify that fields with single non-zero byte are not treated as absent
         let mut bytes = [0u8; 77];
         bytes[0] = 0x42;
         bytes[32] = 0x01; // Last byte of tx_hash is non-zero
@@ -447,7 +400,6 @@ mod tests {
         let meta = AnnouncementMetadata::decode(&bytes);
         assert!(meta.tx_hash.is_some());
 
-        // Encode back and verify
         let bytes2 = meta.encode();
         assert_eq!(bytes2[32], 0x01);
     }

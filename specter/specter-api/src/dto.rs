@@ -184,20 +184,27 @@ pub struct UploadIpfsResponse {
 pub struct AnnouncementDto {
     /// Announcement ID
     pub id: u64,
-    /// Ephemeral ciphertext (hex)
+    /// ML-KEM ephemeral ciphertext (hex, 1088 bytes)
     pub ephemeral_key: String,
-    /// View tag
+    /// View tag (0–255)
     pub view_tag: u8,
-    /// Timestamp
+    /// Unix timestamp
     pub timestamp: u64,
-    /// Optional channel ID (hex)
-    pub channel_id: Option<String>,
-    /// Optional transaction hash (when published with verified tx)
+    /// EIP-155 chain ID of the payment's source chain (e.g. 42161 = Arbitrum)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_chain_id: Option<u64>,
+    /// Source-chain transaction hash (hex)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
-    /// Optional amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Raw amount hex (e.g. "0x...de0b6b3a7640000" = 1 ETH in wei)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
-    /// Optional chain identifier (e.g. "ethereum", "sui")
+    /// Human-readable chain name (e.g. "monad-testnet", "arbitrum-one")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
+    /// Recipient stealth address (checksummed)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stealth_address: Option<String>,
 }
 
 impl From<Announcement> for AnnouncementDto {
@@ -207,10 +214,11 @@ impl From<Announcement> for AnnouncementDto {
             ephemeral_key: hex::encode(&ann.ephemeral_key),
             view_tag: ann.view_tag,
             timestamp: ann.timestamp,
-            channel_id: ann.channel_id.map(hex::encode),
+            source_chain_id: ann.source_chain_id,
             tx_hash: ann.tx_hash,
             amount: ann.amount,
             chain: ann.chain,
+            stealth_address: ann.stealth_address,
         }
     }
 }
@@ -220,33 +228,18 @@ impl TryFrom<AnnouncementDto> for Announcement {
 
     fn try_from(dto: AnnouncementDto) -> Result<Self, Self::Error> {
         let ephemeral_key = hex::decode(&dto.ephemeral_key)?;
-        let channel_id = dto
-            .channel_id
-            .map(|s| {
-                let bytes = hex::decode(&s)?;
-                let mut arr = [0u8; 32];
-                if bytes.len() == 32 {
-                    arr.copy_from_slice(&bytes);
-                    Ok(arr)
-                } else {
-                    Err(specter_core::error::SpecterError::ValidationError(
-                        "channel_id must be 32 bytes".into(),
-                    ))
-                }
-            })
-            .transpose()?;
 
         Ok(Announcement {
             id: dto.id,
             ephemeral_key,
             view_tag: dto.view_tag,
             timestamp: dto.timestamp,
-            channel_id,
+            source_chain_id: dto.source_chain_id,
             block_number: None,
             tx_hash: dto.tx_hash,
             amount: dto.amount,
             chain: dto.chain,
-            stealth_address: None,  // Will be populated from on-chain events
+            stealth_address: dto.stealth_address,
         })
     }
 }

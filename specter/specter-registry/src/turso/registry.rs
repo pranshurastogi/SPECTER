@@ -20,23 +20,12 @@ use super::schema;
 
 // ── helper converters ──────────────────────────────────────────────────────
 
-fn opt_blob(v: Option<Vec<u8>>) -> Value {
-    v.map(Value::Blob).unwrap_or(Value::Null)
-}
-
 fn opt_int(v: Option<i64>) -> Value {
     v.map(Value::Integer).unwrap_or(Value::Null)
 }
 
 fn opt_text(v: Option<String>) -> Value {
     v.map(Value::Text).unwrap_or(Value::Null)
-}
-
-fn get_opt_blob(row: &libsql::Row, idx: i32) -> Option<Vec<u8>> {
-    match row.get_value(idx) {
-        Ok(Value::Blob(b)) => Some(b),
-        _ => None,
-    }
 }
 
 fn get_opt_int(row: &libsql::Row, idx: i32) -> Option<i64> {
@@ -116,6 +105,24 @@ impl TursoRegistry {
             })?;
         }
 
+        // Run v1→v2 migrations (safe to run on new DBs — columns already created above)
+        for stmt in schema::MIGRATION_V1_TO_V2 {
+            if let Err(e) = conn.execute(stmt, ()).await {
+                let msg = e.to_string();
+                // "duplicate column" = migration already ran on this DB — safe to ignore
+                if msg.contains("duplicate column") {
+                    continue;
+                }
+                // CREATE INDEX errors for existing indices are also ignorable
+                if msg.contains("already exists") && stmt.starts_with("CREATE INDEX") {
+                    continue;
+                }
+                return Err(SpecterError::RegistryError(format!(
+                    "Migration failed: {e}\nSQL: {stmt}"
+                )));
+            }
+        }
+
         // Seed metadata on first run
         let mut rows = conn
             .query(
@@ -138,7 +145,7 @@ impl TursoRegistry {
             conn.execute(
                 "INSERT OR IGNORE INTO registry_metadata (key, value) VALUES (?1, ?2)",
                 params![
-                    schema::SCHEMA_VERSION.to_string(),
+                    "schema_version".to_string(),
                     schema::SCHEMA_VERSION.to_string()
                 ],
             )
@@ -192,8 +199,8 @@ impl TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
+                        block_number, tx_hash, amount, chain, stealth_address \
                  FROM announcements ORDER BY id",
                 (),
             )
@@ -236,13 +243,6 @@ impl TursoRegistry {
             None => (None, None),
         };
 
-        let yellow_count = query_i64(
-            &conn,
-            "SELECT COUNT(*) FROM announcements WHERE channel_id IS NOT NULL",
-            (),
-        )
-        .await?;
-
         let mut dist_rows = conn
             .query(
                 "SELECT view_tag, COUNT(*) FROM announcements GROUP BY view_tag",
@@ -269,7 +269,6 @@ impl TursoRegistry {
             view_tag_distribution: distribution,
             earliest_timestamp: earliest.map(|t| t as u64),
             latest_timestamp: latest.map(|t| t as u64),
-            yellow_channel_count: yellow_count as u64,
         })
     }
 
@@ -290,21 +289,73 @@ impl TursoRegistry {
     // ── internal ─────────────────────────────────────────────────────────
 
     async fn insert_announcement(&self, ann: &Announcement) -> Result<u64> {
+        self.insert_announcement_inner(ann, false).await
+    }
+
+    /// Inserts an announcement sourced from the on-chain indexer (Envio).
+    /// Sets `on_chain = 1` and is idempotent on `(block_number, block_tx_index)`.
+    pub async fn insert_onchain_announcement(&self, ann: &Announcement) -> Result<u64> {
+        // Idempotency: if we already have this exact on-chain event, return its id
+        if let (Some(bn), Some(bti)) = (ann.block_number, ann.tx_hash.as_ref()) {
+            let conn = self.conn()?;
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM announcements WHERE block_number = ?1 AND tx_hash = ?2 LIMIT 1",
+                    params![bn as i64, bti.clone()],
+                )
+                .await
+                .map_err(|e| SpecterError::RegistryError(format!("onchain dedup check: {e}")))?;
+
+            if let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| SpecterError::RegistryError(format!("onchain dedup row: {e}")))?
+            {
+                let existing_id: i64 = row
+                    .get(0)
+                    .map_err(|e| SpecterError::RegistryError(format!("onchain dedup id: {e}")))?;
+                return Ok(existing_id as u64);
+            }
+        }
+
+        self.insert_announcement_inner(ann, true).await
+    }
+
+    /// Returns all announcements from a specific source chain.
+    pub async fn get_by_source_chain(&self, chain_id: u64) -> Result<Vec<Announcement>> {
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
+                        block_number, tx_hash, amount, chain, stealth_address \
+                 FROM announcements WHERE source_chain_id = ?1 ORDER BY block_number DESC",
+                params![chain_id as i64],
+            )
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("get_by_source_chain: {e}")))?;
+
+        collect_announcements(&mut rows).await
+    }
+
+    async fn insert_announcement_inner(&self, ann: &Announcement, on_chain: bool) -> Result<u64> {
         let conn = self.conn()?;
 
         conn.execute(
             "INSERT INTO announcements \
-             (view_tag, timestamp, ephemeral_key, channel_id, block_number, tx_hash, amount, chain) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain, \
+              block_number, tx_hash, amount, chain, stealth_address) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
                 Value::Blob(ann.ephemeral_key.clone()),
-                opt_blob(ann.channel_id.map(|c| c.to_vec())),
+                opt_int(ann.source_chain_id.map(|c| c as i64)),
+                Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
                 opt_text(ann.tx_hash.clone()),
                 opt_text(ann.amount.clone()),
                 opt_text(ann.chain.clone()),
+                opt_text(ann.stealth_address.clone()),
             ],
         )
         .await
@@ -411,8 +462,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
+                        block_number, tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE view_tag = ?1 ORDER BY timestamp DESC",
                 params![view_tag as i64],
             )
@@ -434,8 +485,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
+                        block_number, tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE timestamp BETWEEN ?1 AND ?2 ORDER BY timestamp",
                 params![start as i64, end as i64],
             )
@@ -449,8 +500,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
+                        block_number, tx_hash, amount, chain, stealth_address \
                  FROM announcements WHERE id = ?1 LIMIT 1",
                 params![id as i64],
             )
@@ -495,8 +546,8 @@ impl AnnouncementRegistry for TursoRegistry {
 /// Map a libsql Row to an Announcement.
 ///
 /// Column order must match every SELECT that fetches announcements:
-///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=channel_id
-///   5=block_number  6=tx_hash  7=amount  8=chain
+///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=source_chain_id
+///   5=block_number  6=tx_hash  7=amount  8=chain  9=stealth_address
 fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
     let id: i64 = row
         .get(0)
@@ -511,27 +562,17 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         .get(3)
         .map_err(|e| SpecterError::RegistryError(format!("row[ephemeral_key]: {e}")))?;
 
-    let channel_id = get_opt_blob(row, 4).and_then(|b| {
-        if b.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&b);
-            Some(arr)
-        } else {
-            None
-        }
-    });
-
     Ok(Announcement {
         id: id as u64,
         view_tag: view_tag as u8,
         timestamp: timestamp as u64,
         ephemeral_key,
-        channel_id,
+        source_chain_id: get_opt_int(row, 4).map(|v| v as u64),
         block_number: get_opt_int(row, 5).map(|b| b as u64),
         tx_hash: get_opt_text(row, 6),
         amount: get_opt_text(row, 7),
         chain: get_opt_text(row, 8),
-        stealth_address: None,  // Phase 2: will be populated from on-chain events
+        stealth_address: get_opt_text(row, 9),
     })
 }
 
@@ -657,13 +698,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_channel_id_roundtrip() {
+    async fn test_source_chain_id_roundtrip() {
         let reg = setup().await;
-        let ch = [0xCC; 32];
-        let ann = Announcement::with_channel(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], 0x01, ch);
+        let mut ann = make_ann(0x01);
+        ann.source_chain_id = Some(42161); // Arbitrum One
         let id = reg.publish(ann).await.unwrap();
         let r = reg.get_by_id(id).await.unwrap().unwrap();
-        assert_eq!(r.channel_id, Some(ch));
+        assert_eq!(r.source_chain_id, Some(42161));
+    }
+
+    #[tokio::test]
+    async fn test_get_by_source_chain() {
+        let reg = setup().await;
+        let mut a1 = make_ann(0x01);
+        a1.source_chain_id = Some(42161); // Arbitrum
+        reg.publish(a1).await.unwrap();
+
+        let mut a2 = make_ann(0x02);
+        a2.source_chain_id = Some(10143); // Monad testnet
+        reg.publish(a2).await.unwrap();
+
+        let mut a3 = make_ann(0x03);
+        a3.source_chain_id = Some(42161); // Arbitrum again
+        reg.publish(a3).await.unwrap();
+
+        let arb = reg.get_by_source_chain(42161).await.unwrap();
+        assert_eq!(arb.len(), 2);
+        assert!(arb.iter().all(|a| a.source_chain_id == Some(42161)));
+
+        let monad = reg.get_by_source_chain(10143).await.unwrap();
+        assert_eq!(monad.len(), 1);
+        assert_eq!(monad[0].source_chain_id, Some(10143));
+    }
+
+    #[tokio::test]
+    async fn test_insert_onchain_idempotent() {
+        let reg = setup().await;
+        let mut ann = make_ann(0x42);
+        ann.block_number = Some(1_000_000);
+        ann.tx_hash = Some("0xdeadbeef".into());
+        ann.source_chain_id = Some(10143);
+
+        let id1 = reg.insert_onchain_announcement(&ann).await.unwrap();
+        let id2 = reg.insert_onchain_announcement(&ann).await.unwrap();
+        // Second insert should return the same id (idempotent)
+        assert_eq!(id1, id2);
+        // Only one row in DB
+        assert_eq!(reg.count().await.unwrap(), 1);
     }
 
     #[tokio::test]

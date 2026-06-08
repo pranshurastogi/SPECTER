@@ -1,7 +1,6 @@
 //! Server-side announcement publishing.
 //!
-//! This module provides the ability to publish announcements directly to the
-//! SPECTERAnnouncer contract. Used for sponsored announcements or testing.
+//! Used for sponsored announcements (server pays gas) or integration testing.
 
 use alloy::{
     network::EthereumWallet,
@@ -14,17 +13,17 @@ use crate::contract::SPECTERAnnouncer;
 
 /// Publishes an announcement transaction to the SPECTERAnnouncer contract.
 ///
-/// This function constructs and sends an `announce()` call from a signer,
-/// waiting for the receipt before returning the transaction hash.
+/// Constructs and sends an `announce()` call from the provided signer,
+/// waiting for on-chain confirmation before returning the transaction hash.
 ///
 /// # Arguments
 ///
-/// * `rpc_url` - HTTP RPC endpoint URL
+/// * `rpc_url` - Monad HTTP RPC endpoint
 /// * `signer` - Local signer with funds for gas
 /// * `announcer_addr` - SPECTERAnnouncer contract address
-/// * `stealth_addr` - Target stealth address
-/// * `ephemeral_key` - Kyber ephemeral key (1088 bytes)
-/// * `metadata` - Fixed 77-byte metadata layout
+/// * `stealth_addr` - Recipient's stealth address
+/// * `ephemeral_key` - ML-KEM ciphertext (must be exactly 1088 bytes)
+/// * `metadata` - Fixed 77-byte metadata layout (see `AnnouncementMetadata`)
 ///
 /// # Returns
 ///
@@ -37,7 +36,7 @@ use crate::contract::SPECTERAnnouncer;
 ///     "https://testnet-rpc.monad.xyz",
 ///     signer,
 ///     "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a".parse()?,
-///     "0x1234...".parse()?,
+///     stealth_addr,
 ///     &ephemeral_key,
 ///     &metadata,
 /// ).await?;
@@ -50,16 +49,29 @@ pub async fn publish_announcement(
     ephemeral_key: &[u8; 1088],
     metadata: &[u8; 77],
 ) -> Result<B256> {
-    let provider = alloy::providers::ProviderBuilder::new().on_http(rpc_url.parse()?);
-    let _wallet = EthereumWallet::from(signer);
+    let wallet = EthereumWallet::from(signer);
+    let provider = alloy::providers::ProviderBuilder::new()
+        .wallet(wallet)
+        .on_http(rpc_url.parse()?);
     let contract = SPECTERAnnouncer::new(announcer_addr, &provider);
 
     let tx = contract
-        .announce(stealth_addr, ephemeral_key.to_vec().into(), metadata.to_vec().into())
+        .announce(
+            stealth_addr,
+            ephemeral_key.to_vec().into(),
+            metadata.to_vec().into(),
+        )
         .gas(60_000);
 
-    let pending = tx.send().await?;
-    let receipt = pending.get_receipt().await?;
+    let pending = tx
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("announce() send failed: {e}"))?;
+
+    let receipt = pending
+        .get_receipt()
+        .await
+        .map_err(|e| anyhow::anyhow!("waiting for receipt failed: {e}"))?;
 
     Ok(receipt.transaction_hash)
 }
@@ -69,10 +81,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_publish_announcement_exists() {
-        // Verify that the publish_announcement function exists and is callable
-        // Full testing would require mocking the RPC, which is complex with alloy
-        // This is a compile-time check that the function signature is correct
-        let _ = publish_announcement;
+    fn test_publish_announcement_signature() {
+        // Compile-time check that publish_announcement accepts the correct parameter types.
+        // Runtime testing requires a live Monad RPC; that belongs in integration tests.
+        fn _check(
+            url: &str,
+            signer: PrivateKeySigner,
+            ann: Address,
+            stealth: Address,
+            ek: &[u8; 1088],
+            meta: &[u8; 77],
+        ) {
+            let _ = publish_announcement(url, signer, ann, stealth, ek, meta);
+        }
     }
 }

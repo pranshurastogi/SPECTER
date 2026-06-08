@@ -15,8 +15,10 @@ use crate::error::{Result, SpecterError};
 ///
 /// # Wire Format (binary)
 /// ```text
-/// ephemeral_key (1088) || view_tag (1) || timestamp (8) || [channel_id (32)]
+/// ephemeral_key (1088) || view_tag (1) || timestamp (8)
 /// ```
+/// Note: `source_chain_id` and other optional fields are encoded in the on-chain
+/// metadata bytes, not in this binary format.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Announcement {
     /// Unique identifier (assigned by registry)
@@ -28,22 +30,23 @@ pub struct Announcement {
     pub view_tag: u8,
     /// Unix timestamp when announcement was created
     pub timestamp: u64,
-    /// Optional: Yellow channel ID for trading integration
+    /// EIP-155 chain ID of the chain where the payment originated.
+    /// Examples: 42161 = Arbitrum One, 10143 = Monad testnet, 1 = Ethereum mainnet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_id: Option<[u8; 32]>,
-    /// Optional: Block number if stored on-chain
+    pub source_chain_id: Option<u64>,
+    /// Optional: Block number on Monad where the announcement was published
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_number: Option<u64>,
-    /// Optional: Transaction hash if stored on-chain
+    /// Optional: Source-chain transaction hash (hex)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
-    /// Optional: Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Optional: Payment amount (raw hex, e.g. "0x0000...0de0b6b3a7640000" = 1 ETH in wei)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
-    /// Optional: Chain identifier (e.g. "ethereum", "sui")
+    /// Optional: Human-readable chain name (e.g. "monad-testnet", "arbitrum-one")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
-    /// Optional: Stealth address derived from ephemeral key (for validation)
+    /// Optional: Stealth address for this payment (checksummed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stealth_address: Option<String>,
 }
@@ -56,23 +59,7 @@ impl Announcement {
             ephemeral_key,
             view_tag,
             timestamp: Self::current_timestamp(),
-            channel_id: None,
-            block_number: None,
-            tx_hash: None,
-            amount: None,
-            chain: None,
-            stealth_address: None,
-        }
-    }
-
-    /// Creates an announcement with a Yellow channel ID.
-    pub fn with_channel(ephemeral_key: Vec<u8>, view_tag: u8, channel_id: [u8; 32]) -> Self {
-        Self {
-            id: 0,
-            ephemeral_key,
-            view_tag,
-            timestamp: Self::current_timestamp(),
-            channel_id: Some(channel_id),
+            source_chain_id: None,
             block_number: None,
             tx_hash: None,
             amount: None,
@@ -111,26 +98,22 @@ impl Announcement {
     }
 
     /// Serializes to compact binary format.
+    ///
+    /// Format: `ephemeral_key (1088) || view_tag (1) || timestamp (8)`
+    /// Note: `source_chain_id` is not encoded here — it lives in the on-chain
+    /// metadata bytes and is populated when indexing from the chain.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let has_channel = self.channel_id.is_some();
-        let size = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE + 8 + 1 + if has_channel { 32 } else { 0 };
-
+        let size = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE + 8;
         let mut bytes = Vec::with_capacity(size);
         bytes.extend_from_slice(&self.ephemeral_key);
         bytes.push(self.view_tag);
         bytes.extend_from_slice(&self.timestamp.to_le_bytes());
-        bytes.push(if has_channel { 1 } else { 0 });
-
-        if let Some(channel_id) = &self.channel_id {
-            bytes.extend_from_slice(channel_id);
-        }
-
         bytes
     }
 
     /// Deserializes from compact binary format.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let min_size = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE + 8 + 1;
+        let min_size = KYBER_CIPHERTEXT_SIZE + VIEW_TAG_SIZE + 8;
         if bytes.len() < min_size {
             return Err(SpecterError::InvalidAnnouncement(format!(
                 "too short: {} bytes, minimum {}",
@@ -149,26 +132,12 @@ impl Announcement {
                 .map_err(|_| SpecterError::InvalidAnnouncement("invalid timestamp".into()))?,
         );
 
-        let has_channel = bytes[timestamp_start + 8] == 1;
-        let channel_id = if has_channel {
-            if bytes.len() < min_size + 32 {
-                return Err(SpecterError::InvalidAnnouncement(
-                    "missing channel_id bytes".into(),
-                ));
-            }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes[min_size..min_size + 32]);
-            Some(arr)
-        } else {
-            None
-        };
-
         let announcement = Self {
             id: 0, // ID is assigned by registry, not serialized
             ephemeral_key,
             view_tag,
             timestamp,
-            channel_id,
+            source_chain_id: None,
             block_number: None,
             tx_hash: None,
             amount: None,
@@ -195,7 +164,7 @@ pub struct AnnouncementBuilder {
     ephemeral_key: Option<Vec<u8>>,
     view_tag: Option<u8>,
     timestamp: Option<u64>,
-    channel_id: Option<[u8; 32]>,
+    source_chain_id: Option<u64>,
     block_number: Option<u64>,
     tx_hash: Option<String>,
     amount: Option<String>,
@@ -228,8 +197,9 @@ impl AnnouncementBuilder {
     }
 
     /// Sets the Yellow channel ID (optional).
-    pub fn channel_id(mut self, id: [u8; 32]) -> Self {
-        self.channel_id = Some(id);
+    /// Sets the source chain ID (optional, EIP-155 chain ID).
+    pub fn source_chain_id(mut self, id: u64) -> Self {
+        self.source_chain_id = Some(id);
         self
     }
 
@@ -278,7 +248,7 @@ impl AnnouncementBuilder {
         if let Some(ts) = self.timestamp {
             announcement.timestamp = ts;
         }
-        announcement.channel_id = self.channel_id;
+        announcement.source_chain_id = self.source_chain_id;
         announcement.block_number = self.block_number;
         announcement.tx_hash = self.tx_hash;
         announcement.amount = self.amount;
@@ -301,8 +271,6 @@ pub struct AnnouncementStats {
     pub earliest_timestamp: Option<u64>,
     /// Latest announcement timestamp
     pub latest_timestamp: Option<u64>,
-    /// Number of announcements with Yellow channel IDs
-    pub yellow_channel_count: u64,
 }
 
 impl Default for AnnouncementStats {
@@ -312,7 +280,6 @@ impl Default for AnnouncementStats {
             view_tag_distribution: vec![0; 256],
             earliest_timestamp: None,
             latest_timestamp: None,
-            yellow_channel_count: 0,
         }
     }
 }
@@ -348,9 +315,6 @@ impl AnnouncementStats {
             _ => {}
         }
 
-        if announcement.channel_id.is_some() {
-            self.yellow_channel_count += 1;
-        }
     }
 }
 
@@ -367,21 +331,18 @@ mod tests {
         let ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
         assert_eq!(ann.view_tag, 0x42);
         assert!(ann.timestamp > 0);
-        assert!(ann.channel_id.is_none());
+        assert!(ann.source_chain_id.is_none());
     }
 
     #[test]
     fn test_announcement_validation() {
-        // Valid announcement
         let valid = Announcement::new(make_valid_ephemeral_key(), 0x42);
         assert!(valid.validate().is_ok());
 
-        // Invalid: wrong ephemeral key size
         let mut invalid = valid.clone();
         invalid.ephemeral_key = vec![0u8; 100];
         assert!(invalid.validate().is_err());
 
-        // Invalid: all-zero ephemeral key
         let mut invalid2 = valid.clone();
         invalid2.ephemeral_key = vec![0u8; KYBER_CIPHERTEXT_SIZE];
         assert!(invalid2.validate().is_err());
@@ -399,14 +360,16 @@ mod tests {
     }
 
     #[test]
-    fn test_announcement_with_channel() {
-        let channel_id = [0xCC; 32];
-        let ann = Announcement::with_channel(make_valid_ephemeral_key(), 0x42, channel_id);
+    fn test_announcement_builder_with_source_chain_id() {
+        let ann = AnnouncementBuilder::new()
+            .ephemeral_key(make_valid_ephemeral_key())
+            .view_tag(0x55)
+            .source_chain_id(42161) // Arbitrum
+            .build()
+            .unwrap();
 
-        let bytes = ann.to_bytes();
-        let ann2 = Announcement::from_bytes(&bytes).unwrap();
-
-        assert_eq!(ann2.channel_id, Some(channel_id));
+        assert_eq!(ann.view_tag, 0x55);
+        assert_eq!(ann.source_chain_id, Some(42161));
     }
 
     #[test]
@@ -414,12 +377,11 @@ mod tests {
         let ann = AnnouncementBuilder::new()
             .ephemeral_key(make_valid_ephemeral_key())
             .view_tag(0x55)
-            .channel_id([0xAA; 32])
             .build()
             .unwrap();
 
         assert_eq!(ann.view_tag, 0x55);
-        assert!(ann.channel_id.is_some());
+        assert!(ann.source_chain_id.is_none());
     }
 
     #[test]
@@ -473,15 +435,15 @@ mod tests {
         let ann = AnnouncementBuilder::new()
             .ephemeral_key(make_valid_ephemeral_key())
             .view_tag(0xFF)
-            .amount("1.5")
+            .amount("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000")
             .stealth_address("0xabcd")
-            .channel_id([0xEE; 32])
+            .source_chain_id(10143)
             .build()
             .unwrap();
 
         assert_eq!(ann.stealth_address, Some("0xabcd".to_string()));
-        assert_eq!(ann.amount, Some("1.5".to_string()));
-        assert!(ann.channel_id.is_some());
+        assert!(ann.amount.is_some());
+        assert_eq!(ann.source_chain_id, Some(10143));
     }
 
     #[test]
