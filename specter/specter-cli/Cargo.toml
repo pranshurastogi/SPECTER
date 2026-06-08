@@ -10,31 +10,50 @@ description = "Command-line interface for SPECTER protocol"
 name = "specter"
 path = "src/main.rs"
 
+[[bin]]
+name = "e2e-flow"
+path = "src/bin/e2e_flow.rs"
+required-features = ["e2e"]
+
+[features]
+default = []
+e2e = [
+    "specter-chain",
+    "specter-registry/test-utils",
+    "alloy",
+    "dotenvy",
+]
+
 [dependencies]
-specter-core = { path = "../specter-core" }
-specter-crypto = { path = "../specter-crypto" }
+specter-core    = { path = "../specter-core" }
+specter-crypto  = { path = "../specter-crypto" }
 specter-stealth = { path = "../specter-stealth" }
 specter-registry = { path = "../specter-registry" }
 specter-scanner = { path = "../specter-scanner" }
-specter-ens = { path = "../specter-ens" }
-specter-api = { path = "../specter-api" }
+specter-ens     = { path = "../specter-ens" }
+specter-api     = { path = "../specter-api" }
+
+# e2e-flow only (gated behind e2e feature)
+specter-chain = { path = "../specter-chain", optional = true }
+alloy         = { workspace = true, optional = true }
+dotenvy       = { workspace = true, optional = true }
 
 # CLI
-clap = { workspace = true }
-indicatif = { workspace = true }
-colored = { workspace = true }
-dialoguer = { workspace = true }
+clap       = { workspace = true }
+indicatif  = { workspace = true }
+colored    = { workspace = true }
+dialoguer  = { workspace = true }
 
 # Async
 tokio = { workspace = true }
 
 # Serialization
-serde = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }
-hex = { workspace = true }
+hex        = { workspace = true }
 
 # Logging
-tracing = { workspace = true }
+tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Error handling
