@@ -120,6 +120,8 @@ impl ChainIndexerConfig {
 /// Background indexer that writes confirmed Announcement events to the registry.
 pub struct ChainIndexer {
     config: ChainIndexerConfig,
+    // Reserved for the direct-RPC fallback polling path (currently handled by Envio).
+    #[allow(dead_code)]
     registry: Arc<dyn AnnouncementRegistry>,
 }
 

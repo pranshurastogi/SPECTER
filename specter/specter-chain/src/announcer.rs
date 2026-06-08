@@ -50,18 +50,23 @@ pub async fn publish_announcement(
     metadata: &[u8; 77],
 ) -> Result<B256> {
     let wallet = EthereumWallet::from(signer);
+    // with_recommended_fillers adds nonce management, gas estimation, and chain-ID filling.
+    // Without it alloy rejects the tx with "missing properties: nonce, max_fee_per_gas, …"
     let provider = alloy::providers::ProviderBuilder::new()
+        .with_recommended_fillers()
         .wallet(wallet)
         .on_http(rpc_url.parse()?);
     let contract = SPECTERAnnouncer::new(announcer_addr, &provider);
 
+    // 1088-byte ephemeral_key + 77-byte metadata calldata ≈ 18 000 gas for data alone.
+    // Add base tx (21 000) + event emission (~3 000) + SSTORE overhead → 150 000 is safe.
     let tx = contract
         .announce(
             stealth_addr,
             ephemeral_key.to_vec().into(),
             metadata.to_vec().into(),
         )
-        .gas(60_000);
+        .gas(150_000);
 
     let pending = tx
         .send()
