@@ -1,9 +1,10 @@
 {
-  "name": "specter-envio",
+  "name": "specter-indexer",
   "version": "1.0.0",
-  "description": "SPECTER SPECTERAnnouncer on-chain event indexer — Envio HyperIndex with Turso dual-write",
+  "description": "SPECTER on-chain announcement indexer — Envio HyperIndex for SPECTERAnnouncer on Monad testnet with Turso dual-write",
   "license": "MIT OR Apache-2.0",
   "scripts": {
+    "setup": "cp -n .env.example .env 2>/dev/null || true && npm install && npm run codegen",
     "dev": "envio dev",
     "start": "envio start",
     "codegen": "envio codegen",

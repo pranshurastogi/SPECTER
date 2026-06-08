@@ -1,4 +1,4 @@
-# specter-envio
+# SPECTER Indexer
 
 Envio HyperIndex for the `SPECTERAnnouncer` contract on Monad testnet.
 
@@ -51,19 +51,25 @@ If `TURSO_DATABASE_URL` or `TURSO_AUTH_TOKEN` are not set, the indexer still run
 ### 3. Install dependencies and generate types
 
 ```bash
-cd specter-envio
+cd indexer
+cp .env.example .env   # then edit .env with your Turso credentials
 npm install
-envio codegen          # generates src/generated/ types from config.yaml + schema.graphql
+npm run codegen        # generates generated/ types from config.yaml + schema.graphql
+```
+
+Or use the one-liner:
+```bash
+npm run setup          # copies .env.example → .env, installs, runs codegen
 ```
 
 ### 4. Run
 
 ```bash
 # Development (with live reload and local Postgres)
-envio dev
+npm run dev
 
 # Production
-envio start
+npm start
 ```
 
 ---
