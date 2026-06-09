@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use specter_ens::{ResolverConfig, SpecterResolver};
-use specter_registry::turso::{ScanPositionStore, TursoRegistry, YellowChannelStore};
+use specter_registry::turso::{ScanPositionStore, TursoRegistry};
 use specter_registry::MemoryRegistry;
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
-use specter_yellow::types::YellowConfig;
 use tracing::info;
 
 use specter_core::error::Result;
@@ -362,14 +361,10 @@ pub struct AppState {
     pub registry: RegistryBackend,
     /// Scanner checkpoint persistence (only when using Turso).
     pub scan_store: Option<Arc<ScanPositionStore>>,
-    /// Yellow channel persistence (only when using Turso).
-    pub yellow_store: Option<Arc<YellowChannelStore>>,
     /// ENS resolver (Ethereum).
     pub resolver: SpecterResolver,
     /// SuiNS resolver (Sui).
     pub suins_resolver: SuinsResolver,
-    /// Yellow Network configuration.
-    pub yellow_config: YellowConfig,
     /// In-flight stealth payments awaiting their on-chain tx + publish.
     ///
     /// Binds `POST /api/v1/stealth/create` to `POST /api/v1/registry/announcements`
@@ -391,7 +386,7 @@ impl AppState {
     pub async fn new(config: ApiConfig) -> Self {
         let backend = std::env::var("REGISTRY_BACKEND").unwrap_or_default();
 
-        let (registry, scan_store, yellow_store) = if backend == "turso" {
+        let (registry, scan_store) = if backend == "turso" {
             let url = std::env::var("TURSO_DATABASE_URL")
                 .expect("REGISTRY_BACKEND=turso requires TURSO_DATABASE_URL");
             let token = std::env::var("TURSO_AUTH_TOKEN")
@@ -404,13 +399,12 @@ impl AppState {
                 .expect("Failed to connect to Turso database");
 
             let db = turso.database();
-            let scan = Arc::new(ScanPositionStore::new(db.clone()));
-            let yellow = Arc::new(YellowChannelStore::new(db));
+            let scan = Arc::new(ScanPositionStore::new(db));
 
-            (RegistryBackend::Turso(turso), Some(scan), Some(yellow))
+            (RegistryBackend::Turso(turso), Some(scan))
         } else {
             info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
-            (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
+            (RegistryBackend::Memory(MemoryRegistry::new()), None)
         };
 
         // Load chain configuration
@@ -440,25 +434,21 @@ impl AppState {
             config: config.clone(),
             registry,
             scan_store,
-            yellow_store,
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
-            yellow_config: build_yellow_config(),
             pending_payments: Arc::new(PendingPaymentStore::new()),
             chain_config,
         }
     }
 
-    /// Synchronous constructor (always uses in-memory registry). For backward compat / tests.
+    /// Synchronous constructor (always uses in-memory registry). For tests / local dev.
     pub fn new_sync(config: ApiConfig) -> Self {
         Self {
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
-            yellow_config: build_yellow_config(),
             config,
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
-            yellow_store: None,
             pending_payments: Arc::new(PendingPaymentStore::new()),
             chain_config: ChainConfig {
                 rpc_url: String::new(),
@@ -503,24 +493,6 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     SuinsResolver::with_config(sc)
 }
 
-fn build_yellow_config() -> YellowConfig {
-    YellowConfig {
-        ws_url: std::env::var("YELLOW_WS_URL")
-            .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
-        rpc_url: std::env::var("ALCHEMY_RPC_URL")
-            .or_else(|_| std::env::var("ETH_RPC_URL"))
-            .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
-        chain_id: std::env::var("YELLOW_CHAIN_ID")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(11155111),
-        custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
-            .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
-        adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
-            .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
-        challenge_duration: 3600,
-    }
-}
 
 #[cfg(test)]
 mod tests {

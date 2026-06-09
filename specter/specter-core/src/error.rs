@@ -238,10 +238,7 @@ pub enum SpecterError {
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // YELLOW NETWORK ERRORS
-    // ═══════════════════════════════════════════════════════════════════════════
-    /// Yellow Network error.
+    /// Yellow Network error (kept for specter-yellow crate compatibility).
     #[error("Yellow Network error: {0}")]
     YellowError(String),
 }

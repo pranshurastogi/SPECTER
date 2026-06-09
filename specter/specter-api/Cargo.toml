@@ -15,7 +15,6 @@ specter-scanner = { path = "../specter-scanner" }
 specter-chain = { path = "../specter-chain" }
 specter-ens = { path = "../specter-ens" }
 specter-suins = { path = "../specter-suins" }
-specter-yellow = { path = "../specter-yellow" }
 
 # Web framework
 axum = { workspace = true }

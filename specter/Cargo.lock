@@ -5555,7 +5555,6 @@ dependencies = [
  "specter-scanner",
  "specter-stealth",
  "specter-suins",
- "specter-yellow",
  "tokio",
  "tokio-test",
  "tower 0.5.3",

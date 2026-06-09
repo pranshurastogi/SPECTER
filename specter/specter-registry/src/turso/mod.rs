@@ -6,8 +6,6 @@
 pub mod registry;
 pub mod scan;
 pub mod schema;
-pub mod yellow;
 
 pub use registry::TursoRegistry;
 pub use scan::ScanPositionStore;
-pub use yellow::YellowChannelStore;

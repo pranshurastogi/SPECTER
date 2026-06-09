@@ -105,14 +105,19 @@ impl TursoRegistry {
             })?;
         }
 
-        // Run all migrations in order. "duplicate column" and existing index errors are skipped.
+        // Run all migrations in order. Safe errors (already done) are skipped.
         for stmt in schema::MIGRATION_V1_TO_V2
             .iter()
             .chain(schema::MIGRATION_V2_TO_V3)
+            .chain(schema::MIGRATION_V3_TO_V4)
         {
             if let Err(e) = conn.execute(stmt, ()).await {
                 let msg = e.to_string().to_lowercase();
+                // Idempotent: skip errors that mean "already done"
                 if msg.contains("duplicate column")
+                    || msg.contains("no such column")  // DROP COLUMN already done
+                    || msg.contains("no such table")   // DROP TABLE already done
+                    || msg.contains("no such index")   // DROP INDEX doesn't exist on fresh DB
                     || (msg.contains("already exists") && stmt.starts_with("CREATE INDEX"))
                     || (msg.contains("no rows") && stmt.starts_with("DELETE"))
                 {

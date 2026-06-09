@@ -1,7 +1,7 @@
 //! Turso (libSQL) schema definition and migration logic.
 
-/// Current schema version. Increment on breaking schema changes.
-pub const SCHEMA_VERSION: i32 = 3;
+/// Current schema version.
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// DDL statements executed in order on startup (CREATE IF NOT EXISTS — idempotent).
 pub const SCHEMA_STATEMENTS: &[&str] = &[
@@ -22,13 +22,13 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
         block_tx_index   INTEGER,
         created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx ON announcements(payment_tx_hash)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_view_tag     ON announcements(view_tag)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_timestamp    ON announcements(timestamp DESC)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_source_chain ON announcements(source_chain_id)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_block_number ON announcements(block_number)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_on_chain     ON announcements(on_chain)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_stealth_addr ON announcements(stealth_address)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx   ON announcements(payment_tx_hash)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_created_at   ON announcements(created_at DESC)",
 
     // ── scan_positions ─────────────────────────────────────────────────────
@@ -48,72 +48,40 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_scan_positions_updated_at ON scan_positions(updated_at DESC)",
 
-    // ── yellow_channels ────────────────────────────────────────────────────
-    "CREATE TABLE IF NOT EXISTS yellow_channels (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id        BLOB    NOT NULL UNIQUE,
-        status            TEXT    NOT NULL DEFAULT 'open',
-        created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        closed_at         INTEGER,
-        creator_wallet    TEXT,
-        chain             TEXT,
-        asset_address     TEXT,
-        asset_symbol      TEXT,
-        amount            TEXT    NOT NULL,
-        announcement_id   INTEGER,
-        funding_tx_hash   TEXT UNIQUE,
-        closing_tx_hash   TEXT UNIQUE,
-        error_reason      TEXT,
-        metadata          TEXT,
-        updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        FOREIGN KEY(announcement_id) REFERENCES announcements(id) ON DELETE SET NULL
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_yellow_channels_status     ON yellow_channels(status)",
-    "CREATE INDEX IF NOT EXISTS idx_yellow_channels_created_at ON yellow_channels(created_at DESC)",
-
     // ── registry_metadata ──────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS registry_metadata (
         key        TEXT    PRIMARY KEY,
         value      TEXT    NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
-
-    // ── announcement_deletions (compliance audit log) ──────────────────────
-    "CREATE TABLE IF NOT EXISTS announcement_deletions (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        announcement_id  INTEGER NOT NULL,
-        reason           TEXT,
-        deleted_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        deleted_by       TEXT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_announcement_deletions_aid ON announcement_deletions(announcement_id)",
 ];
 
-/// Migration statements for upgrading from schema v2 → v3.
-///
-/// Adds `payment_tx_hash` — the source-chain payment tx hash from announcement metadata,
-/// distinct from `tx_hash` which holds the Monad announce tx hash (dedup key).
-pub const MIGRATION_V2_TO_V3: &[&str] = &[
-    "ALTER TABLE announcements ADD COLUMN payment_tx_hash TEXT",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx ON announcements(payment_tx_hash)",
-    // Clean up garbage row inserted by buggy init_schema in v1
-    "DELETE FROM registry_metadata WHERE key = '1'",
-];
-
-/// Migration statements for upgrading from schema v1 → v2.
-///
-/// These are run after SCHEMA_STATEMENTS. "duplicate column" errors are caught
-/// and silently ignored — meaning a column was already added in a previous run.
-/// All other errors are fatal.
+/// v1 → v2: added source_chain_id, on_chain, stealth_address, block_tx_index columns.
 pub const MIGRATION_V1_TO_V2: &[&str] = &[
-    // Replace Yellow's channel_id BLOB with source_chain_id INTEGER
     "ALTER TABLE announcements ADD COLUMN source_chain_id INTEGER",
     "ALTER TABLE announcements ADD COLUMN on_chain INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE announcements ADD COLUMN stealth_address TEXT",
     "ALTER TABLE announcements ADD COLUMN block_tx_index INTEGER",
-    // New indices for migration columns
     "CREATE INDEX IF NOT EXISTS idx_announcements_source_chain ON announcements(source_chain_id)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_block_number ON announcements(block_number)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_on_chain     ON announcements(on_chain)",
     "CREATE INDEX IF NOT EXISTS idx_announcements_stealth_addr ON announcements(stealth_address)",
+];
+
+/// v2 → v3: added payment_tx_hash; cleaned up registry_metadata garbage row.
+pub const MIGRATION_V2_TO_V3: &[&str] = &[
+    "ALTER TABLE announcements ADD COLUMN payment_tx_hash TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_payment_tx ON announcements(payment_tx_hash)",
+    "DELETE FROM registry_metadata WHERE key = '1'",
+];
+
+/// v3 → v4: drop Yellow and dead tables.
+///
+/// yellow_channels and announcement_deletions are removed entirely.
+/// Note: channel_id (v1 remnant BLOB) is left alone — it causes no harm and simplifies migration.
+pub const MIGRATION_V3_TO_V4: &[&str] = &[
+    "DROP TABLE IF EXISTS yellow_channels",
+    "DROP TABLE IF EXISTS announcement_deletions",
+    "DROP INDEX IF EXISTS idx_announcements_channel_id",
+    "INSERT OR REPLACE INTO registry_metadata (key, value) VALUES ('schema_version', '4')",
 ];
