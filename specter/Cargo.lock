@@ -5536,6 +5536,7 @@ dependencies = [
 name = "specter-api"
 version = "0.1.0"
 dependencies = [
+ "alloy",
  "async-trait",
  "axum",
  "dashmap 5.5.3",
@@ -5561,6 +5562,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid 1.20.0",
 ]
 

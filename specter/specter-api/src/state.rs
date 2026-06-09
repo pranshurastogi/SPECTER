@@ -1,7 +1,9 @@
 //! App state: registry, ENS resolver, SuiNS resolver, config, chain indexer.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use alloy::signers::local::PrivateKeySigner;
 use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::turso::{ScanPositionStore, TursoRegistry};
 use specter_registry::MemoryRegistry;
@@ -15,6 +17,38 @@ use specter_core::types::{Announcement, AnnouncementStats};
 use crate::pending::PendingPaymentStore;
 
 // ── ApiConfig ─────────────────────────────────────────────────────────────
+
+/// Server-side relayer for gas-sponsored Monad announcements.
+///
+/// When configured, the backend broadcasts the `announce()` tx on behalf of the
+/// user so they never need MON or network switching.
+#[derive(Clone, Debug)]
+pub struct RelayerConfig {
+    /// Pre-parsed Monad signer (holds the relayer private key).
+    pub signer: PrivateKeySigner,
+    /// Monad JSON-RPC endpoint.
+    pub monad_rpc_url: String,
+    /// SPECTERAnnouncer contract address (checksummed).
+    pub announcer_addr: String,
+}
+
+impl RelayerConfig {
+    /// Loads relayer config from env. Returns `None` if any required var is missing.
+    pub fn from_env() -> Option<Self> {
+        let raw_key = std::env::var("RELAYER_PRIVATE_KEY").ok()?.trim().to_string();
+        if raw_key.is_empty() {
+            return None;
+        }
+        let signer: PrivateKeySigner = raw_key.parse().ok()?;
+        let monad_rpc_url = std::env::var("MONAD_RPC_URL")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        Some(Self { signer, monad_rpc_url, announcer_addr })
+    }
+}
 
 /// Configuration for the API service.
 #[derive(Clone, Debug)]
@@ -35,6 +69,10 @@ pub struct ApiConfig {
     pub enable_cache: bool,
     /// Security configuration.
     pub security: SecurityConfig,
+    /// RPC URLs for payment verification per source chain name.
+    /// Keys: "arbitrum", "ethereum", "base", "optimism", "monad-testnet", etc.
+    /// Env vars: CHAIN_RPC_ARBITRUM, CHAIN_RPC_ETHEREUM, CHAIN_RPC_BASE, etc.
+    pub chain_rpc_map: HashMap<String, String>,
 }
 
 /// Production security settings (loaded from environment).
@@ -121,6 +159,7 @@ impl Default for ApiConfig {
             sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
             enable_cache: true,
             security: SecurityConfig::default(),
+            chain_rpc_map: HashMap::new(),
         }
     }
 }
@@ -168,6 +207,25 @@ impl ApiConfig {
             eprintln!("⚠️  PINATA_GATEWAY_URL and/or PINATA_GATEWAY_TOKEN not set — IPFS features will be unavailable");
         }
 
+        // Build per-chain RPC map from env vars.
+        let mut chain_rpc_map = HashMap::new();
+        let chain_env_keys = [
+            ("CHAIN_RPC_ETHEREUM", "ethereum"),
+            ("CHAIN_RPC_ARBITRUM", "arbitrum"),
+            ("CHAIN_RPC_BASE", "base"),
+            ("CHAIN_RPC_OPTIMISM", "optimism"),
+            ("CHAIN_RPC_POLYGON", "polygon"),
+            ("CHAIN_RPC_MONAD_TESTNET", "monad-testnet"),
+            ("CHAIN_RPC_SEPOLIA", "sepolia"),
+        ];
+        for (env_key, chain_name) in chain_env_keys {
+            if let Ok(url) = std::env::var(env_key) {
+                if !url.is_empty() {
+                    chain_rpc_map.insert(chain_name.to_string(), url);
+                }
+            }
+        }
+
         Self {
             rpc_url,
             use_testnet,
@@ -179,6 +237,7 @@ impl ApiConfig {
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
             security: SecurityConfig::from_env(),
+            chain_rpc_map,
         }
     }
 }
@@ -302,6 +361,38 @@ impl RegistryBackend {
             Self::Turso(t) => t.flush().await,
         }
     }
+
+    /// Returns the last block processed by the event poller (Turso only).
+    pub async fn get_poller_last_block(&self) -> Option<u64> {
+        match self {
+            Self::Memory(_) => None,
+            Self::Turso(t) => t
+                .get_metadata("poller_last_block")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<u64>().ok()),
+        }
+    }
+
+    /// Writes an internal telemetry event. No-op for the memory backend.
+    pub async fn write_telemetry(
+        &self,
+        event: &str,
+        ip: Option<&str>,
+        ua: Option<&str>,
+        chain: Option<&str>,
+        chain_id: Option<u64>,
+        view_tag: Option<u8>,
+        status: &str,
+        err: Option<&str>,
+        ms: u64,
+    ) {
+        if let Self::Turso(t) = self {
+            t.write_telemetry(event, ip, ua, chain, chain_id, view_tag, status, err, ms)
+                .await;
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -372,6 +463,9 @@ pub struct AppState {
     pub pending_payments: Arc<PendingPaymentStore>,
     /// Chain configuration (for Monad indexing).
     pub chain_config: ChainConfig,
+    /// Server-side relayer for gas-sponsored announcements.
+    /// `None` in dev mode — client supplies tx_hash directly instead.
+    pub relayer_config: Option<RelayerConfig>,
 }
 
 impl AppState {
@@ -430,6 +524,13 @@ impl AppState {
             );
         }
 
+        let relayer_config = RelayerConfig::from_env();
+        if relayer_config.is_some() {
+            info!("Relayer configured — server-side gas-sponsored announcements enabled");
+        } else {
+            eprintln!("⚠️  RELAYER_PRIVATE_KEY not set — running in dev mode (client supplies tx_hash)");
+        }
+
         Self {
             config: config.clone(),
             registry,
@@ -438,6 +539,7 @@ impl AppState {
             suins_resolver: build_suins_resolver(&config),
             pending_payments: Arc::new(PendingPaymentStore::new()),
             chain_config,
+            relayer_config,
         }
     }
 
@@ -456,6 +558,7 @@ impl AppState {
                 deploy_block: 0,
                 enabled: false,
             },
+            relayer_config: None,
         }
     }
 }

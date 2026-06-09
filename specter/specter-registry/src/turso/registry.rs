@@ -110,16 +110,18 @@ impl TursoRegistry {
             .iter()
             .chain(schema::MIGRATION_V2_TO_V3)
             .chain(schema::MIGRATION_V3_TO_V4)
+            .chain(schema::MIGRATION_V4_TO_V5)
         {
             if let Err(e) = conn.execute(stmt, ()).await {
                 let msg = e.to_string().to_lowercase();
                 // Idempotent: skip errors that mean "already done"
                 if msg.contains("duplicate column")
-                    || msg.contains("no such column")  // DROP COLUMN already done
-                    || msg.contains("no such table")   // DROP TABLE already done
-                    || msg.contains("no such index")   // DROP INDEX doesn't exist on fresh DB
-                    || (msg.contains("already exists") && stmt.starts_with("CREATE INDEX"))
-                    || (msg.contains("no rows") && stmt.starts_with("DELETE"))
+                    || msg.contains("no such column")
+                    || msg.contains("no such table")
+                    || msg.contains("no such index")
+                    || msg.contains("already exists")
+                    || msg.contains("no rows") && stmt.starts_with("DELETE")
+                    || msg.contains("unique constraint")
                 {
                     continue;
                 }
@@ -278,6 +280,58 @@ impl TursoRegistry {
         })
     }
 
+    /// Returns a value from the registry_metadata table by key.
+    pub async fn get_metadata(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT value FROM registry_metadata WHERE key = ?1 LIMIT 1",
+                params![key.to_string()],
+            )
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("get_metadata: {e}")))?;
+
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("get_metadata row: {e}")))?
+            .and_then(|r| r.get_value(0).ok())
+            .and_then(|v| if let Value::Text(s) = v { Some(s) } else { None }))
+    }
+
+    /// Writes an internal telemetry event (fire-and-forget; errors are swallowed).
+    pub async fn write_telemetry(
+        &self,
+        event: &str,
+        ip: Option<&str>,
+        ua: Option<&str>,
+        chain: Option<&str>,
+        chain_id: Option<u64>,
+        view_tag: Option<u8>,
+        status: &str,
+        err: Option<&str>,
+        ms: u64,
+    ) {
+        let Ok(conn) = self.conn() else { return };
+        let _ = conn
+            .execute(
+                "INSERT INTO _telemetry (event, ip, ua, chain, chain_id, view_tag, status, err, ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                vec![
+                    Value::Text(event.to_string()),
+                    ip.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    ua.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    chain.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    chain_id.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Null),
+                    view_tag.map(|v| Value::Integer(v as i64)).unwrap_or(Value::Null),
+                    Value::Text(status.to_string()),
+                    err.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    Value::Integer(ms as i64),
+                ],
+            )
+            .await;
+    }
+
     /// Bulk import (migration helper). Skips rows that violate constraints.
     pub async fn import(&self, announcements: Vec<Announcement>) -> Result<usize> {
         let mut imported = 0usize;
@@ -295,13 +349,13 @@ impl TursoRegistry {
     // ── internal ─────────────────────────────────────────────────────────
 
     async fn insert_announcement(&self, ann: &Announcement) -> Result<u64> {
-        self.insert_announcement_inner(ann, false).await
+        self.insert_announcement_inner(ann, false, "api").await
     }
 
-    /// Inserts an announcement sourced from the on-chain indexer (Envio).
-    /// Sets `on_chain = 1` and is idempotent on `(block_number, block_tx_index)`.
+    /// Inserts an announcement sourced from the on-chain event poller.
+    /// Sets `on_chain = 1`, `record_source = 'indexer'`.
+    /// Idempotent: returns the existing id if the tx_hash already exists.
     pub async fn insert_onchain_announcement(&self, ann: &Announcement) -> Result<u64> {
-        // Idempotency: if we already have this exact on-chain event, return its id
         if let (Some(bn), Some(bti)) = (ann.block_number, ann.tx_hash.as_ref()) {
             let conn = self.conn()?;
             let mut rows = conn
@@ -324,7 +378,7 @@ impl TursoRegistry {
             }
         }
 
-        self.insert_announcement_inner(ann, true).await
+        self.insert_announcement_inner(ann, true, "indexer").await
     }
 
     /// Returns all announcements from a specific source chain.
@@ -343,14 +397,19 @@ impl TursoRegistry {
         collect_announcements(&mut rows).await
     }
 
-    async fn insert_announcement_inner(&self, ann: &Announcement, on_chain: bool) -> Result<u64> {
+    async fn insert_announcement_inner(
+        &self,
+        ann: &Announcement,
+        on_chain: bool,
+        record_source: &str,
+    ) -> Result<u64> {
         let conn = self.conn()?;
 
         conn.execute(
             "INSERT INTO announcements \
              (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain, \
-              block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+              block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, record_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
@@ -363,6 +422,7 @@ impl TursoRegistry {
                 opt_text(ann.amount.clone()),
                 opt_text(ann.chain.clone()),
                 opt_text(ann.stealth_address.clone()),
+                Value::Text(record_source.to_string()),
             ],
         )
         .await

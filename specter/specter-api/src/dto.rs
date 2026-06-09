@@ -269,21 +269,36 @@ pub struct PublishAnnouncementRequest {
     /// Fallback: full announcement DTO returned by `/api/v1/stealth/create`.
     #[serde(default)]
     pub announcement: Option<AnnouncementDto>,
-    /// Transaction hash (required; for duplicate detection and storage)
-    pub tx_hash: String,
-    /// Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Monad announce tx hash.
+    /// Required in dev mode (no relayer). Ignored when relayer is active —
+    /// the server generates it after broadcasting to Monad.
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+    /// Source-chain payment tx hash to be verified on `chain`'s RPC.
+    /// When provided and a matching CHAIN_RPC_* is configured, the server
+    /// calls eth_getTransactionReceipt and rejects reverted or missing txs.
+    #[serde(default)]
+    pub payment_tx_hash: Option<String>,
+    /// EIP-155 chain ID of the chain where `payment_tx_hash` was broadcast.
+    #[serde(default)]
+    pub source_chain_id: Option<u64>,
+    /// Human-readable amount string (e.g. "1000000000000000000" wei, or "0x0de0b6b3a7640000").
     pub amount: Option<String>,
-    /// Chain identifier (e.g. "ethereum", "sui")
+    /// Human-readable source chain name (e.g. "arbitrum", "ethereum", "base").
     pub chain: Option<String>,
 }
 
 /// Response for publish.
 #[derive(Debug, Serialize)]
 pub struct PublishAnnouncementResponse {
-    /// Assigned announcement ID
+    /// Assigned announcement ID in the registry.
     pub id: u64,
-    /// Confirmation
+    /// Always true on success.
     pub success: bool,
+    /// Monad tx hash of the announce() call.
+    /// Present when the relayer broadcast it; equal to req.tx_hash in dev mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monad_tx_hash: Option<String>,
 }
 
 /// Query parameters for listing announcements.
@@ -331,15 +346,19 @@ pub struct ViewTagCount {
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
-    /// Status
     pub status: String,
-    /// Version
     pub version: String,
-    /// Uptime in seconds
     pub uptime_seconds: u64,
-    /// Total announcements in registry
     pub announcements_count: u64,
-    /// When true, backend uses Sepolia ENS
     pub use_testnet: bool,
+    /// True when RELAYER_PRIVATE_KEY is set and valid.
+    pub relayer_ok: bool,
+    /// True when Turso responds to a SELECT 1.
+    pub turso_ok: bool,
+    /// Last Monad block number processed by the event poller (from registry_metadata).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poller_last_block: Option<u64>,
+    /// True when the poller has processed at least one block.
+    pub poller_ok: bool,
 }
 

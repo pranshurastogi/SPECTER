@@ -1,15 +1,18 @@
 //! API route handlers.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
+use alloy::primitives::Address;
 use axum::{
-    extract::{Path, Query, State},
-    http::header,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{header, HeaderMap},
     response::IntoResponse,
     Json,
 };
-use tracing::{debug, info};
+use specter_core::types::AnnouncementMetadata;
+use tracing::{debug, info, warn};
 
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
@@ -19,8 +22,11 @@ use specter_stealth::create_stealth_payment;
 use crate::dto::*;
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::verifier;
 
 type Result<T> = std::result::Result<T, ApiError>;
+
+// ── key generation ────────────────────────────────────────────────────────────
 
 /// POST /api/v1/keys/generate
 pub async fn generate_keys(
@@ -34,7 +40,6 @@ pub async fn generate_keys(
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
-    // Intentionally NO `view_tag` field on the response — see GenerateKeysResponse.
     let response = GenerateKeysResponse {
         spending_pk: hex::encode(spending.public.as_bytes()),
         spending_sk: hex::encode(spending.secret.as_bytes()),
@@ -47,6 +52,8 @@ pub async fn generate_keys(
     Ok(Json(response))
 }
 
+// ── stealth payment creation ──────────────────────────────────────────────────
+
 /// POST /api/v1/stealth/create
 pub async fn create_stealth(
     State(state): State<Arc<AppState>>,
@@ -58,18 +65,18 @@ pub async fn create_stealth(
     let payment = create_stealth_payment(&meta)
         .map_err(|e| ApiError::internal(format!("Failed to create stealth payment: {}", e)))?;
 
-    // Server retains the canonical announcement (correct view_tag + ephemeral
-    // key) keyed by payment_id. The frontend will quote this id back to
-    // `/api/v1/registry/announcements` after broadcasting the on-chain tx.
-    let payment_id = state.pending_payments.insert(payment.announcement.clone());
+    // Attach stealth_address so the relayer can call announce(stealth_addr, …) later.
+    let mut ann = payment.announcement.clone();
+    ann.stealth_address = Some(payment.stealth_address.to_checksum_string());
+    let payment_id = state.pending_payments.insert(ann.clone());
 
     let response = CreateStealthResponse {
         payment_id,
         stealth_address: payment.stealth_address.to_checksum_string(),
         stealth_sui_address: payment.stealth_sui_address.to_hex_string(),
-        ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
-        view_tag: payment.announcement.view_tag,
-        announcement: AnnouncementDto::from(payment.announcement),
+        ephemeral_ciphertext: hex::encode(&ann.ephemeral_key),
+        view_tag: ann.view_tag,
+        announcement: AnnouncementDto::from(ann),
     };
 
     debug!(
@@ -82,14 +89,7 @@ pub async fn create_stealth(
     Ok(Json(response))
 }
 
-fn strip_hex_prefix(s: &str) -> &str {
-    let s = s.trim();
-    if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
-        &s[2..]
-    } else {
-        s
-    }
-}
+// ── scan ──────────────────────────────────────────────────────────────────────
 
 /// POST /api/v1/stealth/scan
 pub async fn scan_payments(
@@ -174,6 +174,8 @@ pub async fn scan_payments(
     }))
 }
 
+// ── ENS / SuiNS / IPFS ────────────────────────────────────────────────────────
+
 /// GET /api/v1/ens/resolve/:name
 pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
@@ -185,7 +187,7 @@ pub async fn resolve_ens(
         .await
         .map_err(ApiError::from)?;
 
-    let response = ResolveEnsResponse {
+    Ok(Json(ResolveEnsResponse {
         ens_name: result.ens_name,
         meta_address: result.meta_address.to_hex(),
         spending_pk: result.meta_address.spending_pk.to_hex(),
@@ -195,9 +197,7 @@ pub async fn resolve_ens(
         } else {
             Some(result.ipfs_cid)
         },
-    };
-
-    Ok(Json(response))
+    }))
 }
 
 /// GET /api/v1/suins/resolve/:name
@@ -216,7 +216,7 @@ pub async fn resolve_suins(
         .await
         .map_err(ApiError::from)?;
 
-    let response = ResolveSuinsResponse {
+    Ok(Json(ResolveSuinsResponse {
         suins_name: result.suins_name,
         meta_address: result.meta_address.to_hex(),
         spending_pk: result.meta_address.spending_pk.to_hex(),
@@ -226,9 +226,7 @@ pub async fn resolve_suins(
         } else {
             Some(result.ipfs_cid)
         },
-    };
-
-    Ok(Json(response))
+    }))
 }
 
 /// POST /api/v1/ipfs/upload
@@ -246,11 +244,10 @@ pub async fn upload_ipfs(
         .map_err(|e| ApiError::internal(format!("IPFS upload failed: {}", e)))?;
 
     let text_record = state.resolver.format_text_record(&cid);
-
     Ok(Json(UploadIpfsResponse { cid, text_record }))
 }
 
-/// GET /api/v1/ipfs/:cid - returns raw bytes (for "View on IPFS" via backend)
+/// GET /api/v1/ipfs/:cid
 pub async fn ipfs_get(
     State(state): State<Arc<AppState>>,
     Path(cid): Path<String>,
@@ -264,75 +261,150 @@ pub async fn ipfs_get(
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], data))
 }
 
+// ── registry publish ───────────────────────────────────────────────────────────
+
 /// POST /api/v1/registry/announcements
 ///
-/// Publishes a previously-created stealth payment. The protocol view tag is
-/// always derived server-side; clients can no longer supply a loose `view_tag`
-/// or `ephemeral_key` here.
-///
-/// Resolution order:
-///  1. `payment_id` (preferred) — server retrieves the pending announcement.
-///  2. `announcement` (fallback) — accepted only if the server restarted and
-///     the pending entry expired; logged for observability.
+/// Full publish flow:
+///   1. Resolve announcement from `payment_id` (preferred) or `announcement` (fallback).
+///   2. Validate ephemeral key size (must be 1088 bytes, non-zero).
+///   3. If `payment_tx_hash` + matching CHAIN_RPC_* env var: verify tx on source chain RPC.
+///   4. If relayer configured: broadcast `announce()` on Monad, return monad_tx_hash.
+///      If no relayer (dev mode): require client-supplied `tx_hash`.
+///   5. Write to registry with `record_source = 'api'`.
 pub async fn publish_announcement(
+    maybe_connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     Json(req): Json<PublishAnnouncementRequest>,
 ) -> Result<Json<PublishAnnouncementResponse>> {
-    let tx_hash = req.tx_hash.trim();
-    if tx_hash.is_empty() {
-        return Err(ApiError::bad_request(
-            "tx_hash is required and cannot be empty",
-        ));
+    let request_start = Instant::now();
+
+    // ── 1. Resolve announcement ───────────────────────────────────────────────
+    let mut announcement = resolve_pending_announcement(&state, &req)?;
+
+    // ── 2. Enrich with client-supplied payment metadata ───────────────────────
+    announcement.payment_tx_hash = req
+        .payment_tx_hash
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    announcement.amount = req
+        .amount
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    announcement.chain = req
+        .chain
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(chain_id) = req.source_chain_id {
+        announcement.source_chain_id = Some(chain_id);
     }
 
-    let mut announcement = match (req.payment_id, req.announcement) {
-        // Happy path: server-authoritative announcement bound to a payment_id.
-        (Some(pid), _) => {
-            let pending = state.pending_payments.take(&pid).ok_or_else(|| {
+    // ── 3. Validate ephemeral key ─────────────────────────────────────────────
+    let ek_len = announcement.ephemeral_key.len();
+    if ek_len != 1088 {
+        return Err(ApiError::bad_request(format!(
+            "ephemeral_key must be exactly 1088 bytes, got {ek_len}"
+        )));
+    }
+    if announcement.ephemeral_key.iter().all(|&b| b == 0) {
+        return Err(ApiError::bad_request("ephemeral_key cannot be all zeros"));
+    }
+
+    // ── 4. Verify payment on source chain ─────────────────────────────────────
+    if let (Some(ptx), Some(chain_name)) =
+        (&announcement.payment_tx_hash, &announcement.chain)
+    {
+        match state.config.chain_rpc_map.get(chain_name.as_str()) {
+            Some(rpc_url) => {
+                verifier::verify_payment_tx(rpc_url, ptx).await.map_err(|e| {
+                    warn!(chain = %chain_name, tx = %ptx, "Payment verification failed: {e:?}");
+                    e
+                })?;
+                debug!(chain = %chain_name, tx = %ptx, "Payment verified on source chain");
+            }
+            None => {
+                warn!(
+                    chain = %chain_name,
+                    "No RPC configured for chain — skipping payment verification. \
+                     Set CHAIN_RPC_{} to enable.",
+                    chain_name.to_uppercase().replace('-', "_")
+                );
+            }
+        }
+    }
+
+    // ── 5. Relay or accept dev-mode tx_hash ───────────────────────────────────
+    let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
+        relay_announcement(&announcement, relayer).await?
+    } else {
+        // Dev mode: client must supply tx_hash directly
+        req.tx_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
                 ApiError::bad_request(
-                    "Unknown or expired payment_id. Re-create the stealth payment.",
+                    "tx_hash is required when the relayer is not configured (dev mode). \
+                     Set RELAYER_PRIVATE_KEY to enable server-side relay.",
                 )
-            })?;
-            debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
-            pending.announcement
-        }
-        // Fallback: client provided the full create-time announcement DTO.
-        (None, Some(dto)) => {
-            tracing::warn!(
-                "Publish via announcement fallback (no payment_id). Verify clients are up-to-date."
-            );
-            let mut ann: Announcement =
-                dto.try_into()
-                    .map_err(|e: specter_core::error::SpecterError| {
-                        ApiError::bad_request(format!("Invalid announcement: {}", e))
-                    })?;
-            // Force fresh id assignment by the registry.
-            ann.id = 0;
-            ann
-        }
-        (None, None) => {
-            return Err(ApiError::bad_request(
-                "Either payment_id or announcement is required",
-            ));
-        }
+            })?
+            .to_string()
     };
 
-    announcement.tx_hash = Some(tx_hash.to_string());
-    announcement.amount = req.amount.filter(|s| !s.trim().is_empty());
-    announcement.chain = req.chain.filter(|s| !s.trim().is_empty());
-
+    announcement.tx_hash = Some(monad_tx_hash.clone());
     let view_tag = announcement.view_tag;
+    let chain_for_tel = announcement.chain.clone();
+    let chain_id_for_tel = announcement.source_chain_id;
 
+    // ── 6. Write to registry ──────────────────────────────────────────────────
     let id = state
         .registry
         .publish(announcement)
         .await
-        .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
+        .map_err(|e| ApiError::bad_request(format!("Publish failed: {e}")))?;
 
-    info!(id, view_tag, "Published announcement");
+    let elapsed_ms = request_start.elapsed().as_millis() as u64;
 
-    Ok(Json(PublishAnnouncementResponse { id, success: true }))
+    info!(
+        id,
+        view_tag,
+        monad_tx_hash = %monad_tx_hash,
+        "Published announcement"
+    );
+
+    // ── 7. Telemetry (best-effort) ────────────────────────────────────────────
+    let ip = extract_client_ip(&headers, maybe_connect.as_ref());
+    let ua = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    state
+        .registry
+        .write_telemetry(
+            "announce",
+            Some(&ip.to_string()),
+            ua.as_deref(),
+            chain_for_tel.as_deref(),
+            chain_id_for_tel,
+            Some(view_tag),
+            "success",
+            None,
+            elapsed_ms,
+        )
+        .await;
+
+    Ok(Json(PublishAnnouncementResponse {
+        id,
+        success: true,
+        monad_tx_hash: Some(monad_tx_hash),
+    }))
 }
+
+// ── registry list / stats ──────────────────────────────────────────────────────
 
 /// GET /api/v1/registry/announcements
 pub async fn list_announcements(
@@ -396,6 +468,8 @@ pub async fn get_registry_stats(
     }))
 }
 
+// ── health ─────────────────────────────────────────────────────────────────────
+
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// GET /health
@@ -404,13 +478,195 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
     let uptime = start.elapsed().as_secs();
 
     let count = state.registry.count().await.unwrap_or(0);
+    let turso_ok = state.registry.health_check().await.is_ok();
+    let relayer_ok = state.relayer_config.is_some();
+
+    let poller_last_block = state.registry.get_poller_last_block().await;
+    let poller_ok = poller_last_block.map(|b| b > 0).unwrap_or(false);
+
+    let status = if turso_ok { "ok" } else { "degraded" }.to_string();
 
     Json(HealthResponse {
-        status: "ok".into(),
+        status,
         version: env!("CARGO_PKG_VERSION").into(),
         uptime_seconds: uptime,
         announcements_count: count,
         use_testnet: state.config.use_testnet,
+        relayer_ok,
+        turso_ok,
+        poller_last_block,
+        poller_ok,
     })
 }
 
+// ── private helpers ────────────────────────────────────────────────────────────
+
+fn strip_hex_prefix(s: &str) -> &str {
+    let s = s.trim();
+    if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
+        &s[2..]
+    } else {
+        s
+    }
+}
+
+/// Resolves an `Announcement` from either the `payment_id` or `announcement` fallback path.
+fn resolve_pending_announcement(
+    state: &AppState,
+    req: &PublishAnnouncementRequest,
+) -> Result<Announcement> {
+    match (req.payment_id, req.announcement.as_ref()) {
+        (Some(pid), _) => {
+            let pending = state.pending_payments.take(&pid).ok_or_else(|| {
+                ApiError::bad_request(
+                    "Unknown or expired payment_id. Re-create the stealth payment \
+                     via POST /api/v1/stealth/create.",
+                )
+            })?;
+            debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
+            Ok(pending.announcement)
+        }
+        (None, Some(dto)) => {
+            warn!("Publish via announcement fallback (no payment_id). Verify clients are up-to-date.");
+            let mut ann: Announcement =
+                dto.clone().try_into().map_err(|e: specter_core::error::SpecterError| {
+                    ApiError::bad_request(format!("Invalid announcement: {}", e))
+                })?;
+            ann.id = 0;
+            Ok(ann)
+        }
+        (None, None) => Err(ApiError::bad_request(
+            "Either payment_id or announcement is required",
+        )),
+    }
+}
+
+/// Broadcasts the announcement on Monad via the server-side relayer.
+/// Returns the Monad transaction hash as a lowercase hex string.
+async fn relay_announcement(
+    announcement: &Announcement,
+    relayer: &crate::state::RelayerConfig,
+) -> Result<String> {
+    let stealth_addr_str = announcement
+        .stealth_address
+        .as_deref()
+        .ok_or_else(|| ApiError::internal("stealth_address missing from pending payment"))?;
+
+    let stealth_addr: Address = stealth_addr_str
+        .parse()
+        .map_err(|e| ApiError::internal(format!("Invalid stealth_address '{stealth_addr_str}': {e}")))?;
+
+    let ek_arr: [u8; 1088] = announcement
+        .ephemeral_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| ApiError::internal("ephemeral_key must be 1088 bytes"))?;
+
+    let metadata = build_on_chain_metadata(announcement);
+
+    let announcer_addr: Address = relayer
+        .announcer_addr
+        .parse()
+        .map_err(|e| ApiError::internal(format!("Invalid announcer address: {e}")))?;
+
+    let hash = specter_chain::announcer::publish_announcement(
+        &relayer.monad_rpc_url,
+        relayer.signer.clone(),
+        announcer_addr,
+        stealth_addr,
+        &ek_arr,
+        &metadata,
+    )
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Relayer failed to broadcast announcement");
+        ApiError::internal(format!("Relay failed: {e}"))
+    })?;
+
+    Ok(format!("{hash}"))
+}
+
+/// Encodes the 77-byte on-chain metadata from an announcement's payment fields.
+fn build_on_chain_metadata(ann: &Announcement) -> [u8; 77] {
+    let mut meta = AnnouncementMetadata::new(ann.view_tag);
+
+    if let Some(ptx) = &ann.payment_tx_hash {
+        let bytes = hex_str_to_bytes32(ptx);
+        if bytes.iter().any(|&b| b != 0) {
+            meta = meta.with_tx_hash(bytes);
+        }
+    }
+
+    if let Some(amt) = &ann.amount {
+        let bytes = amount_str_to_bytes32(amt);
+        if bytes.iter().any(|&b| b != 0) {
+            meta = meta.with_amount(bytes);
+        }
+    }
+
+    if let Some(chain_id) = ann.source_chain_id {
+        meta = meta.with_source_chain_id(chain_id);
+    }
+
+    meta.encode()
+}
+
+/// Parses a hex tx hash string ("0x..." or bare hex) into a 32-byte array.
+fn hex_str_to_bytes32(s: &str) -> [u8; 32] {
+    let hex = strip_hex_prefix(s.trim());
+    let mut buf = [0u8; 32];
+    if let Ok(decoded) = hex::decode(hex) {
+        if decoded.len() == 32 {
+            buf.copy_from_slice(&decoded);
+        }
+    }
+    buf
+}
+
+/// Parses a wei amount string (decimal or "0x..." hex) into a 32-byte big-endian uint256.
+fn amount_str_to_bytes32(s: &str) -> [u8; 32] {
+    let s = s.trim();
+    let mut buf = [0u8; 32];
+
+    if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        if let Ok(decoded) = hex::decode(hex_str) {
+            let start = 32usize.saturating_sub(decoded.len());
+            let len = decoded.len().min(32);
+            buf[start..start + len].copy_from_slice(&decoded[..len]);
+        }
+    } else if let Ok(n) = s.parse::<u128>() {
+        buf[16..].copy_from_slice(&n.to_be_bytes());
+    }
+
+    buf
+}
+
+/// Extracts the real client IP from forwarding headers or the socket address.
+fn extract_client_ip(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<SocketAddr>>,
+) -> IpAddr {
+    // X-Forwarded-For: leftmost entry is the original client (set by proxies/CDNs)
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = xff.split(',').next() {
+            if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    // X-Real-IP: set by nginx
+    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    // CF-Connecting-IP: set by Cloudflare
+    if let Some(cf_ip) = headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = cf_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    connect_info
+        .map(|ci| ci.0.ip())
+        .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}

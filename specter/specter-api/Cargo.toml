@@ -45,6 +45,10 @@ dashmap = { workspace = true }
 # Pending payment IDs (binds /stealth/create → /registry/announcements)
 uuid = { workspace = true }
 
+# Ethereum / on-chain
+alloy = { workspace = true }
+url = { workspace = true }
+
 # Config
 dotenvy = "0.15"
 
