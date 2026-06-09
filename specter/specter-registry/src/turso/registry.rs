@@ -18,6 +18,22 @@ use specter_core::types::{Announcement, AnnouncementStats};
 
 use super::schema;
 
+// ── migration helpers ──────────────────────────────────────────────────────
+
+/// Returns true for errors that mean "this DDL statement is already applied
+/// or depends on something not yet migrated" — safe to skip in both the
+/// SCHEMA_STATEMENTS pass and the migration loop.
+fn is_safe_migration_err(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("duplicate column")      // ALTER TABLE ADD COLUMN already done
+        || m.contains("already exists") // CREATE TABLE / INDEX IF NOT EXISTS race
+        || m.contains("no such column") // index on a column not yet added by ALTER TABLE
+        || m.contains("no such table")  // DROP TABLE IF EXISTS on already-gone table
+        || m.contains("no such index")  // DROP INDEX IF EXISTS on already-gone index
+        || m.contains("unique constraint") // idempotent INSERT OR REPLACE collision
+        || m.contains("no rows")        // DELETE on empty table
+}
+
 // ── helper converters ──────────────────────────────────────────────────────
 
 fn opt_int(v: Option<i64>) -> Value {
@@ -99,10 +115,18 @@ impl TursoRegistry {
     async fn init_schema(&self) -> Result<()> {
         let conn = self.conn()?;
 
-        for statement in schema::SCHEMA_STATEMENTS {
-            conn.execute(statement, ()).await.map_err(|e| {
-                SpecterError::RegistryError(format!("Schema init: {e}\nSQL: {statement}"))
-            })?;
+        // Run base schema DDL. On an existing DB some statements are no-ops or may
+        // reference columns that haven't been added by a pending migration yet — skip
+        // those using the same idempotent error list as the migration loop below.
+        for stmt in schema::SCHEMA_STATEMENTS {
+            if let Err(e) = conn.execute(stmt, ()).await {
+                if is_safe_migration_err(&e.to_string()) {
+                    continue;
+                }
+                return Err(SpecterError::RegistryError(format!(
+                    "Schema init: {e}\nSQL: {stmt}"
+                )));
+            }
         }
 
         // Run all migrations in order. Safe errors (already done) are skipped.
@@ -113,20 +137,24 @@ impl TursoRegistry {
             .chain(schema::MIGRATION_V4_TO_V5)
         {
             if let Err(e) = conn.execute(stmt, ()).await {
-                let msg = e.to_string().to_lowercase();
-                // Idempotent: skip errors that mean "already done"
-                if msg.contains("duplicate column")
-                    || msg.contains("no such column")
-                    || msg.contains("no such table")
-                    || msg.contains("no such index")
-                    || msg.contains("already exists")
-                    || msg.contains("no rows") && stmt.starts_with("DELETE")
-                    || msg.contains("unique constraint")
-                {
+                if is_safe_migration_err(&e.to_string()) {
                     continue;
                 }
                 return Err(SpecterError::RegistryError(format!(
                     "Migration failed: {e}\nSQL: {stmt}"
+                )));
+            }
+        }
+
+        // Re-run base schema DDL now that all migrations have been applied.
+        // This picks up any indexes that were skipped above due to missing columns.
+        for stmt in schema::SCHEMA_STATEMENTS {
+            if let Err(e) = conn.execute(stmt, ()).await {
+                if is_safe_migration_err(&e.to_string()) {
+                    continue;
+                }
+                return Err(SpecterError::RegistryError(format!(
+                    "Schema post-migration init: {e}\nSQL: {stmt}"
                 )));
             }
         }
