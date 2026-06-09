@@ -207,4 +207,126 @@ mod tests {
         assert_eq!(store.len(), 1);
         assert!(store.take(&fresh).is_some());
     }
+
+    #[test]
+    fn len_tracks_inserts_and_removes() {
+        let store = PendingPaymentStore::new();
+        assert_eq!(store.len(), 0);
+        let id1 = store.insert(mk_announcement());
+        assert_eq!(store.len(), 1);
+        let id2 = store.insert(mk_announcement());
+        assert_eq!(store.len(), 2);
+        store.take(&id1);
+        assert_eq!(store.len(), 1);
+        store.take(&id2);
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn is_empty_reflects_store_state() {
+        let store = PendingPaymentStore::new();
+        assert!(store.is_empty());
+        let id = store.insert(mk_announcement());
+        assert!(!store.is_empty());
+        store.take(&id);
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn insert_produces_unique_ids() {
+        let store = PendingPaymentStore::new();
+        let ids: Vec<_> = (0..100).map(|_| store.insert(mk_announcement())).collect();
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), 100, "all 100 payment IDs must be unique");
+    }
+
+    #[test]
+    fn concurrent_inserts_produce_unique_ids() {
+        use std::sync::Arc;
+        use std::thread;
+        let store = Arc::new(PendingPaymentStore::new());
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let s = Arc::clone(&store);
+                thread::spawn(move || {
+                    (0..50).map(|_| s.insert(mk_announcement())).collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let mut all_ids = Vec::new();
+        for t in threads {
+            all_ids.extend(t.join().unwrap());
+        }
+        assert_eq!(all_ids.len(), 400);
+        let unique: std::collections::HashSet<_> = all_ids.iter().collect();
+        assert_eq!(unique.len(), 400, "IDs from concurrent inserts must be unique");
+    }
+
+    #[test]
+    fn purge_expired_is_idempotent_on_empty_store() {
+        let store = PendingPaymentStore::new();
+        store.purge_expired(); // must not panic
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn purge_expired_does_not_remove_fresh_entries() {
+        let store = PendingPaymentStore::with_ttl(Duration::from_secs(60));
+        let id1 = store.insert(mk_announcement());
+        let id2 = store.insert(mk_announcement());
+        store.purge_expired();
+        assert_eq!(store.len(), 2);
+        assert!(store.take(&id1).is_some());
+        assert!(store.take(&id2).is_some());
+    }
+
+    #[test]
+    fn take_after_purge_returns_none_for_expired() {
+        let store = PendingPaymentStore::with_ttl(Duration::from_millis(5));
+        let id = store.insert(mk_announcement());
+        std::thread::sleep(Duration::from_millis(10));
+        store.purge_expired();
+        // Entry was removed by purge — take should return None (no entry at all)
+        assert!(store.take(&id).is_none());
+    }
+
+    #[test]
+    fn is_expired_returns_false_for_fresh_entry() {
+        let ann = mk_announcement();
+        let entry = PendingPayment {
+            announcement: ann,
+            created_at: std::time::Instant::now(),
+        };
+        assert!(!entry.is_expired(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn is_expired_returns_true_for_old_entry() {
+        let ann = mk_announcement();
+        // Simulate an old entry: sleep past the TTL
+        let entry = PendingPayment {
+            announcement: ann,
+            created_at: std::time::Instant::now(),
+        };
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(entry.is_expired(Duration::from_millis(5)));
+    }
+
+    #[test]
+    fn default_creates_store_with_24h_ttl() {
+        let store = PendingPaymentStore::default();
+        let id = store.insert(mk_announcement());
+        // Fresh entry with 24h TTL must be present
+        assert!(store.take(&id).is_some());
+    }
+
+    #[test]
+    fn announcement_data_is_preserved_through_store() {
+        let ann = Announcement::new(vec![0xffu8; KYBER_CIPHERTEXT_SIZE], 0x99);
+        let store = PendingPaymentStore::new();
+        let id = store.insert(ann.clone());
+        let taken = store.take(&id).unwrap();
+        assert_eq!(taken.announcement.view_tag, 0x99);
+        assert_eq!(taken.announcement.ephemeral_key[0], 0xff);
+    }
 }

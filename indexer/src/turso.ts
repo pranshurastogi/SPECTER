@@ -11,6 +11,7 @@
  * - Exponential backoff retry: Turso HTTP errors are transient; we retry 3×
  * - Graceful degradation: if TURSO_DATABASE_URL is not set, skip silently
  * - Never throw after max retries: log the error, let Envio continue indexing
+ * - Returns TursoWriteResult so callers can distinguish transient vs permanent failures
  */
 
 import { createClient } from "@libsql/client";
@@ -50,9 +51,23 @@ export interface TursoAnnouncement {
   blockTxIndex: number;
 }
 
+/**
+ * Result of a Turso write attempt.
+ *
+ * ok=true  — write succeeded (or was a harmless duplicate).
+ * ok=false, permanent=true  — non-retryable error (auth, schema mismatch).
+ *   The caller should NOT retry without operator intervention.
+ * ok=false, permanent=false — transient error; all retries exhausted.
+ *   The caller may retry later.
+ */
+export type TursoWriteResult =
+  | { ok: true }
+  | { ok: false; permanent: boolean; error: string };
+
 // ── Client factory ─────────────────────────────────────────────────────────
 
 let _client: ReturnType<typeof createClient> | null = null;
+let _clientWarned = false;
 
 function getClient(): ReturnType<typeof createClient> | null {
   if (_client) return _client;
@@ -61,16 +76,34 @@ function getClient(): ReturnType<typeof createClient> | null {
   const token = process.env.TURSO_AUTH_TOKEN;
 
   if (!url || !token) {
-    // Log once; subsequent calls will skip silently
-    console.warn(
-      "[specter-envio/turso] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set — " +
-        "skipping Turso sync. Set these env vars to enable dual-write."
-    );
+    if (!_clientWarned) {
+      _clientWarned = true;
+      console.warn(
+        "[specter-envio/turso] TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set — " +
+          "skipping Turso sync. Set these env vars to enable dual-write."
+      );
+    }
     return null;
   }
 
   _client = createClient({ url, authToken: token });
   return _client;
+}
+
+/**
+ * Verifies Turso connectivity by issuing a lightweight SELECT 1.
+ * Returns true if the connection is healthy, false otherwise.
+ * Used by the retry worker to probe before opening a full batch.
+ */
+export async function probeTursoConnection(): Promise<boolean> {
+  const client = getClient();
+  if (!client) return false;
+  try {
+    await client.execute("SELECT 1");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -82,14 +115,17 @@ function getClient(): ReturnType<typeof createClient> | null {
  * are silently skipped. The on_chain column is always set to 1 here because
  * this function is only called from the chain indexer path.
  *
- * @returns true if the write succeeded, false if Turso is unconfigured or all retries failed.
+ * @returns TursoWriteResult — ok=true on success, ok=false with permanent flag
+ *          so callers can distinguish auth/schema failures from transient errors.
  */
 export async function writeTursoAnnouncement(
   ann: TursoAnnouncement,
   maxRetries = 3
-): Promise<boolean> {
+): Promise<TursoWriteResult> {
   const client = getClient();
-  if (!client) return false;
+  if (!client) {
+    return { ok: false, permanent: false, error: "Turso not configured" };
+  }
 
   const sql = `
     INSERT OR IGNORE INTO announcements
@@ -107,8 +143,8 @@ export async function writeTursoAnnouncement(
     ephemeralKeyBuffer,
     ann.sourceChainId ?? null,
     ann.blockNumber,
-    ann.txHash,          // Monad announce tx hash — dedup key, always present
-    ann.paymentTxHash ?? null,  // source-chain payment tx hash from metadata
+    ann.txHash,                  // Monad announce tx hash — dedup key, always present
+    ann.paymentTxHash ?? null,   // source-chain payment tx hash from metadata
     ann.amount ?? null,
     ann.chain,
     ann.stealthAddress,
@@ -120,24 +156,26 @@ export async function writeTursoAnnouncement(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       await client.execute({ sql, args });
-      return true;
+      return { ok: true };
     } catch (err) {
       lastError = err;
 
       const msg = err instanceof Error ? err.message : String(err);
 
-      // UNIQUE constraint on tx_hash already handled by INSERT OR IGNORE,
-      // but in case the driver surfaces it differently, treat it as success
+      // UNIQUE constraint on tx_hash is handled by INSERT OR IGNORE at the SQL
+      // level. If the driver still surfaces it, treat as success.
       if (msg.includes("UNIQUE constraint") || msg.includes("duplicate")) {
-        return true;
+        return { ok: true };
       }
 
-      // Don't retry non-transient errors (schema mismatch, auth failure, etc.)
+      // Non-retryable errors: auth failure, schema mismatch, syntax error.
+      // These require operator intervention — stop retrying immediately.
       if (isNonRetryable(msg)) {
         console.error(
-          `[specter-envio/turso] Non-retryable error for tx ${ann.transactionHash}: ${msg}`
+          `[specter-envio/turso] Non-retryable error for tx ${ann.txHash} ` +
+            `(block ${ann.blockNumber}, logIndex ${ann.blockTxIndex}): ${msg}`
         );
-        return false;
+        return { ok: false, permanent: true, error: msg };
       }
 
       if (attempt < maxRetries - 1) {
@@ -147,11 +185,12 @@ export async function writeTursoAnnouncement(
     }
   }
 
+  const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
   console.error(
-    `[specter-envio/turso] All ${maxRetries} retries failed for tx ${ann.transactionHash} ` +
-      `(block ${ann.blockNumber}, logIndex ${ann.blockTxIndex}): ${lastError}`
+    `[specter-envio/turso] All ${maxRetries} retries failed for tx ${ann.txHash} ` +
+      `(block ${ann.blockNumber}, logIndex ${ann.blockTxIndex}): ${errMsg}`
   );
-  return false;
+  return { ok: false, permanent: false, error: errMsg };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

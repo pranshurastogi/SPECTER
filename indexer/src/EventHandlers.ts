@@ -8,11 +8,15 @@
  *   4. Dual-write to Turso (for the SPECTER API scanning path)
  *
  * Error strategy: never throw from the handler. Log, degrade gracefully, continue.
+ *
+ * Recovery: events that fail Turso write (tursoSynced=false) are picked up and
+ * retried by the background worker started at the bottom of this module.
  */
 
 import { SPECTERAnnouncer } from "generated";
 import { decodeMetadataSafe, EPHEMERAL_KEY_LENGTH } from "./metadata";
 import { writeTursoAnnouncement } from "./turso";
+import { startRetryWorker } from "./retrySync";
 
 const MONAD_TESTNET_CHAIN_NAME = "monad-testnet";
 
@@ -48,7 +52,7 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
   const callerLower = caller.toLowerCase();
 
   // ── 3. Write to Turso first so we know the sync status ─────────────────
-  const tursoSynced = await writeTursoAnnouncement({
+  const result = await writeTursoAnnouncement({
     viewTag: decoded.viewTag,
     timestamp: blockTimestamp,
     ephemeralKey: ephemeralKeyHex,
@@ -63,11 +67,24 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
     blockTxIndex: logIndex,
   });
 
+  const tursoSynced = result.ok;
+
   if (!tursoSynced) {
-    context.log.warn(
-      `[${entityId}] Turso write failed — event indexed in Envio only. ` +
-        `Use the unsynced_turso.graphql query to find and retry failed writes.`
-    );
+    if (!result.ok && result.permanent) {
+      // Auth failure, schema mismatch — operator action required.
+      context.log.error(
+        `[${entityId}] Turso write failed with a PERMANENT error (auth/schema). ` +
+          `No automatic recovery possible — check TURSO_DATABASE_URL and TURSO_AUTH_TOKEN. ` +
+          `Error: ${result.error}`
+      );
+    } else {
+      // Transient failure — the retry worker will pick this up.
+      context.log.warn(
+        `[${entityId}] Turso write failed (transient). Event indexed in Envio only. ` +
+          `The retrySync worker will retry automatically. ` +
+          `Run the unsynced_turso.graphql query to inspect the backlog.`
+      );
+    }
   }
 
   // ── 4. Write to Envio entity (Postgres) ────────────────────────────────
@@ -89,3 +106,10 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
     tursoSynced,
   });
 });
+
+// ── Background retry worker ─────────────────────────────────────────────────
+//
+// Starts once when the Envio worker process loads this module.
+// Queries Envio GraphQL periodically for tursoSynced=false events and
+// re-pushes them to Turso (idempotent: INSERT OR IGNORE on tx_hash).
+startRetryWorker();
