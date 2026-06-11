@@ -53,6 +53,11 @@ pub struct Announcement {
     /// only the recipient with the shared secret can decrypt it).
     #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_hex")]
     pub metadata_blob: Option<Vec<u8>>,
+    /// HMAC(server_key, normalize(payment_tx_hash)) — the double-announce dedup key.
+    /// Write-only: never read back into an Announcement, only used by the UNIQUE
+    /// index. Never reveals the payment tx (only the API holding the key can compute it).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_hex")]
+    pub payment_tx_hash_hmac: Option<Vec<u8>>,
     /// View tag for efficient filtering (first byte of hash)
     pub view_tag: u8,
     /// Unix timestamp when announcement was created
@@ -91,6 +96,7 @@ impl Announcement {
             ephemeral_key,
             ephemeral_key_hash: None,
             metadata_blob: None,
+            payment_tx_hash_hmac: None,
             view_tag,
             timestamp: Self::current_timestamp(),
             source_chain_id: None,
@@ -189,6 +195,7 @@ impl Announcement {
             ephemeral_key,
             ephemeral_key_hash: None,
             metadata_blob: None,
+            payment_tx_hash_hmac: None,
             view_tag,
             timestamp,
             source_chain_id: None,
@@ -219,6 +226,7 @@ pub struct AnnouncementBuilder {
     ephemeral_key: Option<Vec<u8>>,
     ephemeral_key_hash: Option<Vec<u8>>,
     metadata_blob: Option<Vec<u8>>,
+    payment_tx_hash_hmac: Option<Vec<u8>>,
     view_tag: Option<u8>,
     timestamp: Option<u64>,
     source_chain_id: Option<u64>,
@@ -251,6 +259,12 @@ impl AnnouncementBuilder {
     /// Sets the encrypted on-chain metadata blob.
     pub fn metadata_blob(mut self, b: Vec<u8>) -> Self {
         self.metadata_blob = Some(b);
+        self
+    }
+
+    /// Sets the dedup HMAC (computed by the API from the payment tx hash).
+    pub fn payment_tx_hash_hmac(mut self, h: Vec<u8>) -> Self {
+        self.payment_tx_hash_hmac = Some(h);
         self
     }
 
@@ -333,6 +347,7 @@ impl AnnouncementBuilder {
         announcement.stealth_address = self.stealth_address;
         announcement.ephemeral_key_hash = self.ephemeral_key_hash;
         announcement.metadata_blob = self.metadata_blob;
+        announcement.payment_tx_hash_hmac = self.payment_tx_hash_hmac;
 
         announcement.validate()?;
         Ok(announcement)
@@ -572,6 +587,15 @@ mod tests {
     fn empty_with_no_hash_is_invalid() {
         let ann = Announcement::new(Vec::new(), 0x42);
         assert!(ann.validate().is_err(), "no ciphertext and no hash is invalid");
+    }
+
+    #[test]
+    fn payment_hmac_roundtrips_through_serde() {
+        let mut ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
+        ann.payment_tx_hash_hmac = Some(vec![0x33u8; 32]);
+        let json = serde_json::to_string(&ann).unwrap();
+        let back: Announcement = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.payment_tx_hash_hmac, Some(vec![0x33u8; 32]));
     }
 
     #[test]

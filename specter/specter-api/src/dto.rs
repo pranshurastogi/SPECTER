@@ -234,6 +234,7 @@ impl TryFrom<AnnouncementDto> for Announcement {
             // Client DTOs never carry these; chain-sourced fields only.
             ephemeral_key_hash: None,
             metadata_blob: None,
+            payment_tx_hash_hmac: None,
             view_tag: dto.view_tag,
             timestamp: dto.timestamp,
             source_chain_id: dto.source_chain_id,

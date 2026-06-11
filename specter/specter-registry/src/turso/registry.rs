@@ -449,15 +449,16 @@ impl TursoRegistry {
         conn.execute(
             "INSERT INTO announcements \
              (view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, \
-              source_chain_id, on_chain, block_number, tx_hash, payment_tx_hash, \
-              amount, chain, stealth_address, record_source) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              payment_tx_hash_hmac, source_chain_id, on_chain, block_number, tx_hash, \
+              payment_tx_hash, amount, chain, stealth_address, record_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
                 Value::Blob(ann.ephemeral_key.clone()), // empty Vec for hash-only rows (column is NOT NULL on migrated DBs)
                 ann.ephemeral_key_hash.clone().map(Value::Blob).unwrap_or(Value::Null),
                 ann.metadata_blob.clone().map(Value::Blob).unwrap_or(Value::Null),
+                ann.payment_tx_hash_hmac.clone().map(Value::Blob).unwrap_or(Value::Null),
                 opt_int(ann.source_chain_id.map(|c| c as i64)),
                 Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
@@ -685,6 +686,8 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         ephemeral_key,
         ephemeral_key_hash: get_opt_blob(row, 11),
         metadata_blob: get_opt_blob(row, 12),
+        // Write-only: never read back from the DB — only the UNIQUE index uses it.
+        payment_tx_hash_hmac: None,
         source_chain_id: get_opt_int(row, 4).map(|v| v as u64),
         block_number: get_opt_int(row, 5).map(|b| b as u64),
         tx_hash: get_opt_text(row, 6),
