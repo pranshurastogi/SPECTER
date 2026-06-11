@@ -23,9 +23,8 @@ use crate::contract::SPECTERAnnouncer;
 /// * `announcer_addr` - SPECTERAnnouncer contract address
 /// * `stealth_addr` - Recipient's stealth address
 /// * `ephemeral_key` - ML-KEM ciphertext (must be exactly 1088 bytes)
-/// * `metadata` - Metadata bytes to emit in the announcement event.
-///               77 bytes = plaintext layout; 93 bytes = AES-256-GCM encrypted.
-///               The contract accepts any non-empty byte slice.
+/// * `metadata` - Metadata bytes emitted in the event: 77 bytes = plaintext
+///   layout, 93 bytes = AES-256-GCM encrypted. Any non-empty slice is accepted.
 ///
 /// # Returns
 ///
@@ -102,7 +101,8 @@ mod tests {
             ek: &[u8; 1088],
             meta: &[u8],
         ) {
-            let _ = publish_announcement(url, signer, ann, stealth, ek, meta);
+            // Compile-time signature check only; the future is intentionally never awaited.
+            let _fut = publish_announcement(url, signer, ann, stealth, ek, meta);
         }
     }
 }

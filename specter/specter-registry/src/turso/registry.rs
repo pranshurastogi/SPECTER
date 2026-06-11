@@ -337,6 +337,9 @@ impl TursoRegistry {
     }
 
     /// Writes an internal telemetry event (fire-and-forget; errors are swallowed).
+    // Each parameter maps to a distinct `_telemetry` column; grouping them into a
+    // struct would not improve clarity at the single call site.
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_telemetry(
         &self,
         event: &str,

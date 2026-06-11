@@ -220,7 +220,7 @@ fn test_batch_announcements_with_consistent_metadata() {
         let announcement = AnnouncementBuilder::new()
             .ephemeral_key(make_valid_ephemeral_key())
             .view_tag(view_tag)
-            .stealth_address(&format!("0xstealth{}", i))
+            .stealth_address(format!("0xstealth{}", i))
             .source_chain_id(chain_id)
             .build()
             .unwrap();

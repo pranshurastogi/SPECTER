@@ -770,8 +770,7 @@ mod tests {
         registry.publish(ann).await.unwrap();
 
         // With a resolver that returns the real ciphertext, the payment is discovered.
-        let mut config = ScannerConfig::default();
-        config.resolver = Some(Arc::new(StubResolver { ciphertext: ct_bytes }));
+        let config = ScannerConfig::default().resolver(Arc::new(StubResolver { ciphertext: ct_bytes }));
         let discoveries = scanner.scan_with_config(&registry, config).await.unwrap();
         assert_eq!(discoveries.len(), 1);
     }

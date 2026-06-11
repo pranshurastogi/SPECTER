@@ -299,13 +299,13 @@ impl ChainConfig {
         if rpc_url.is_empty() {
             return Err(specter_core::error::SpecterError::ConfigError(
                 "MONAD_RPC_URL is empty".into()
-            ).into());
+            ));
         }
 
         if announcer_addr.is_empty() {
             return Err(specter_core::error::SpecterError::ConfigError(
                 "SPECTER_ANNOUNCER_ADDRESS is empty".into()
-            ).into());
+            ));
         }
 
         Ok(Self {
@@ -376,6 +376,8 @@ impl RegistryBackend {
     }
 
     /// Writes an internal telemetry event. No-op for the memory backend.
+    // Mirrors the registry telemetry signature; one parameter per telemetry column.
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_telemetry(
         &self,
         event: &str,
