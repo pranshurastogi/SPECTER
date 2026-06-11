@@ -6,7 +6,8 @@ description: "Indexes SPECTER stealth address announcements on Monad testnet"
 
 field_selection:
   transaction_fields:
-    - hash   # Needed for Turso deduplication and event ID construction
+    - hash    # Needed for Turso deduplication and event ID construction
+    - input   # announce() calldata — used to resolve the full ML-KEM ciphertext at index time
 
 networks:
   - id: 10143   # Monad testnet
@@ -20,4 +21,4 @@ networks:
         address: "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC"
         handler: ./src/EventHandlers.ts
         events:
-          - event: "Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)"
+          - event: "Announcement(uint256 schemeId, address indexed stealthAddress, address indexed caller, bytes32 ephemeralKeyHash, bytes metadata)"

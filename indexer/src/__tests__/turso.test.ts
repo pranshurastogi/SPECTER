@@ -37,11 +37,10 @@ function makeAnn(overrides: Partial<TursoAnnouncement> = {}): TursoAnnouncement 
     viewTag: 0x42,
     timestamp: 1_780_000_000,
     ephemeralKey: EPHEMERAL_HEX,
-    sourceChainId: 42161,
+    ephemeralKeyHash: "cd".repeat(32),
+    metadataBlob: "7f" + "00".repeat(76),
     blockNumber: 36_000_000,
     txHash: "0xdeadbeef00000000000000000000000000000000000000000000000000000001",
-    paymentTxHash: "0xfeedface00000000000000000000000000000000000000000000000000000002",
-    amount: "0x" + "00".repeat(31) + "01",
     chain: "monad-testnet",
     stealthAddress: "0x1111111111111111111111111111111111111111",
     blockTxIndex: 5,
@@ -105,25 +104,22 @@ describe("writeTursoAnnouncement — success paths", () => {
     expect(call.sql).toMatch(/VALUES.*\?, 1,/s);
   });
 
-  it("passes null for sourceChainId when null is supplied", async () => {
+  it("converts ephemeralKeyHash hex string to Buffer for BLOB storage", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
-    await writeTursoAnnouncement(makeAnn({ sourceChainId: null }));
+    await writeTursoAnnouncement(makeAnn({ ephemeralKeyHash: "deadbeef" }));
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[3]).toBeNull();
+    const hashArg = call.args[3];
+    expect(Buffer.isBuffer(hashArg)).toBe(true);
+    expect((hashArg as Buffer).toString("hex")).toBe("deadbeef");
   });
 
-  it("passes null for paymentTxHash when null is supplied", async () => {
+  it("converts metadataBlob hex string to Buffer for BLOB storage", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
-    await writeTursoAnnouncement(makeAnn({ paymentTxHash: null }));
+    await writeTursoAnnouncement(makeAnn({ metadataBlob: "7fc0ffee" }));
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[6]).toBeNull();
-  });
-
-  it("passes null for amount when null is supplied", async () => {
-    mockExecute.mockResolvedValueOnce(undefined);
-    await writeTursoAnnouncement(makeAnn({ amount: null }));
-    const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[7]).toBeNull();
+    const blobArg = call.args[4];
+    expect(Buffer.isBuffer(blobArg)).toBe(true);
+    expect((blobArg as Buffer).toString("hex")).toBe("7fc0ffee");
   });
 
   it("treats UNIQUE constraint error as success (idempotent)", async () => {
@@ -272,14 +268,14 @@ describe("probeTursoConnection", () => {
 // ── Data integrity ────────────────────────────────────────────────────────────
 
 describe("writeTursoAnnouncement — argument integrity", () => {
-  it("passes all 11 positional args to execute", async () => {
+  it("passes all 10 positional args to execute", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
     const ann = makeAnn();
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    // view_tag, timestamp, ephemeral_key (Buffer), source_chain_id, block_number,
-    // tx_hash, payment_tx_hash, amount, chain, stealth_address, block_tx_index
-    expect(call.args).toHaveLength(11);
+    // view_tag, timestamp, ephemeral_key (Buffer), ephemeral_key_hash (Buffer),
+    // metadata_blob (Buffer), block_number, tx_hash, chain, stealth_address, block_tx_index
+    expect(call.args).toHaveLength(10);
   });
 
   it("viewTag is passed as the first arg", async () => {
@@ -290,29 +286,29 @@ describe("writeTursoAnnouncement — argument integrity", () => {
     expect(call.args[0]).toBe(99);
   });
 
-  it("txHash (Monad announce hash) is at position [5]", async () => {
+  it("txHash (Monad announce hash) is at position [6]", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
     const monadHash = "0xaaaa" + "00".repeat(30);
     const ann = makeAnn({ txHash: monadHash });
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[5]).toBe(monadHash);
+    expect(call.args[6]).toBe(monadHash);
   });
 
-  it("stealthAddress is at position [9]", async () => {
+  it("stealthAddress is at position [8]", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
     const addr = "0x9999999999999999999999999999999999999999";
     const ann = makeAnn({ stealthAddress: addr });
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[9]).toBe(addr);
+    expect(call.args[8]).toBe(addr);
   });
 
-  it("blockTxIndex (logIndex) is at position [10]", async () => {
+  it("blockTxIndex (logIndex) is at position [9]", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
     const ann = makeAnn({ blockTxIndex: 42 });
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[10]).toBe(42);
+    expect(call.args[9]).toBe(42);
   });
 });

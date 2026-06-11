@@ -24,9 +24,8 @@ function makeEvent(overrides: Partial<UnsyncedEvent> = {}): UnsyncedEvent {
     stealthAddress: "0x1111111111111111111111111111111111111111",
     // 1088 bytes, no 0x prefix — correct ML-KEM ciphertext size
     ephemeralPubKey: "ab".repeat(1088),
-    txHash: "0xfeedface00000000000000000000000000000000000000000000000000000002",
-    sourceChainId: "42161",
-    amount: "0x" + "00".repeat(31) + "01",
+    ephemeralKeyHash: "cd".repeat(32),
+    metadataRaw: "0x7f" + "00".repeat(76),
     blockNumber: "36000000",
     blockTimestamp: "1780000000",
     transactionHash: "0xdeadbeef00000000000000000000000000000000000000000000000000000001",
@@ -225,14 +224,14 @@ describe("mapEventToAnnouncement — valid events", () => {
     expect(ann.timestamp).toBe(1_780_000_000);
   });
 
-  it("maps sourceChainId string to number", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: "42161" }));
-    expect(ann.sourceChainId).toBe(42161);
+  it("maps ephemeralKeyHash through (strips 0x)", () => {
+    const ann = mapEventToAnnouncement(makeEvent({ ephemeralKeyHash: "0x" + "cd".repeat(32) }));
+    expect(ann.ephemeralKeyHash).toBe("cd".repeat(32));
   });
 
-  it("maps null sourceChainId to null", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: null }));
-    expect(ann.sourceChainId).toBeNull();
+  it("maps metadataRaw to metadataBlob (strips 0x)", () => {
+    const ann = mapEventToAnnouncement(makeEvent({ metadataRaw: "0x7fdeadbeef" }));
+    expect(ann.metadataBlob).toBe("7fdeadbeef");
   });
 
   it("maps viewTag through unchanged", () => {
@@ -255,28 +254,6 @@ describe("mapEventToAnnouncement — valid events", () => {
     const monadHash = "0xaaaa" + "00".repeat(30);
     const ann = mapEventToAnnouncement(makeEvent({ transactionHash: monadHash }));
     expect(ann.txHash).toBe(monadHash);
-  });
-
-  it("maps event.txHash (payment tx) to paymentTxHash", () => {
-    const paymentHash = "0xbbbb" + "00".repeat(30);
-    const ann = mapEventToAnnouncement(makeEvent({ txHash: paymentHash }));
-    expect(ann.paymentTxHash).toBe(paymentHash);
-  });
-
-  it("null event.txHash maps to null paymentTxHash", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ txHash: null }));
-    expect(ann.paymentTxHash).toBeNull();
-  });
-
-  it("maps amount through unchanged", () => {
-    const amt = "0x" + "ff".repeat(32);
-    const ann = mapEventToAnnouncement(makeEvent({ amount: amt }));
-    expect(ann.amount).toBe(amt);
-  });
-
-  it("null amount maps to null", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ amount: null }));
-    expect(ann.amount).toBeNull();
   });
 
   it("chain is always 'monad-testnet'", () => {
@@ -365,52 +342,10 @@ describe("mapEventToAnnouncement — validation errors", () => {
     ).toThrow(/Invalid blockTimestamp/);
   });
 
-  it("throws for invalid sourceChainId string", () => {
-    expect(() =>
-      mapEventToAnnouncement(makeEvent({ sourceChainId: "not-a-chain-id" }))
-    ).toThrow(/Invalid sourceChainId/);
-  });
-
-  it("throws for negative sourceChainId", () => {
-    expect(() =>
-      mapEventToAnnouncement(makeEvent({ sourceChainId: "-1" }))
-    ).toThrow(/Invalid sourceChainId/);
-  });
-
-  it("'0' sourceChainId (zero) is valid (maps to 0, not null)", () => {
-    // sourceChainId=0 is parsed to number 0, which is valid
-    // The null check is only for the null/undefined input, not for numeric 0
-    expect(() =>
-      mapEventToAnnouncement(makeEvent({ sourceChainId: "0" }))
-    ).not.toThrow();
-  });
-
   it("blockNumber '0' is valid", () => {
     expect(() =>
       mapEventToAnnouncement(makeEvent({ blockNumber: "0" }))
     ).not.toThrow();
-  });
-});
-
-describe("mapEventToAnnouncement — chain-specific values", () => {
-  it("correctly maps Ethereum mainnet chain ID (1)", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: "1" }));
-    expect(ann.sourceChainId).toBe(1);
-  });
-
-  it("correctly maps Monad testnet chain ID (10143)", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: "10143" }));
-    expect(ann.sourceChainId).toBe(10143);
-  });
-
-  it("correctly maps Base chain ID (8453)", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: "8453" }));
-    expect(ann.sourceChainId).toBe(8453);
-  });
-
-  it("correctly maps Polygon chain ID (137)", () => {
-    const ann = mapEventToAnnouncement(makeEvent({ sourceChainId: "137" }));
-    expect(ann.sourceChainId).toBe(137);
   });
 });
 
@@ -420,9 +355,8 @@ describe("mapEventToAnnouncement — round-trip integrity", () => {
       viewTag: 0x77,
       stealthAddress: "0x2222222222222222222222222222222222222222",
       ephemeralPubKey: "ff".repeat(1088),
-      txHash: "0xaaaa" + "00".repeat(30),
-      sourceChainId: "137",
-      amount: "0x" + "00".repeat(31) + "ff",
+      ephemeralKeyHash: "ee".repeat(32),
+      metadataRaw: "0x77" + "ab".repeat(40),
       blockNumber: "50000000",
       blockTimestamp: "1790000000",
       transactionHash: "0xbbbb" + "00".repeat(30),
@@ -434,9 +368,8 @@ describe("mapEventToAnnouncement — round-trip integrity", () => {
     expect(ann.viewTag).toBe(0x77);
     expect(ann.stealthAddress).toBe("0x2222222222222222222222222222222222222222");
     expect(ann.ephemeralKey).toBe("ff".repeat(1088));
-    expect(ann.paymentTxHash).toBe("0xaaaa" + "00".repeat(30));
-    expect(ann.sourceChainId).toBe(137);
-    expect(ann.amount).toBe("0x" + "00".repeat(31) + "ff");
+    expect(ann.ephemeralKeyHash).toBe("ee".repeat(32));
+    expect(ann.metadataBlob).toBe("77" + "ab".repeat(40));
     expect(ann.blockNumber).toBe(50_000_000);
     expect(ann.timestamp).toBe(1_790_000_000);
     expect(ann.txHash).toBe("0xbbbb" + "00".repeat(30));

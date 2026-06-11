@@ -26,7 +26,7 @@
  *   - Process shutdown                       → SIGTERM/SIGINT clears timers
  *   - Unexpected thrown errors in cycle      → exponential backoff, cap 30 min
  *   - ephemeralPubKey wrong length           → logged, write attempted anyway
- *   - sourceChainId / blockNumber parse fail → event skipped, logged
+ *   - blockNumber / blockTimestamp parse fail → event skipped, logged
  */
 
 import { writeTursoAnnouncement, probeTursoConnection, type TursoAnnouncement } from "./turso";
@@ -186,14 +186,12 @@ export interface UnsyncedEvent {
   id: string;
   viewTag: number;
   stealthAddress: string;
-  /** hex string (with or without 0x prefix) — 1088-byte ML-KEM ciphertext */
+  /** hex string (with or without 0x prefix) — full 1088-byte ML-KEM ciphertext */
   ephemeralPubKey: string;
-  /** source-chain payment tx hash from metadata [1..33], or null */
-  txHash: string | null;
-  /** BigInt string from Hasura, e.g. "10143" */
-  sourceChainId: string | null;
-  /** hex uint256 amount, or null */
-  amount: string | null;
+  /** keccak256 of the ciphertext (hex, with or without 0x prefix — 32 bytes) */
+  ephemeralKeyHash: string;
+  /** raw encrypted metadata blob (hex, with or without 0x prefix) */
+  metadataRaw: string;
   /** BigInt string — Monad block number */
   blockNumber: string;
   /** BigInt string — unix timestamp of the Monad block */
@@ -220,9 +218,8 @@ const UNSYNCED_QUERY = `
       viewTag
       stealthAddress
       ephemeralPubKey
-      txHash
-      sourceChainId
-      amount
+      ephemeralKeyHash
+      metadataRaw
       blockNumber
       blockTimestamp
       transactionHash
@@ -276,19 +273,12 @@ export function mapEventToAnnouncement(event: UnsyncedEvent): TursoAnnouncement 
     throw new Error(`Invalid blockTimestamp: ${event.blockTimestamp}`);
   }
 
-  let sourceChainId: number | null = null;
-  if (event.sourceChainId !== null && event.sourceChainId !== undefined) {
-    const parsed = Number(event.sourceChainId);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      throw new Error(`Invalid sourceChainId: ${event.sourceChainId}`);
-    }
-    sourceChainId = parsed;
-  }
-
   // Strip 0x prefix; writeTursoAnnouncement converts hex → Buffer
-  const ephemeralKey = event.ephemeralPubKey.startsWith("0x")
-    ? event.ephemeralPubKey.slice(2)
-    : event.ephemeralPubKey;
+  const stripHex = (s: string): string => (s.startsWith("0x") ? s.slice(2) : s);
+
+  const ephemeralKey = stripHex(event.ephemeralPubKey);
+  const ephemeralKeyHash = stripHex(event.ephemeralKeyHash);
+  const metadataBlob = stripHex(event.metadataRaw);
 
   // Warn on unexpected ephemeral key length but don't reject — mirrors the
   // behaviour of the primary event handler.
@@ -303,11 +293,10 @@ export function mapEventToAnnouncement(event: UnsyncedEvent): TursoAnnouncement 
     viewTag: event.viewTag,
     timestamp: blockTimestamp,
     ephemeralKey,
-    sourceChainId,
+    ephemeralKeyHash,
+    metadataBlob,
     blockNumber,
-    txHash: event.transactionHash,       // Monad announce tx hash — dedup key
-    paymentTxHash: event.txHash ?? null, // source-chain payment tx from metadata
-    amount: event.amount ?? null,
+    txHash: event.transactionHash, // Monad announce tx hash — dedup key
     chain: MONAD_CHAIN,
     stealthAddress: event.stealthAddress,
     blockTxIndex: event.logIndex,

@@ -23,10 +23,12 @@ export interface TursoAnnouncement {
   viewTag: number;
   /** Unix timestamp of the Monad block. */
   timestamp: number;
-  /** ML-KEM ephemeral ciphertext (hex, no 0x prefix). Must be 1088 bytes. */
+  /** Full ML-KEM ephemeral ciphertext (hex, no 0x prefix). Must be 1088 bytes. */
   ephemeralKey: string;
-  /** Source chain ID (EIP-155), or null if not embedded in metadata. */
-  sourceChainId: number | null;
+  /** keccak256 of the ciphertext (hex, no 0x prefix — 32 bytes), from the event. */
+  ephemeralKeyHash: string;
+  /** Raw encrypted metadata blob (hex, no 0x prefix). Only byte 0 is plaintext. */
+  metadataBlob: string;
   /** Monad block number. */
   blockNumber: number;
   /**
@@ -35,14 +37,6 @@ export interface TursoAnnouncement {
    * This is event.transaction.hash in the Envio handler.
    */
   txHash: string;
-  /**
-   * Source-chain payment tx hash — decoded from metadata bytes [1..33].
-   * May be null if the sender did not embed a payment tx hash.
-   * This is what recipients use to look up the actual payment on source_chain_id.
-   */
-  paymentTxHash: string | null;
-  /** Raw amount hex uint256, or null if absent in metadata. */
-  amount: string | null;
   /** Human-readable chain name, e.g. "monad-testnet". */
   chain: string;
   /** Recipient stealth address (lowercase). */
@@ -129,23 +123,25 @@ export async function writeTursoAnnouncement(
 
   const sql = `
     INSERT OR IGNORE INTO announcements
-      (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain,
-       block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, block_tx_index)
-    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      (view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, on_chain,
+       block_number, tx_hash, chain, stealth_address, block_tx_index)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
   `;
 
-  // ephemeral_key is stored as BLOB — convert hex string to Buffer
+  // ephemeral_key, ephemeral_key_hash, metadata_blob are stored as BLOB —
+  // convert hex strings to Buffers.
   const ephemeralKeyBuffer = Buffer.from(ann.ephemeralKey, "hex");
+  const ephemeralKeyHashBuffer = Buffer.from(ann.ephemeralKeyHash, "hex");
+  const metadataBlobBuffer = Buffer.from(ann.metadataBlob, "hex");
 
   const args = [
     ann.viewTag,
     ann.timestamp,
     ephemeralKeyBuffer,
-    ann.sourceChainId ?? null,
+    ephemeralKeyHashBuffer,
+    metadataBlobBuffer,
     ann.blockNumber,
     ann.txHash,                  // Monad announce tx hash — dedup key, always present
-    ann.paymentTxHash ?? null,   // source-chain payment tx hash from metadata
-    ann.amount ?? null,
     ann.chain,
     ann.stealthAddress,
     ann.blockTxIndex,

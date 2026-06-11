@@ -2,10 +2,15 @@
  * SPECTER Envio event handler — SPECTERAnnouncer.Announcement
  *
  * For each on-chain Announcement event:
- *   1. Decode the 77-byte SPECTER metadata (viewTag, txHash, amount, sourceChainId)
- *   2. Validate ephemeralPubKey length (must be 1088 bytes for ML-KEM-1024)
- *   3. Write to Envio's Postgres DB (queryable via GraphQL)
- *   4. Dual-write to Turso (for the SPECTER API scanning path)
+ *   1. Read ephemeralKeyHash (bytes32) + metadata (bytes); viewTag = metadata[0]
+ *   2. Resolve the FULL ML-KEM ciphertext from the announce() calldata (tx input)
+ *   3. Verify keccak256(ciphertext) === ephemeralKeyHash (skip row on mismatch)
+ *   4. Write to Envio's Postgres DB (queryable via GraphQL)
+ *   5. Dual-write to Turso (for the SPECTER API scanning path):
+ *      full ciphertext + ephemeralKeyHash + raw encrypted metadata blob.
+ *
+ * The metadata is now an opaque AEAD-encrypted blob — txHash/amount/sourceChainId
+ * are encrypted and unreadable here, so we no longer store them in plaintext.
  *
  * Error strategy: never throw from the handler. Log, degrade gracefully, continue.
  *
@@ -14,14 +19,15 @@
  */
 
 import { SPECTERAnnouncer } from "generated";
-import { decodeMetadataSafe, EPHEMERAL_KEY_LENGTH } from "./metadata";
+import { extractViewTag } from "./metadata";
+import { decodeEphemeralKey, verifyEphemeralKeyHash } from "./calldata";
 import { writeTursoAnnouncement } from "./turso";
 import { startRetryWorker } from "./retrySync";
 
 const MONAD_TESTNET_CHAIN_NAME = "monad-testnet";
 
 SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
-  const { schemeId, stealthAddress, caller, ephemeralPubKey, metadata } =
+  const { schemeId, stealthAddress, caller, ephemeralKeyHash, metadata } =
     event.params;
 
   const txHash = event.transaction.hash;
@@ -31,37 +37,57 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
 
   const entityId = `${txHash}-${logIndex}`;
 
-  // ── 1. Decode 77-byte metadata ─────────────────────────────────────────
-  const decoded = decodeMetadataSafe(metadata, (msg) =>
-    context.log.error(`[${entityId}] metadata decode failed: ${msg}`)
-  );
-
-  // ── 2. Validate ephemeralPubKey length (hex string: 1088 bytes = 2176 chars + optional 0x)
-  const ephemeralKeyHex = ephemeralPubKey.startsWith("0x")
-    ? ephemeralPubKey.slice(2)
-    : ephemeralPubKey;
-
-  const ephemeralKeyBytes = ephemeralKeyHex.length / 2;
-  if (ephemeralKeyBytes !== EPHEMERAL_KEY_LENGTH) {
-    context.log.warn(
-      `[${entityId}] Invalid ephemeralPubKey: ${ephemeralKeyBytes} bytes (expected ${EPHEMERAL_KEY_LENGTH}). Indexing anyway.`
-    );
+  // ── 1. View tag (byte 0 of the metadata blob) ──────────────────────────
+  let viewTag: number;
+  try {
+    viewTag = extractViewTag(metadata);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    context.log.error(`[${entityId}] view_tag extraction failed: ${msg}. Skipping.`);
+    return;
   }
+
+  // ── 2+3. Resolve ciphertext from calldata + verify keccak256 hash ───────
+  const input = event.transaction.input as `0x${string}`;
+  const expectedHash = ephemeralKeyHash as `0x${string}`;
+
+  let ephemeralPubKey: string; // hex, no 0x — the FULL 1088-byte ciphertext
+  try {
+    const ek = decodeEphemeralKey(input);
+    if (!verifyEphemeralKeyHash(ek, expectedHash)) {
+      context.log.error(
+        `[${entityId}] ephemeralKeyHash mismatch: keccak256(calldata ciphertext) ` +
+          `does not equal the event hash ${expectedHash}. Skipping (unverified data not stored).`
+      );
+      return;
+    }
+    ephemeralPubKey = ek.slice(2); // strip 0x for storage convention
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    context.log.error(
+      `[${entityId}] failed to decode ephemeral key from announce() calldata: ${msg}. Skipping.`
+    );
+    return;
+  }
+
+  // hex (no 0x) forms for storage
+  const ephemeralKeyHashHex = expectedHash.startsWith("0x")
+    ? expectedHash.slice(2)
+    : expectedHash;
+  const metadataBlobHex = metadata.startsWith("0x") ? metadata.slice(2) : metadata;
 
   const stealthAddressLower = stealthAddress.toLowerCase();
   const callerLower = caller.toLowerCase();
 
-  // ── 3. Write to Turso first so we know the sync status ─────────────────
+  // ── 4. Write to Turso first so we know the sync status ─────────────────
   const result = await writeTursoAnnouncement({
-    viewTag: decoded.viewTag,
+    viewTag,
     timestamp: blockTimestamp,
-    ephemeralKey: ephemeralKeyHex,
-    sourceChainId:
-      decoded.sourceChainId !== null ? Number(decoded.sourceChainId) : null,
+    ephemeralKey: ephemeralPubKey,           // full resolved ciphertext (hex, no 0x)
+    ephemeralKeyHash: ephemeralKeyHashHex,   // 32-byte event hash (hex, no 0x)
+    metadataBlob: metadataBlobHex,           // raw encrypted metadata (hex, no 0x)
     blockNumber,
-    txHash: txHash,                    // Monad announce tx hash (dedup key)
-    paymentTxHash: decoded.txHash,     // source-chain payment tx from metadata [1..33]
-    amount: decoded.amount,
+    txHash: txHash,                          // Monad announce tx hash (dedup key)
     chain: MONAD_TESTNET_CHAIN_NAME,
     stealthAddress: stealthAddressLower,
     blockTxIndex: logIndex,
@@ -87,17 +113,15 @@ SPECTERAnnouncer.Announcement.handler(async ({ event, context }) => {
     }
   }
 
-  // ── 4. Write to Envio entity (Postgres) ────────────────────────────────
+  // ── 5. Write to Envio entity (Postgres) ────────────────────────────────
   context.AnnouncementEvent.set({
     id: entityId,
     schemeId,
     stealthAddress: stealthAddressLower,
     caller: callerLower,
-    ephemeralPubKey: ephemeralKeyHex,
-    viewTag: decoded.viewTag,
-    txHash: decoded.txHash ?? undefined,
-    amount: decoded.amount ?? undefined,
-    sourceChainId: decoded.sourceChainId ?? undefined,
+    ephemeralPubKey,
+    ephemeralKeyHash: ephemeralKeyHashHex,
+    viewTag,
     blockNumber: BigInt(blockNumber),
     blockTimestamp: BigInt(blockTimestamp),
     transactionHash: txHash,
