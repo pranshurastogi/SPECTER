@@ -293,9 +293,9 @@ mod tests {
         let config = ChainIndexerConfig {
             rpc_url: "https://testnet-rpc.monad.xyz".into(),
             announcer_addr: "0x0000000000000000000000000000000000000001".parse().unwrap(),
-            deploy_block: 36100042,
+            deploy_block: 37571591,
         };
         assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");
-        assert_eq!(config.deploy_block, 36100042);
+        assert_eq!(config.deploy_block, 37571591);
     }
 }

@@ -23,7 +23,9 @@ use crate::contract::SPECTERAnnouncer;
 /// * `announcer_addr` - SPECTERAnnouncer contract address
 /// * `stealth_addr` - Recipient's stealth address
 /// * `ephemeral_key` - ML-KEM ciphertext (must be exactly 1088 bytes)
-/// * `metadata` - Fixed 77-byte metadata layout (see `AnnouncementMetadata`)
+/// * `metadata` - Metadata bytes to emit in the announcement event.
+///               77 bytes = plaintext layout; 93 bytes = AES-256-GCM encrypted.
+///               The contract accepts any non-empty byte slice.
 ///
 /// # Returns
 ///
@@ -35,7 +37,7 @@ use crate::contract::SPECTERAnnouncer;
 /// let tx_hash = publish_announcement(
 ///     "https://testnet-rpc.monad.xyz",
 ///     signer,
-///     "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a".parse()?,
+///     "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC".parse()?,
 ///     stealth_addr,
 ///     &ephemeral_key,
 ///     &metadata,
@@ -47,7 +49,7 @@ pub async fn publish_announcement(
     announcer_addr: Address,
     stealth_addr: Address,
     ephemeral_key: &[u8; 1088],
-    metadata: &[u8; 77],
+    metadata: &[u8],
 ) -> Result<B256> {
     let wallet = EthereumWallet::from(signer);
     // with_recommended_fillers adds nonce management, gas estimation, and chain-ID filling.
@@ -58,8 +60,8 @@ pub async fn publish_announcement(
         .on_http(rpc_url.parse()?);
     let contract = SPECTERAnnouncer::new(announcer_addr, &provider);
 
-    // 1088-byte ephemeral_key + 77-byte metadata calldata ≈ 18 000 gas for data alone.
-    // Add base tx (21 000) + event emission (~3 000) + SSTORE overhead → 150 000 is safe.
+    // 1088-byte ephemeral_key + metadata calldata ≈ 18 000 gas for data alone.
+    // Add base tx (21 000) + event emission (~3 000) → 150 000 is safe.
     let tx = contract
         .announce(
             stealth_addr,
@@ -95,7 +97,7 @@ mod tests {
             ann: Address,
             stealth: Address,
             ek: &[u8; 1088],
-            meta: &[u8; 77],
+            meta: &[u8],
         ) {
             let _ = publish_announcement(url, signer, ann, stealth, ek, meta);
         }

@@ -40,7 +40,7 @@ use specter_stealth::wallet::SpecterWallet;
 
 const MONAD_CHAIN_ID: u64 = 10143;
 const MONAD_RPC_DEFAULT: &str = "https://testnet-rpc.monad.xyz";
-const ANNOUNCER_DEFAULT: &str = "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a";
+const ANNOUNCER_DEFAULT: &str = "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC";
 const DEFAULT_AMOUNT_WEI: u64 = 1_000; // 1000 wei — negligible cost for test
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

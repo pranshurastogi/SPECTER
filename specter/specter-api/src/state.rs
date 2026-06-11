@@ -630,14 +630,14 @@ mod tests {
     fn test_chain_config_with_valid_env_vars() {
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
-        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
-        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "36100042");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "37571591");
 
         let config = ChainConfig::from_env().expect("Should load valid config");
         assert!(config.enabled);
         assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");
-        assert_eq!(config.announcer_addr, "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
-        assert_eq!(config.deploy_block, 36100042);
+        assert_eq!(config.announcer_addr, "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        assert_eq!(config.deploy_block, 37571591);
 
         std::env::remove_var("ANNOUNCEMENT_SOURCE");
         std::env::remove_var("MONAD_RPC_URL");
@@ -649,7 +649,7 @@ mod tests {
     fn test_chain_config_invalid_deploy_block() {
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
-        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
         std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "not_a_number");
 
         let result = ChainConfig::from_env();

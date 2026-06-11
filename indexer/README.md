@@ -103,7 +103,7 @@ After running `envio dev`, the GraphQL API is available at `http://localhost:808
 ```graphql
 query {
   AnnouncementEvent(
-    where: { viewTag: { _eq: 42 }, blockNumber: { _gte: "36100042" } }
+    where: { viewTag: { _eq: 42 }, blockNumber: { _gte: "37571591" } }
     order_by: { blockNumber: asc }
     limit: 1000
   ) {

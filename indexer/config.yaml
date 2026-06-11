@@ -10,14 +10,14 @@ field_selection:
 
 networks:
   - id: 10143   # Monad testnet
-    start_block: 36100042   # SPECTERAnnouncer deploy block
+    start_block: 37571591   # SPECTERAnnouncer deploy block
     # Wait 2 blocks before processing — MonadBFT achieves single-slot finality
     # but we add a small buffer to guard against any transient reorgs
     confirmed_block_threshold: 2
 
     contracts:
       - name: SPECTERAnnouncer
-        address: "0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a"
+        address: "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC"
         handler: ./src/EventHandlers.ts
         events:
           - event: "Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)"

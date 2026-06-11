@@ -407,7 +407,7 @@ PYEOF3
     fi
 
     # Check SPECTERAnnouncer contract exists
-    ANNOUNCER_ADDR="${SPECTER_ANNOUNCER_ADDRESS:-0xCc322132261cE3a1c9c85a6ef69779Ce2D61CA5a}"
+    ANNOUNCER_ADDR="${SPECTER_ANNOUNCER_ADDRESS:-0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC}"
     if [[ -n "$ANNOUNCER_ADDR" && "$RPC_RESP" == "200" ]]; then
         CODE_RESP=$(curl -s \
             -X POST "${MONAD_RPC}" \
