@@ -69,7 +69,9 @@ async fn test_full_announcement_to_scan_flow() {
     // Verify what the indexer decoded
     assert_eq!(announcement.view_tag, recipient_view_tag);
     assert_eq!(announcement.source_chain_id, Some(source_chain_id));
-    assert!(announcement.tx_hash.is_some(), "tx_hash should be decoded from metadata");
+    // The source-chain payment tx hash is decoded from metadata into payment_tx_hash.
+    // (tx_hash = the Monad announce tx, set later by the Envio handler / e2e flow.)
+    assert!(announcement.payment_tx_hash.is_some(), "payment_tx_hash should be decoded from metadata");
     assert!(announcement.amount.is_some(), "amount should be decoded from metadata");
     assert_eq!(announcement.block_number, Some(monad_block));
     assert_eq!(announcement.chain, Some("monad-testnet".to_string()));
@@ -93,7 +95,7 @@ async fn test_full_announcement_to_scan_flow() {
     assert_eq!(stored.view_tag, recipient_view_tag);
     assert_eq!(stored.source_chain_id, Some(source_chain_id));
     assert_eq!(stored.block_number, Some(monad_block));
-    assert!(stored.tx_hash.is_some());
+    assert!(stored.payment_tx_hash.is_some());
     assert!(stored.amount.is_some());
     assert!(stored.stealth_address.is_some());
 
