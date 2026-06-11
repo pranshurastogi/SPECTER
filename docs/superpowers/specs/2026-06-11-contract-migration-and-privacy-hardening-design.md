@@ -280,3 +280,105 @@ client-SDK chain scanning. Tasks 11-13 change: the indexer/poller now resolve th
 ciphertext from calldata and store it (prefer Envio `transaction_fields: [hash,
 input]` to get calldata without an extra RPC; event-poller uses
 `eth_getTransactionByHash`).
+
+---
+
+## PHASE 2 DESIGN (refined 2026-06-12, post-Phase-1)
+
+Phase 1 changed the ground: the indexer/poller no longer write plaintext payment
+fields (only the encrypted `metadata_blob`), which (a) silently broke the
+`payment_tx_hash` double-announce protection and (b) left the **API** publish path
+(`handlers.rs:364` `registry.publish`) as the remaining at-rest plaintext leak —
+it still stores `payment_tx_hash`/`amount`/`chain` in cleartext with
+`record_source='api'`, duplicating what the indexer stores encrypted. Decisions
+(user-approved): **encrypted API rows + HMAC reservation**, delivered as **one
+combined plan** in dependency order.
+
+### 2.0 — Server key material (`SPECTER_DB_ENC_KEY`)
+- One 32-byte master key (base64 in env; never stored in Turso). Loud startup
+  error if unset when the relayer or persistence is enabled.
+- Purpose-specific subkeys via SHAKE-256 + domain separators (reuse the existing
+  `specter-crypto` KDF pattern), new module `specter-crypto/src/db_keys.rs`:
+  ```
+  DB_HMAC_KEY       = SHAKE256("SPECTER_DB_HMAC_V1"      || master)[..32]
+  DB_PENDING_WRAP   = SHAKE256("SPECTER_DB_PENDING_V1"   || master)[..32]
+  DB_TELEMETRY_SALT = SHAKE256("SPECTER_DB_TELEMETRY_V1" || master)[..32]
+  ```
+- New domain-separator constants in `specter-core/constants.rs` (extend the
+  non-overlap test to include them).
+- Dedup key: `payment_tx_hash_hmac = HMAC-SHA256(DB_HMAC_KEY, normalize(payment_tx_hash))`
+  (normalize = trim + lowercase, matching `registry.rs::normalize_tx_hash`).
+
+### B2 — At-rest: encrypted API rows + telemetry hashing
+- **API publish** stores the SAME encrypted shape as the indexer:
+  `metadata_blob` = the AEAD blob the relayer already builds, `ephemeral_key_hash`
+  = keccak256(ephemeral_key), full `ephemeral_key`; and **does not** persist
+  plaintext `payment_tx_hash`/`amount`/`source_chain_id` (those are kept only
+  transiently in the handler for payment verification + HMAC, never written).
+- **Telemetry**: store `ip_hash = SHA-256(DB_TELEMETRY_SALT || floor(unix/86400) || ip)`
+  (daily-rotating) instead of raw IP. `write_telemetry` takes the hashed value;
+  the raw `ip` column (retained by v6) is no longer written. Keeps abuse
+  detection; breaks the IP↔view_tag deanonymization link.
+- Indexer/poller rows are already plaintext-free after Phase 1 — no change.
+
+### B3 — Dedup (reserve-before-relay) + error parity
+- Add `payment_tx_hash_hmac: Option<Vec<u8>>` to `Announcement`; the registry
+  INSERT writes it (the v6 `idx_announcements_payment_hmac_unique` enforces it).
+- **Publish order (race-safe):**
+  1. Build the announcement (encrypted blob, hmac); `tx_hash = NULL`, `on_chain = 0`.
+  2. **Reserve**: INSERT the row. A duplicate `payment_tx_hash_hmac` hits the
+     UNIQUE index → treat as "already announced".
+  3. Relay `announce()` on Monad.
+  4. **Finalize**: UPDATE the reserved row set `tx_hash = monad_tx`, `on_chain = 1`.
+  (Relay failure leaves an `on_chain=0` reserved row; a TTL sweep or the existing
+  retry path cleans it. The indexer's later write of the same announce tx is
+  deduped by the `tx_hash` UNIQUE index.)
+- **Error parity**: the reservation conflict returns a generic `409`
+  (`"announcement could not be published"`) with no field that distinguishes
+  "already announced" from other publish failures, so an attacker cannot
+  enumerate which `payment_tx_hash`es were routed through SPECTER. (Probing is
+  already gated by needing a valid pending `payment_id` and an actual relayed tx.)
+
+### B4 — Cryptographic recipient/amount verification (`verifier.rs`)
+Extend `verify_payment_tx` (new params: `stealth_address`, `amount`, optional
+`token`):
+- **Native transfer:** assert `tx.to == stealth_address && tx.value >= amount`.
+- **ERC-20:** scan the receipt logs for `Transfer(_, stealth_address, v)` with
+  `v >= amount` from the expected token (or any token if unspecified, best-effort).
+- **Indeterminate** (no matching transfer): **reject** (keeps the registry clean
+  on the relayed path), with the same generic error surface.
+Inputs come from the announcement the API already holds; no new client field
+required beyond the optional token address.
+
+### B5 — Persist pending payments to Turso (KEK-wrapped secret)
+- New `pending_payments` table (schema v7): `payment_id` TEXT PK, `announcement`
+  BLOB (serialized server-built announcement), `shared_secret_wrapped` BLOB
+  (AES-256-GCM under `DB_PENDING_WRAP` — a Turso breach alone cannot decrypt
+  metadata), `created_at`, `expires_at`.
+- `PendingPaymentStore` becomes async Turso-backed (replacing the in-memory
+  `DashMap`): single-use `take` deletes the row; 24h TTL; periodic purge; survives
+  restarts. On a `payment_id` that resolves to an expired/missing row the API
+  returns the same generic error and does **not** silently fall back to the weaker
+  client-supplied path — it surfaces that the secure path is unavailable.
+- `shared_secret` stays `#[serde(skip)]` in `StealthPayment`; only the wrapped
+  form is persisted.
+
+### Scan-path metadata decryption (recipient-facing)
+- In `specter-stealth::discovery` (`scan_with_context_and_stats` + `scan_announcement`):
+  after the view-tag match (so the recipient already holds `shared_secret`), if
+  `announcement.metadata_blob` is present, `decrypt_announcement_metadata` →
+  `AnnouncementMetadata::decode` → populate the returned announcement's
+  `payment_tx_hash` / `amount` / `source_chain_id`. The secret never leaves the
+  stealth crate; `DiscoveryDto` then surfaces the payment details again (restoring
+  what Phase 1 moved into the encrypted blob).
+
+### Sequencing (one plan, dependency order)
+2.0 KEK/subkeys → B2 at-rest + telemetry → B3 HMAC dedup + error parity → B5
+pending persistence (schema v7) → B4 payment verification → scan-path decryption.
+Schema work: v6 already added `payment_tx_hash_hmac` + `ip_hash`; Phase 2 adds the
+`pending_payments` table as **v7** (additive).
+
+### Out of scope (Phase 2)
+- No re-encryption of historical plaintext rows (Phase 1 re-index produced a clean
+  encrypted dataset).
+- No change to the ML-KEM/stealth derivation or the on-chain contract.
