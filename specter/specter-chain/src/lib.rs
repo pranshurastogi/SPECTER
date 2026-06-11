@@ -5,6 +5,7 @@
 //! - **Announcer**: Server-side publishing of announcements for sponsored flows
 //! - **Contract bindings**: Typed Alloy interface to SPECTERAnnouncer
 
+pub mod calldata;
 pub mod contract;
 pub mod indexer;
 pub mod announcer;
