@@ -41,7 +41,7 @@ use specter_core::types::Announcement;
 use specter_stealth::discovery::{scan_announcement, DiscoveredPayment, ScanResult, ScanStats};
 
 /// Scanner configuration.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ScannerConfig {
     /// Batch size for scanning
     pub batch_size: usize,
@@ -53,6 +53,23 @@ pub struct ScannerConfig {
     pub to_timestamp: Option<u64>,
     /// Specific view tags to scan (None = all)
     pub view_tag_filter: Option<Vec<u8>>,
+    /// Resolves the ciphertext for chain-indexed (hash-only) announcements by
+    /// fetching+verifying it from `announce()` calldata. `None` ⇒ hash-only
+    /// announcements are skipped with a warning (already-resolved rows scan normally).
+    pub resolver: Option<std::sync::Arc<dyn specter_core::resolver::EphemeralKeyResolver>>,
+}
+
+impl std::fmt::Debug for ScannerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScannerConfig")
+            .field("batch_size", &self.batch_size)
+            .field("stop_on_first", &self.stop_on_first)
+            .field("from_timestamp", &self.from_timestamp)
+            .field("to_timestamp", &self.to_timestamp)
+            .field("view_tag_filter", &self.view_tag_filter)
+            .field("resolver", &self.resolver.as_ref().map(|_| "<resolver>"))
+            .finish()
+    }
 }
 
 impl Default for ScannerConfig {
@@ -63,6 +80,7 @@ impl Default for ScannerConfig {
             from_timestamp: None,
             to_timestamp: None,
             view_tag_filter: None,
+            resolver: None,
         }
     }
 }
@@ -95,6 +113,15 @@ impl ScannerConfig {
     /// Sets specific view tags to scan.
     pub fn view_tags(mut self, tags: Vec<u8>) -> Self {
         self.view_tag_filter = Some(tags);
+        self
+    }
+
+    /// Sets the resolver used to fetch ciphertexts for hash-only announcements.
+    pub fn resolver(
+        mut self,
+        r: std::sync::Arc<dyn specter_core::resolver::EphemeralKeyResolver>,
+    ) -> Self {
+        self.resolver = Some(r);
         self
     }
 }
@@ -257,6 +284,8 @@ impl Scanner {
         let start = Instant::now();
         let mut discoveries = Vec::new();
 
+        let resolver = config.resolver.clone();
+
         // Get view tags to scan
         let view_tags: Vec<u8> = match config.view_tag_filter {
             Some(tags) => tags,
@@ -285,6 +314,27 @@ impl Scanner {
                 if let Some(to) = config.to_timestamp {
                     if announcement.timestamp > to {
                         continue;
+                    }
+                }
+
+                // Chain-indexed rows arrive hash-only; fetch+verify the ciphertext
+                // from calldata before decapsulation. Already-resolved rows pass through.
+                let mut announcement = announcement;
+                if !announcement.is_resolved() {
+                    let (Some(resolver), Some(tx), Some(hash)) = (
+                        resolver.as_ref(),
+                        announcement.tx_hash.as_deref(),
+                        announcement.ephemeral_key_hash.as_deref(),
+                    ) else {
+                        debug!(view_tag, "skipping hash-only announcement (no resolver / missing tx or hash)");
+                        continue;
+                    };
+                    match resolver.resolve(tx, hash).await {
+                        Ok(ct) => announcement.ephemeral_key = ct,
+                        Err(e) => {
+                            warn!(view_tag, error = %e, "ephemeral key resolution failed; skipping");
+                            continue;
+                        }
                     }
                 }
 
@@ -345,6 +395,8 @@ impl Scanner {
         let total = registry.count().await?;
         let mut progress = ScanProgress::new(total);
 
+        let resolver = config.resolver.clone();
+
         // Get view tags to scan
         let view_tags: Vec<u8> = match config.view_tag_filter {
             Some(tags) => tags,
@@ -366,6 +418,27 @@ impl Scanner {
                 if let Some(to) = config.to_timestamp {
                     if announcement.timestamp > to {
                         continue;
+                    }
+                }
+
+                // Chain-indexed rows arrive hash-only; fetch+verify the ciphertext
+                // from calldata before decapsulation. Already-resolved rows pass through.
+                let mut announcement = announcement;
+                if !announcement.is_resolved() {
+                    let (Some(resolver), Some(tx), Some(hash)) = (
+                        resolver.as_ref(),
+                        announcement.tx_hash.as_deref(),
+                        announcement.ephemeral_key_hash.as_deref(),
+                    ) else {
+                        debug!(view_tag, "skipping hash-only announcement (no resolver / missing tx or hash)");
+                        continue;
+                    };
+                    match resolver.resolve(tx, hash).await {
+                        Ok(ct) => announcement.ephemeral_key = ct,
+                        Err(e) => {
+                            warn!(view_tag, error = %e, "ephemeral key resolution failed; skipping");
+                            continue;
+                        }
                     }
                 }
 
@@ -463,9 +536,21 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use async_trait::async_trait;
     use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
+    use specter_core::resolver::EphemeralKeyResolver;
     use specter_crypto::{compute_view_tag, encapsulate, generate_keypair};
     use specter_registry::MemoryRegistry;
+
+    struct StubResolver {
+        ciphertext: Vec<u8>,
+    }
+    #[async_trait]
+    impl EphemeralKeyResolver for StubResolver {
+        async fn resolve(&self, _tx: &str, _expected: &[u8]) -> specter_core::error::Result<Vec<u8>> {
+            Ok(self.ciphertext.clone())
+        }
+    }
 
     fn setup_scanner_and_registry() -> (Scanner, MemoryRegistry, Vec<u8>) {
         let spending = generate_keypair();
@@ -666,6 +751,45 @@ mod tests {
         let pos = scanner.position();
         assert_eq!(pos.total_scanned, 0);
         assert_eq!(pos.total_discoveries, 0);
+    }
+
+    #[tokio::test]
+    async fn scanner_resolves_hash_only_announcement() {
+        let (scanner, registry, viewing_pk) = setup_scanner_and_registry();
+
+        // Encapsulate to our viewing key → ciphertext + shared secret → view_tag.
+        let pk = specter_core::types::KyberPublicKey::from_bytes(&viewing_pk).unwrap();
+        let (ciphertext, shared_secret) = encapsulate(&pk).unwrap();
+        let view_tag = compute_view_tag(&shared_secret);
+        let ct_bytes = ciphertext.into_bytes();
+
+        // Build a HASH-ONLY announcement (empty ciphertext, hash + tx present).
+        let mut ann = Announcement::new(Vec::new(), view_tag);
+        ann.ephemeral_key_hash = Some(vec![0x11u8; 32]);
+        ann.tx_hash = Some(format!("0x{}", "aa".repeat(32)));
+        registry.publish(ann).await.unwrap();
+
+        // With a resolver that returns the real ciphertext, the payment is discovered.
+        let mut config = ScannerConfig::default();
+        config.resolver = Some(Arc::new(StubResolver { ciphertext: ct_bytes }));
+        let discoveries = scanner.scan_with_config(&registry, config).await.unwrap();
+        assert_eq!(discoveries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn scanner_skips_hash_only_without_resolver() {
+        let (scanner, registry, viewing_pk) = setup_scanner_and_registry();
+        let pk = specter_core::types::KyberPublicKey::from_bytes(&viewing_pk).unwrap();
+        let (_ciphertext, shared_secret) = encapsulate(&pk).unwrap();
+        let view_tag = compute_view_tag(&shared_secret);
+        let mut ann = Announcement::new(Vec::new(), view_tag);
+        ann.ephemeral_key_hash = Some(vec![0x11u8; 32]);
+        ann.tx_hash = Some(format!("0x{}", "aa".repeat(32)));
+        registry.publish(ann).await.unwrap();
+
+        // No resolver configured → hash-only row is skipped, no discoveries, no panic.
+        let discoveries = scanner.scan_all(&registry).await.unwrap();
+        assert_eq!(discoveries.len(), 0);
     }
 
     #[test]
