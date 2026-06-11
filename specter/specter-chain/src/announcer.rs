@@ -62,8 +62,11 @@ pub async fn publish_announcement(
 
     // 1088-byte ephemeral_key + metadata calldata ≈ 18 000 gas for data alone.
     // Add base tx (21 000) + event emission (~3 000) → 150 000 is safe.
+    // alloy renames the overloaded `announce` functions: the 3-arg form
+    // (address, bytes, bytes) is generated as `announce_0`; the 4-arg
+    // schemeId overload is `announce_1`.
     let tx = contract
-        .announce(
+        .announce_0(
             stealth_addr,
             ephemeral_key.to_vec().into(),
             metadata.to_vec().into(),
