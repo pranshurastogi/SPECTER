@@ -381,7 +381,7 @@ impl RegistryBackend {
     pub async fn write_telemetry(
         &self,
         event: &str,
-        ip: Option<&str>,
+        ip_hash: Option<&[u8]>,
         ua: Option<&str>,
         chain: Option<&str>,
         chain_id: Option<u64>,
@@ -391,7 +391,7 @@ impl RegistryBackend {
         ms: u64,
     ) {
         if let Self::Turso(t) = self {
-            t.write_telemetry(event, ip, ua, chain, chain_id, view_tag, status, err, ms)
+            t.write_telemetry(event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms)
                 .await;
         }
     }

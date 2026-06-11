@@ -343,7 +343,7 @@ impl TursoRegistry {
     pub async fn write_telemetry(
         &self,
         event: &str,
-        ip: Option<&str>,
+        ip_hash: Option<&[u8]>,
         ua: Option<&str>,
         chain: Option<&str>,
         chain_id: Option<u64>,
@@ -355,11 +355,11 @@ impl TursoRegistry {
         let Ok(conn) = self.conn() else { return };
         let _ = conn
             .execute(
-                "INSERT INTO _telemetry (event, ip, ua, chain, chain_id, view_tag, status, err, ms) \
+                "INSERT INTO _telemetry (event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 vec![
                     Value::Text(event.to_string()),
-                    ip.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    ip_hash.map(|h| Value::Blob(h.to_vec())).unwrap_or(Value::Null),
                     ua.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
                     chain.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
                     chain_id.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Null),
@@ -802,6 +802,42 @@ mod tests {
         let id2 = reg.publish(make_ann(0x02)).await.unwrap();
         assert_eq!(reg.count().await.unwrap(), 2);
         assert_eq!(reg.next_id().await.unwrap(), id2 + 1);
+    }
+
+    #[tokio::test]
+    async fn telemetry_stores_ip_hash_not_raw_ip() {
+        let reg = setup().await;
+        let hash = [0xABu8; 32];
+        reg.write_telemetry(
+            "announce",
+            Some(&hash[..]),
+            None,
+            None,
+            None,
+            None,
+            "success",
+            None,
+            7,
+        )
+        .await;
+
+        let conn = reg.conn().unwrap();
+        let mut rows = conn
+            .query("SELECT ip_hash, ip FROM _telemetry LIMIT 1", ())
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().expect("telemetry row present");
+
+        let stored_hash = match row.get_value(0).unwrap() {
+            Value::Blob(b) => b,
+            other => panic!("expected ip_hash BLOB, got {other:?}"),
+        };
+        assert_eq!(stored_hash, hash.to_vec());
+
+        assert!(
+            matches!(row.get_value(1).unwrap(), Value::Null),
+            "raw ip column must be NULL"
+        );
     }
 
     #[tokio::test]

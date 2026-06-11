@@ -378,6 +378,14 @@ pub async fn publish_announcement(
 
     // ── 7. Telemetry (best-effort) ────────────────────────────────────────────
     let ip = extract_client_ip(&headers, maybe_connect.as_ref());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ip_hash = state
+        .db_keys
+        .as_ref()
+        .map(|k| k.telemetry_ip_hash(&ip.to_string(), now));
     let ua = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
@@ -386,7 +394,7 @@ pub async fn publish_announcement(
         .registry
         .write_telemetry(
             "announce",
-            Some(&ip.to_string()),
+            ip_hash.as_deref(),
             ua.as_deref(),
             chain_for_tel.as_deref(),
             chain_id_for_tel,
