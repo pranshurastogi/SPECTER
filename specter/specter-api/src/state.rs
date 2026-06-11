@@ -468,6 +468,9 @@ pub struct AppState {
     /// Server-side relayer for gas-sponsored announcements.
     /// `None` in dev mode — client supplies tx_hash directly instead.
     pub relayer_config: Option<RelayerConfig>,
+    /// Server key material for at-rest hardening (dedup MAC, telemetry hash,
+    /// pending-secret wrap). `None` when SPECTER_DB_ENC_KEY is unset (dev only).
+    pub db_keys: Option<std::sync::Arc<specter_crypto::DbKeys>>,
 }
 
 impl AppState {
@@ -533,6 +536,15 @@ impl AppState {
             eprintln!("⚠️  RELAYER_PRIVATE_KEY not set — running in dev mode (client supplies tx_hash)");
         }
 
+        let db_keys = Self::load_db_keys();
+        if relayer_config.is_some() && db_keys.is_none() {
+            tracing::warn!(
+                "RELAYER_PRIVATE_KEY is set but SPECTER_DB_ENC_KEY is not — \
+                 dedup, telemetry hashing, and pending persistence are degraded. \
+                 Generate one: openssl rand -base64 32"
+            );
+        }
+
         Self {
             config: config.clone(),
             registry,
@@ -542,6 +554,7 @@ impl AppState {
             pending_payments: Arc::new(PendingPaymentStore::new()),
             chain_config,
             relayer_config,
+            db_keys,
         }
     }
 
@@ -561,6 +574,32 @@ impl AppState {
                 enabled: false,
             },
             relayer_config: None,
+            db_keys: Self::load_db_keys(),
+        }
+    }
+
+    /// Decodes a base64 (standard) 32-byte DB master key.
+    pub fn decode_db_master(b64: &str) -> anyhow::Result<[u8; 32]> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let bytes = STANDARD
+            .decode(b64.trim())
+            .map_err(|e| anyhow::anyhow!("SPECTER_DB_ENC_KEY is not valid base64: {e}"))?;
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("SPECTER_DB_ENC_KEY must decode to exactly 32 bytes"))?;
+        Ok(arr)
+    }
+
+    /// Loads `DbKeys` from `SPECTER_DB_ENC_KEY` if present and valid.
+    pub fn load_db_keys() -> Option<std::sync::Arc<specter_crypto::DbKeys>> {
+        let b64 = std::env::var("SPECTER_DB_ENC_KEY").ok().filter(|s| !s.trim().is_empty())?;
+        match Self::decode_db_master(&b64) {
+            Ok(master) => Some(std::sync::Arc::new(specter_crypto::DbKeys::from_master(&master))),
+            Err(e) => {
+                tracing::error!("Invalid SPECTER_DB_ENC_KEY — at-rest hardening disabled: {e}");
+                None
+            }
         }
     }
 }
@@ -699,5 +738,15 @@ mod tests {
 
         assert_eq!(api_config.rpc_url, DEFAULT_ETH_MAINNET_RPC);
         assert!(!api_config.use_testnet);
+    }
+
+    #[test]
+    fn db_keys_loads_from_base64_env() {
+        // 32 zero bytes, base64 standard.
+        let b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let master = AppState::decode_db_master(b64).expect("valid 32-byte base64");
+        assert_eq!(master, [0u8; 32]);
+        assert!(AppState::decode_db_master("too-short").is_err());
+        assert!(AppState::decode_db_master("not!base64!!").is_err());
     }
 }

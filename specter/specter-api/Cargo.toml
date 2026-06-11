@@ -52,6 +52,12 @@ url = { workspace = true }
 # Config
 dotenvy = "0.15"
 
+# Error context
+anyhow = { workspace = true }
+
+# Encoding
+base64 = "0.22"
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 reqwest = { workspace = true }
