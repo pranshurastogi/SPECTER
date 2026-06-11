@@ -58,6 +58,13 @@ fn get_opt_text(row: &libsql::Row, idx: i32) -> Option<String> {
     }
 }
 
+fn get_opt_blob(row: &libsql::Row, idx: i32) -> Option<Vec<u8>> {
+    match row.get_value(idx) {
+        Ok(Value::Blob(b)) => Some(b),
+        _ => None,
+    }
+}
+
 // ── TursoRegistry ─────────────────────────────────────────────────────────
 
 /// Production Turso-backed announcement registry.
@@ -237,7 +244,8 @@ impl TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements ORDER BY id",
                 (),
             )
@@ -416,7 +424,8 @@ impl TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE source_chain_id = ?1 ORDER BY block_number DESC",
                 params![chain_id as i64],
             )
@@ -436,13 +445,16 @@ impl TursoRegistry {
 
         conn.execute(
             "INSERT INTO announcements \
-             (view_tag, timestamp, ephemeral_key, source_chain_id, on_chain, \
-              block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, record_source) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             (view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, \
+              source_chain_id, on_chain, block_number, tx_hash, payment_tx_hash, \
+              amount, chain, stealth_address, record_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
-                Value::Blob(ann.ephemeral_key.clone()),
+                Value::Blob(ann.ephemeral_key.clone()), // empty Vec for hash-only rows (column is NOT NULL on migrated DBs)
+                ann.ephemeral_key_hash.clone().map(Value::Blob).unwrap_or(Value::Null),
+                ann.metadata_blob.clone().map(Value::Blob).unwrap_or(Value::Null),
                 opt_int(ann.source_chain_id.map(|c| c as i64)),
                 Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
@@ -560,7 +572,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE view_tag = ?1 ORDER BY timestamp DESC",
                 params![view_tag as i64],
             )
@@ -583,7 +596,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE timestamp BETWEEN ?1 AND ?2 ORDER BY timestamp",
                 params![start as i64, end as i64],
             )
@@ -598,7 +612,8 @@ impl AnnouncementRegistry for TursoRegistry {
         let mut rows = conn
             .query(
                 "SELECT id, view_tag, timestamp, ephemeral_key, source_chain_id, \
-                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address \
+                        block_number, tx_hash, payment_tx_hash, amount, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE id = ?1 LIMIT 1",
                 params![id as i64],
             )
@@ -645,6 +660,7 @@ impl AnnouncementRegistry for TursoRegistry {
 /// Column order must match every SELECT that fetches announcements:
 ///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=source_chain_id
 ///   5=block_number  6=tx_hash  7=payment_tx_hash  8=amount  9=chain  10=stealth_address
+///   11=ephemeral_key_hash  12=metadata_blob
 fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
     let id: i64 = row
         .get(0)
@@ -664,9 +680,8 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         view_tag: view_tag as u8,
         timestamp: timestamp as u64,
         ephemeral_key,
-        // Populated by the v6 column readers in Task 8; None until then.
-        ephemeral_key_hash: None,
-        metadata_blob: None,
+        ephemeral_key_hash: get_opt_blob(row, 11),
+        metadata_blob: get_opt_blob(row, 12),
         source_chain_id: get_opt_int(row, 4).map(|v| v as u64),
         block_number: get_opt_int(row, 5).map(|b| b as u64),
         tx_hash: get_opt_text(row, 6),
@@ -908,5 +923,29 @@ mod tests {
             r.unwrap();
         }
         assert_eq!(reg.count().await.unwrap(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_hash_only_announcement_roundtrips() {
+        let reg = setup().await;
+
+        // A chain-indexed, hash-only announcement: empty ciphertext, but a
+        // 32-byte keccak hash of the ephemeral key plus the metadata blob.
+        let mut ann = Announcement::new(Vec::new(), 0x42);
+        ann.ephemeral_key_hash = Some(vec![0x11u8; 32]);
+        ann.metadata_blob = Some(vec![0xAA, 0xBB, 0xCC]);
+        ann.tx_hash = Some("0x".to_string() + &"aa".repeat(32));
+        ann.block_number = Some(123_456);
+        ann.source_chain_id = Some(10143);
+
+        reg.insert_onchain_announcement(&ann).await.unwrap();
+
+        let got = reg.get_by_view_tag(0x42).await.unwrap();
+        assert_eq!(got.len(), 1);
+        let r = &got[0];
+        assert_eq!(r.ephemeral_key_hash, Some(vec![0x11u8; 32]));
+        assert_eq!(r.metadata_blob, Some(vec![0xAA, 0xBB, 0xCC]));
+        // Empty ciphertext means it has not been resolved yet.
+        assert!(!r.is_resolved());
     }
 }
