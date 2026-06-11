@@ -1,7 +1,7 @@
 //! Turso (libSQL) schema definition and migration logic.
 
 /// Current schema version.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// DDL statements executed in order on startup (CREATE IF NOT EXISTS — idempotent).
 pub const SCHEMA_STATEMENTS: &[&str] = &[
@@ -10,7 +10,10 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         view_tag         INTEGER NOT NULL,
         timestamp        INTEGER NOT NULL,
-        ephemeral_key    BLOB    NOT NULL,
+        ephemeral_key    BLOB,
+        ephemeral_key_hash    BLOB,
+        metadata_blob         BLOB,
+        payment_tx_hash_hmac  BLOB,
         source_chain_id  INTEGER,
         on_chain         INTEGER NOT NULL DEFAULT 0,
         block_number     INTEGER,
@@ -35,6 +38,8 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     // Prevents the same source-chain payment from being announced twice.
     // WHERE payment_tx_hash IS NOT NULL allows multiple NULL rows (no payment hash).
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_payment_tx_unique ON announcements(payment_tx_hash) WHERE payment_tx_hash IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_ephem_hash ON announcements(ephemeral_key_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_payment_hmac_unique ON announcements(payment_tx_hash_hmac) WHERE payment_tx_hash_hmac IS NOT NULL",
 
     // ── scan_positions ─────────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS scan_positions (
@@ -65,6 +70,7 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
         event    TEXT    NOT NULL,
         ip       TEXT,
+        ip_hash  BLOB,
         ua       TEXT,
         chain    TEXT,
         chain_id INTEGER,
@@ -76,6 +82,7 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS _idx_tel_ts  ON _telemetry(ts DESC)",
     "CREATE INDEX IF NOT EXISTS _idx_tel_ip  ON _telemetry(ip)",
+    "CREATE INDEX IF NOT EXISTS _idx_tel_iph ON _telemetry(ip_hash)",
     "CREATE INDEX IF NOT EXISTS _idx_tel_evt ON _telemetry(event)",
 ];
 
@@ -131,4 +138,28 @@ pub const MIGRATION_V4_TO_V5: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS _idx_tel_ip  ON _telemetry(ip)",
     "CREATE INDEX IF NOT EXISTS _idx_tel_evt ON _telemetry(event)",
     "INSERT OR REPLACE INTO registry_metadata (key, value) VALUES ('schema_version', '5')",
+];
+
+/// v5 → v6: new-contract interface support (purely additive — no drops).
+///
+/// - announcements: add ephemeral_key_hash (keccak256 from the event),
+///   metadata_blob (AEAD-encrypted on-chain metadata), and payment_tx_hash_hmac
+///   (the Phase-2 dedup key; populated later — the column + unique index are
+///   added now so the migration is single-shot).
+/// - _telemetry: add ip_hash (the Phase-2 hashed-IP column; the raw `ip` column
+///   is intentionally retained for now and dropped in Phase 2).
+///
+/// Existing rows keep their NOT NULL `ephemeral_key`; new chain-indexed rows
+/// write an EMPTY BLOB there (handled by the writers) since the column stays
+/// NOT NULL on already-migrated DBs. The plaintext payment_tx_hash unique index
+/// is intentionally retained in Phase 1.
+pub const MIGRATION_V5_TO_V6: &[&str] = &[
+    "ALTER TABLE announcements ADD COLUMN ephemeral_key_hash BLOB",
+    "ALTER TABLE announcements ADD COLUMN metadata_blob BLOB",
+    "ALTER TABLE announcements ADD COLUMN payment_tx_hash_hmac BLOB",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_ephem_hash ON announcements(ephemeral_key_hash)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_payment_hmac_unique ON announcements(payment_tx_hash_hmac) WHERE payment_tx_hash_hmac IS NOT NULL",
+    "ALTER TABLE _telemetry ADD COLUMN ip_hash BLOB",
+    "CREATE INDEX IF NOT EXISTS _idx_tel_iph ON _telemetry(ip_hash)",
+    "INSERT OR REPLACE INTO registry_metadata (key, value) VALUES ('schema_version', '6')",
 ];
