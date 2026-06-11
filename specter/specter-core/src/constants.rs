@@ -74,6 +74,12 @@ pub const DOMAIN_ETH_ADDRESS: &[u8] = b"SPECTER_ETH_ADDRESS_V1";
 /// Domain separator for Ethereum secp256k1 key derivation (stealth address = eth address).
 pub const DOMAIN_ETH_KEY: &[u8] = b"SPECTER_ETH_KEY_V1";
 
+/// Domain separator for metadata encryption key derivation (AES-256-GCM key).
+pub const DOMAIN_META_ENC_KEY: &[u8] = b"SPECTER_META_ENC_KEY_V1";
+
+/// Domain separator for metadata encryption nonce derivation (AES-256-GCM nonce).
+pub const DOMAIN_META_ENC_NONCE: &[u8] = b"SPECTER_META_ENC_NONCE_V1";
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROTOCOL VERSIONING
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -193,8 +199,9 @@ mod tests {
             DOMAIN_SPENDING_SEED,
             DOMAIN_ETH_ADDRESS,
             DOMAIN_ETH_KEY,
+            DOMAIN_META_ENC_KEY,
+            DOMAIN_META_ENC_NONCE,
         ];
-
         for (i, a) in domains.iter().enumerate() {
             for (j, b) in domains.iter().enumerate() {
                 if i != j {

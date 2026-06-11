@@ -68,7 +68,7 @@ pub async fn create_stealth(
     // Attach stealth_address so the relayer can call announce(stealth_addr, …) later.
     let mut ann = payment.announcement.clone();
     ann.stealth_address = Some(payment.stealth_address.to_checksum_string());
-    let payment_id = state.pending_payments.insert(ann.clone());
+    let payment_id = state.pending_payments.insert(ann.clone(), payment.shared_secret);
 
     let response = CreateStealthResponse {
         payment_id,
@@ -281,7 +281,7 @@ pub async fn publish_announcement(
     let request_start = Instant::now();
 
     // ── 1. Resolve announcement ───────────────────────────────────────────────
-    let mut announcement = resolve_pending_announcement(&state, &req)?;
+    let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req)?;
 
     // ── 2. Enrich with client-supplied payment metadata ───────────────────────
     announcement.payment_tx_hash = req
@@ -339,7 +339,7 @@ pub async fn publish_announcement(
 
     // ── 5. Relay or accept dev-mode tx_hash ───────────────────────────────────
     let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
-        relay_announcement(&announcement, relayer).await?
+        relay_announcement(&announcement, relayer, shared_secret.as_ref()).await?
     } else {
         // Dev mode: client must supply tx_hash directly
         req.tx_hash
@@ -510,11 +510,15 @@ fn strip_hex_prefix(s: &str) -> &str {
     }
 }
 
-/// Resolves an `Announcement` from either the `payment_id` or `announcement` fallback path.
+/// Resolves an `Announcement` and its associated shared secret from the pending store.
+///
+/// Returns `(announcement, shared_secret)` where `shared_secret` is `Some` only for
+/// the `payment_id` path. The fallback (raw `announcement`) has no secret available
+/// and metadata will be emitted in plaintext.
 fn resolve_pending_announcement(
     state: &AppState,
     req: &PublishAnnouncementRequest,
-) -> Result<Announcement> {
+) -> Result<(Announcement, Option<[u8; 32]>)> {
     match (req.payment_id, req.announcement.as_ref()) {
         (Some(pid), _) => {
             let pending = state.pending_payments.take(&pid).ok_or_else(|| {
@@ -524,16 +528,17 @@ fn resolve_pending_announcement(
                 )
             })?;
             debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
-            Ok(pending.announcement)
+            let secret = pending.shared_secret;
+            Ok((pending.announcement, Some(secret)))
         }
         (None, Some(dto)) => {
-            warn!("Publish via announcement fallback (no payment_id). Verify clients are up-to-date.");
+            warn!("Publish via announcement fallback (no payment_id). Metadata will not be encrypted.");
             let mut ann: Announcement =
                 dto.clone().try_into().map_err(|e: specter_core::error::SpecterError| {
                     ApiError::bad_request(format!("Invalid announcement: {}", e))
                 })?;
             ann.id = 0;
-            Ok(ann)
+            Ok((ann, None))
         }
         (None, None) => Err(ApiError::bad_request(
             "Either payment_id or announcement is required",
@@ -543,9 +548,14 @@ fn resolve_pending_announcement(
 
 /// Broadcasts the announcement on Monad via the server-side relayer.
 /// Returns the Monad transaction hash as a lowercase hex string.
+///
+/// When `shared_secret` is `Some`, metadata bytes [1..76] are AES-256-GCM encrypted
+/// so the on-chain event leaks only the view_tag. When `None` (fallback path),
+/// metadata is emitted in plaintext.
 async fn relay_announcement(
     announcement: &Announcement,
     relayer: &crate::state::RelayerConfig,
+    shared_secret: Option<&[u8; 32]>,
 ) -> Result<String> {
     let stealth_addr_str = announcement
         .stealth_address
@@ -562,7 +572,7 @@ async fn relay_announcement(
         .try_into()
         .map_err(|_| ApiError::internal("ephemeral_key must be 1088 bytes"))?;
 
-    let metadata = build_on_chain_metadata(announcement);
+    let metadata = build_on_chain_metadata(announcement, shared_secret);
 
     let announcer_addr: Address = relayer
         .announcer_addr
@@ -586,8 +596,11 @@ async fn relay_announcement(
     Ok(format!("{hash}"))
 }
 
-/// Encodes the 77-byte on-chain metadata from an announcement's payment fields.
-fn build_on_chain_metadata(ann: &Announcement) -> [u8; 77] {
+/// Encodes on-chain metadata from an announcement's payment fields.
+///
+/// When `shared_secret` is `Some`, returns 93 bytes (AES-256-GCM encrypted).
+/// When `None`, returns 77 bytes (plaintext). The contract accepts both sizes.
+fn build_on_chain_metadata(ann: &Announcement, shared_secret: Option<&[u8; 32]>) -> Vec<u8> {
     let mut meta = AnnouncementMetadata::new(ann.view_tag);
 
     if let Some(ptx) = &ann.payment_tx_hash {
@@ -608,7 +621,15 @@ fn build_on_chain_metadata(ann: &Announcement) -> [u8; 77] {
         meta = meta.with_source_chain_id(chain_id);
     }
 
-    meta.encode()
+    let plaintext = meta.encode();
+
+    match shared_secret {
+        Some(secret) => specter_crypto::encrypt_announcement_metadata(&plaintext, secret).to_vec(),
+        None => {
+            warn!("publishing announcement without metadata encryption (no shared secret)");
+            plaintext.to_vec()
+        }
+    }
 }
 
 /// Parses a hex tx hash string ("0x..." or bare hex) into a 32-byte array.

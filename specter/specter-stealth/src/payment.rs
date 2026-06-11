@@ -18,6 +18,11 @@ pub struct StealthPayment {
     pub announcement: Announcement,
     /// Metadata about the payment
     pub metadata: PaymentMetadata,
+    /// ML-KEM shared secret — used to encrypt on-chain metadata at publish time.
+    /// Never serialised (excluded from JSON responses and disk persistence).
+    /// Zeroed from memory after the announcement is submitted.
+    #[serde(skip)]
+    pub shared_secret: [u8; 32],
 }
 
 /// Metadata about a stealth payment.
@@ -50,6 +55,7 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
         stealth_sui_address,
         announcement,
         metadata: PaymentMetadata::default(),
+        shared_secret,
     })
 }
 
@@ -147,6 +153,7 @@ impl StealthPaymentBuilder {
             stealth_sui_address,
             announcement,
             metadata,
+            shared_secret,
         })
     }
 }
