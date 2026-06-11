@@ -231,6 +231,9 @@ impl TryFrom<AnnouncementDto> for Announcement {
         Ok(Announcement {
             id: dto.id,
             ephemeral_key,
+            // Client DTOs never carry these; chain-sourced fields only.
+            ephemeral_key_hash: None,
+            metadata_blob: None,
             view_tag: dto.view_tag,
             timestamp: dto.timestamp,
             source_chain_id: dto.source_chain_id,

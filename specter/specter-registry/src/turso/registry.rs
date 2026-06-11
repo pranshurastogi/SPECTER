@@ -663,6 +663,9 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         view_tag: view_tag as u8,
         timestamp: timestamp as u64,
         ephemeral_key,
+        // Populated by the v6 column readers in Task 8; None until then.
+        ephemeral_key_hash: None,
+        metadata_blob: None,
         source_chain_id: get_opt_int(row, 4).map(|v| v as u64),
         block_number: get_opt_int(row, 5).map(|b| b as u64),
         tx_hash: get_opt_text(row, 6),

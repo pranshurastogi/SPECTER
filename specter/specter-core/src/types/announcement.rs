@@ -8,6 +8,24 @@ use serde::{Deserialize, Serialize};
 use crate::constants::{KYBER_CIPHERTEXT_SIZE, VIEW_TAG_SIZE};
 use crate::error::{Result, SpecterError};
 
+/// serde adapter: `Option<Vec<u8>>` <-> `Option<hex string>`.
+mod opt_hex {
+    use serde::{Deserialize, Deserializer, Serializer};
+    pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(bytes) => s.serialize_str(&hex::encode(bytes)),
+            None => s.serialize_none(),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        let opt = Option::<String>::deserialize(d)?;
+        match opt {
+            Some(s) => hex::decode(s).map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+}
+
 /// An announcement published to the registry.
 ///
 /// Senders create announcements containing their ephemeral key and view tag.
@@ -26,6 +44,15 @@ pub struct Announcement {
     /// Kyber ciphertext - the encapsulated ephemeral key
     #[serde(with = "hex")]
     pub ephemeral_key: Vec<u8>,
+    /// keccak256(ciphertext) emitted by the new contract event. Present for
+    /// chain-indexed rows; the full `ephemeral_key` is fetched from calldata
+    /// on view-tag match and verified against this hash.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_hex")]
+    pub ephemeral_key_hash: Option<Vec<u8>>,
+    /// AEAD-encrypted on-chain metadata blob (opaque to the registry/indexer;
+    /// only the recipient with the shared secret can decrypt it).
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_hex")]
+    pub metadata_blob: Option<Vec<u8>>,
     /// View tag for efficient filtering (first byte of hash)
     pub view_tag: u8,
     /// Unix timestamp when announcement was created
@@ -62,6 +89,8 @@ impl Announcement {
         Self {
             id: 0, // Assigned by registry
             ephemeral_key,
+            ephemeral_key_hash: None,
+            metadata_blob: None,
             view_tag,
             timestamp: Self::current_timestamp(),
             source_chain_id: None,
@@ -74,9 +103,28 @@ impl Announcement {
         }
     }
 
+    /// True once the full 1088-byte ciphertext is present (calldata fetched).
+    pub fn is_resolved(&self) -> bool {
+        self.ephemeral_key.len() == KYBER_CIPHERTEXT_SIZE
+    }
+
     /// Validates the announcement structure.
     pub fn validate(&self) -> Result<()> {
-        // Check ephemeral key size
+        // A hash-only row (indexed from chain, ciphertext not yet fetched) is
+        // valid as long as the hash is a 32-byte keccak256 digest.
+        if self.ephemeral_key.is_empty() {
+            match &self.ephemeral_key_hash {
+                Some(h) if h.len() == 32 => return Ok(()),
+                _ => {
+                    return Err(SpecterError::InvalidAnnouncement(
+                        "announcement has neither ciphertext nor a 32-byte key hash".into(),
+                    ))
+                }
+            }
+        }
+
+        // Resolved row: full ciphertext must be exactly KYBER_CIPHERTEXT_SIZE
+        // and not all zeros.
         if self.ephemeral_key.len() != KYBER_CIPHERTEXT_SIZE {
             return Err(SpecterError::InvalidAnnouncement(format!(
                 "ephemeral key size mismatch: expected {}, got {}",
@@ -84,8 +132,6 @@ impl Announcement {
                 self.ephemeral_key.len()
             )));
         }
-
-        // Check for obviously invalid ephemeral key (all zeros)
         if self.ephemeral_key.iter().all(|&b| b == 0) {
             return Err(SpecterError::InvalidAnnouncement(
                 "ephemeral key is all zeros".into(),
@@ -141,6 +187,8 @@ impl Announcement {
         let announcement = Self {
             id: 0, // ID is assigned by registry, not serialized
             ephemeral_key,
+            ephemeral_key_hash: None,
+            metadata_blob: None,
             view_tag,
             timestamp,
             source_chain_id: None,
@@ -169,6 +217,8 @@ impl Announcement {
 #[derive(Default)]
 pub struct AnnouncementBuilder {
     ephemeral_key: Option<Vec<u8>>,
+    ephemeral_key_hash: Option<Vec<u8>>,
+    metadata_blob: Option<Vec<u8>>,
     view_tag: Option<u8>,
     timestamp: Option<u64>,
     source_chain_id: Option<u64>,
@@ -189,6 +239,18 @@ impl AnnouncementBuilder {
     /// Sets the ephemeral key (required).
     pub fn ephemeral_key(mut self, key: Vec<u8>) -> Self {
         self.ephemeral_key = Some(key);
+        self
+    }
+
+    /// Sets the keccak256 ephemeral key hash (chain-indexed rows).
+    pub fn ephemeral_key_hash(mut self, h: Vec<u8>) -> Self {
+        self.ephemeral_key_hash = Some(h);
+        self
+    }
+
+    /// Sets the encrypted on-chain metadata blob.
+    pub fn metadata_blob(mut self, b: Vec<u8>) -> Self {
+        self.metadata_blob = Some(b);
         self
     }
 
@@ -269,6 +331,8 @@ impl AnnouncementBuilder {
         announcement.amount = self.amount;
         announcement.chain = self.chain;
         announcement.stealth_address = self.stealth_address;
+        announcement.ephemeral_key_hash = self.ephemeral_key_hash;
+        announcement.metadata_blob = self.metadata_blob;
 
         announcement.validate()?;
         Ok(announcement)
@@ -486,6 +550,39 @@ mod tests {
         
         // stealth_address should not be serialized when None due to skip_serializing_if
         assert!(!json.contains("stealth_address"));
+    }
+
+    #[test]
+    fn hash_only_announcement_is_valid_pending_resolution() {
+        // A freshly-indexed announcement has only the keccak256 hash, no ciphertext.
+        let mut ann = Announcement::new(Vec::new(), 0x42);
+        ann.ephemeral_key_hash = Some(vec![0x11u8; 32]);
+        assert!(!ann.is_resolved());
+        assert!(ann.validate().is_ok(), "hash-only row must validate");
+    }
+
+    #[test]
+    fn resolved_announcement_requires_full_ciphertext() {
+        let ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
+        assert!(ann.is_resolved());
+        assert!(ann.validate().is_ok());
+    }
+
+    #[test]
+    fn empty_with_no_hash_is_invalid() {
+        let ann = Announcement::new(Vec::new(), 0x42);
+        assert!(ann.validate().is_err(), "no ciphertext and no hash is invalid");
+    }
+
+    #[test]
+    fn metadata_blob_roundtrips_through_serde() {
+        let mut ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
+        ann.ephemeral_key_hash = Some(vec![0xAAu8; 32]);
+        ann.metadata_blob = Some(vec![0x01, 0x02, 0x03]);
+        let json = serde_json::to_string(&ann).unwrap();
+        let back: Announcement = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ephemeral_key_hash, Some(vec![0xAAu8; 32]));
+        assert_eq!(back.metadata_blob, Some(vec![0x01, 0x02, 0x03]));
     }
 
     #[test]
