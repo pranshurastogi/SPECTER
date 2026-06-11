@@ -1105,3 +1105,51 @@ Surface the runbook to the user; steps 1–7 require production credentials and 
 - **Migration ordering:** schema v6 (T7) lands before indexer/poller writers (T12–T13) and re-index (T15) — called out at top and in the runbook.
 - **Type consistency:** `ephemeral_key_hash: Option<Vec<u8>>` and `metadata_blob: Option<Vec<u8>>` defined in T4, written/read in T8, consumed in T9; `EphemeralKeyResolver::resolve(&self, &str, &[u8])` defined in T5, implemented in T6, injected in T9–T10.
 - **Known soft spots (verify at execution):** the alloy overload identifier (`announce_1Call`) and the exact libsql `Value`/row accessor names — both flagged inline with the grep/expand commands to confirm.
+
+---
+
+## REVISION 2026-06-11 (execution): pivot to index-time resolve (supersedes Tasks 10-13)
+
+Reason: view-tag pre-filtering cannot work for ML-KEM (the view tag is derived
+from the shared secret, which requires decapsulating the ciphertext), so
+store-hash would force O(N) calldata fetches per scan. The indexer/poller now
+resolve the ciphertext from calldata once at index time and store the FULL
+ciphertext, so scans read it from Turso. Tasks 1-9 are unchanged and remain valid.
+
+### Task 10 (REVISED): API/CLI scan — no resolver wiring needed
+
+The API `scan_payments` handler reads announcements (with full `ephemeral_key`
+resolved at index time) from Turso and passes them to
+`specter_stealth::discovery::scan_with_context_and_stats`, which already skips any
+row whose `ephemeral_key` fails `KyberCiphertext::from_bytes` (no panic). So no
+code change is required to make the live API scan work. The
+`EphemeralKeyResolver`/`RpcEphemeralKeyResolver` (Tasks 5-6) and the scanner
+resolver hook (Task 9) are retained as an OPTIONAL capability for client SDKs that
+scan directly from chain without the indexer. Action: verify (a test or manual
+check) that a hash-only row is skipped gracefully by the discovery path; no
+production code edit.
+
+### Task 11 (REVISED): Indexer — new event signature + calldata selection
+
+- `config.yaml`: new event signature `Announcement(uint256 schemeId, address indexed stealthAddress, address indexed caller, bytes32 ephemeralKeyHash, bytes metadata)`; address + `start_block: 37571591` (already set in Task 1). Set `field_selection.transaction_fields: [hash, input]` so the handler gets the `announce()` calldata WITHOUT an extra RPC. (If the Monad HyperSync/RPC source does not support selecting `input`, fall back to an `eth_getTransactionByHash` call inside the handler using a viem client.)
+- `schema.graphql`: rename `ephemeralPubKey` → keep `ephemeralPubKey` as the FULL resolved ciphertext (String hex); ADD `ephemeralKeyHash: String`. Drop the now-unreadable decoded `amount`/`txHash`(payment)/`sourceChainId` fields; keep `viewTag`, add `metadataRaw` (the encrypted blob), keep block/stealth fields, `tursoSynced`.
+- Regenerate Envio types (`pnpm codegen`).
+
+### Task 12 (REVISED): Indexer — handler resolves ciphertext from calldata, stores full ciphertext + hash + blob
+
+- `metadata.ts`: reduce to `extractViewTag(metadata)` (byte 0); the rest is an opaque AEAD blob.
+- `EventHandlers.ts`:
+  1. Read `ephemeralKeyHash` (bytes32) and `metadata` from the event; `viewTag = extractViewTag(metadata)`.
+  2. Obtain the `announce()` calldata: prefer `event.transaction.input` (from `transaction_fields: [input]`); else `eth_getTransactionByHash(txHash)` via a viem client.
+  3. ABI-decode the calldata (`announce(address,bytes,bytes)` and the `(uint256,…)` overload) to recover `ephemeralPubKey` (1088 bytes).
+  4. **Assert `keccak256(ephemeralPubKey) === ephemeralKeyHash`** (viem `keccak256`); on mismatch, log error and skip the row (do not store an unverified ciphertext).
+  5. Write to Turso (via `turso.ts`): full `ephemeral_key` = ephemeralPubKey, `ephemeral_key_hash`, `metadata_blob` = metadata, `view_tag`, `tx_hash` (announce tx), block/stealth fields. Stop writing plaintext `amount`/`payment_tx_hash`/`source_chain_id`.
+  6. Write the Envio entity (`ephemeralPubKey` resolved, `ephemeralKeyHash`, `viewTag`, `metadataRaw`, block fields, `tursoSynced`).
+- `turso.ts`: INSERT columns `(view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, on_chain, block_number, tx_hash, chain, stealth_address, block_tx_index)`; `ephemeral_key` is the full ciphertext BLOB; keep `INSERT OR IGNORE` on `tx_hash`.
+- Tests (`__tests__/metadata.test.ts`): `extractViewTag` byte-0 + throws on empty. Add a calldata-decode+keccak256 unit test if a viem-based decoder helper is added.
+
+### Task 13 (REVISED): event-poller — resolve ciphertext from calldata, store full ciphertext + hash + blob
+
+- `ANNOUNCEMENT_EVENT` ABI string → new signature with `bytes32 ephemeralKeyHash`.
+- `processLog`: read `ephemeralKeyHash`; `viewTag = metadata[0]`; then `eth_getTransactionByHash(log.transactionHash)` → decode `announce()` calldata → `ephemeralPubKey`; assert `keccak256(ephemeralPubKey) === ephemeralKeyHash` (skip on mismatch). Return the full ciphertext + hash + metadata blob.
+- `insertAnnouncement`: validate ciphertext is 1088 bytes; write `ephemeral_key` (full), `ephemeral_key_hash`, `metadata_blob`, `view_tag`, announce `tx_hash`, block fields. (Mirrors the indexer; `INSERT OR IGNORE` on `tx_hash`.)

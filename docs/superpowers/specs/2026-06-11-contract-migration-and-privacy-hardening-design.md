@@ -244,3 +244,39 @@ This consumes the `stealth_address` + `amount` the API already has in the
   pending rows (acceptable: 24h TTL).
 - **Schema coordination:** Rust registry, indexer, and poller all write the same
   Turso table — v6 must land in all three before re-index starts.
+
+---
+
+## REVISION 2026-06-11 (during Phase 1 execution): pivot store-hash → index-time resolve
+
+**Finding:** The "store hash, scanners fetch calldata only on the ~1/256 view-tag
+matches" model assumed a scanner can decide a view-tag match without the
+ciphertext. That is false for ML-KEM: `view_tag = SHAKE256(DOMAIN_VIEW_TAG ||
+shared_secret)[0]` and `shared_secret = ML-KEM.decaps(ciphertext, viewing_sk)`
+(`specter-stealth/src/discovery.rs:214-238`). The view tag is derived from the
+shared secret, so determining a match requires decapsulating the ciphertext
+first. The view tag only saves the post-decapsulation stealth-key derivation, not
+the calldata fetch. (ERC-5564/Umbra get away with view-tag pre-filtering only
+because the ephemeral pubkey is in the log; here the new contract emits only its
+keccak256.) Store-hash therefore forces O(N) calldata fetches **per scan**.
+
+**Decision (user-approved):** Pivot to **index-time resolve**. The Envio indexer
+and the event-poller fetch each ciphertext from the `announce()` calldata once at
+index time, assert `keccak256(ciphertext) == ephemeralKeyHash`, and store the
+**full ciphertext** in Turso `announcements.ephemeral_key` (as before), alongside
+the new `ephemeral_key_hash` and `metadata_blob` columns. Scans read the full
+ciphertext directly from Turso — no per-scan RPC. Re-storing the ciphertext has
+no privacy cost (it is public on-chain and reveals nothing without the viewing
+key); the deanonymization fix is the metadata encryption (B1), which is
+unaffected.
+
+**Impact on Phase 1 tasks:** Tasks 1–9 unchanged (all artifacts still used). Task
+10 (wire RPC resolver into the API scan) becomes a no-op — the API scan reads
+resolved ciphertexts from Turso; `discovery` already skips any row whose
+`ephemeral_key` won't parse, so an occasional unresolved row is handled safely.
+The `EphemeralKeyResolver` trait + `RpcEphemeralKeyResolver` (Tasks 5-6) and the
+scanner resolver hook (Task 9) are retained as an optional capability for direct
+client-SDK chain scanning. Tasks 11-13 change: the indexer/poller now resolve the
+ciphertext from calldata and store it (prefer Envio `transaction_fields: [hash,
+input]` to get calldata without an extra RPC; event-poller uses
+`eth_getTransactionByHash`).
