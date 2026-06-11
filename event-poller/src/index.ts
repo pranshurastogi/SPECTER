@@ -2,7 +2,8 @@
  * SPECTER Event Poller
  *
  * Polls Monad for SPECTERAnnouncer `Announcement` events via eth_getLogs,
- * decodes the 77-byte metadata, and writes each event to Turso.
+ * recovers the full ML-KEM ciphertext from the announce() calldata, verifies it
+ * against the event's keccak256 hash, and writes each verified event to Turso.
  * Persists a block checkpoint so restarts never re-process old blocks.
  */
 
@@ -11,7 +12,8 @@ import {
   http,
   parseAbiItem,
   decodeEventLog,
-  isHex,
+  decodeFunctionData,
+  keccak256,
   type Hex,
   type Address,
 } from "viem";
@@ -89,80 +91,48 @@ const DB_CONNECT_TIMEOUT_MS = 10_000;
 // ── ABI ────────────────────────────────────────────────────────────────────────
 
 const ANNOUNCEMENT_EVENT = parseAbiItem(
-  "event Announcement(uint256 indexed schemeId, address indexed stealthAddress, address indexed caller, bytes ephemeralPubKey, bytes metadata)"
+  "event Announcement(uint256 schemeId, address indexed stealthAddress, address indexed caller, bytes32 ephemeralKeyHash, bytes metadata)"
 );
 
-// ── Metadata layout (77 bytes) ─────────────────────────────────────────────────
-// [0]       view_tag         (u8)
-// [1..33]   payment_tx_hash  (32 bytes, big-endian, zero = absent)
-// [33..65]  amount           (uint256 big-endian, zero = absent)
-// [65..73]  source_chain_id  (u64 big-endian, zero = absent)
-// [73..77]  reserved
+// ── announce() calldata decode ───────────────────────────────────────────────────
+// The Announcement event carries only keccak256(ciphertext); the full 1088-byte
+// ML-KEM ciphertext lives in the announce() calldata. Support both the 3-arg and
+// the schemeId-prefixed 4-arg announce() signatures.
 
-interface DecodedMetadata {
-  viewTag: number;
-  paymentTxHash: string | null;
-  amount: string | null;
-  sourceChainId: bigint | null;
+const ANNOUNCE_ABI = [
+  {
+    type: "function", name: "announce", stateMutability: "nonpayable",
+    inputs: [
+      { name: "stealthAddress", type: "address" },
+      { name: "ephemeralPubKey", type: "bytes" },
+      { name: "metadata", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function", name: "announce", stateMutability: "nonpayable",
+    inputs: [
+      { name: "schemeId", type: "uint256" },
+      { name: "stealthAddress", type: "address" },
+      { name: "ephemeralPubKey", type: "bytes" },
+      { name: "metadata", type: "bytes" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** Recover the ML-KEM ciphertext (Hex, 0x-prefixed) from announce() calldata. */
+function decodeEphemeralKey(input: Hex): Hex {
+  const decoded = decodeFunctionData({ abi: ANNOUNCE_ABI, data: input });
+  const args = decoded.args as readonly unknown[];
+  return (args.length === 3 ? args[1] : args[2]) as Hex; // ephemeralPubKey position
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  const s = hex.startsWith("0x") ? hex.slice(2) : hex;
-  if (s.length % 2 !== 0) {
-    throw new Error(`Invalid hex string length (${s.length}) — must be even`);
-  }
-  const buf = new Uint8Array(s.length / 2);
-  for (let i = 0; i < buf.length; i++) {
-    const byte = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-    if (isNaN(byte)) throw new Error(`Invalid hex byte at position ${i * 2}: "${s.slice(i * 2, i * 2 + 2)}"`);
-    buf[i] = byte;
-  }
-  return buf;
-}
-
-function bytesToBigInt(bytes: Uint8Array): bigint {
-  let n = 0n;
-  for (const b of bytes) n = (n << 8n) | BigInt(b);
-  return n;
-}
-
-function decodeMetadata(meta: Hex): DecodedMetadata {
-  let buf: Uint8Array;
-  try {
-    buf = hexToBytes(meta);
-  } catch (e) {
-    console.warn(`[event-poller] Failed to hex-decode metadata: ${e}`);
-    return { viewTag: 0, paymentTxHash: null, amount: null, sourceChainId: null };
-  }
-
-  if (buf.length === 0) {
-    return { viewTag: 0, paymentTxHash: null, amount: null, sourceChainId: null };
-  }
-
-  const viewTag = buf[0]!;
-
-  // Metadata may be shorter than 77 bytes if fields were omitted by caller
-  let paymentTxHash: string | null = null;
-  if (buf.length >= 33) {
-    const txBytes = buf.slice(1, 33);
-    if (!txBytes.every((b) => b === 0)) {
-      paymentTxHash = "0x" + Buffer.from(txBytes).toString("hex");
-    }
-  }
-
-  let amount: string | null = null;
-  if (buf.length >= 65) {
-    const amountBig = bytesToBigInt(buf.slice(33, 65));
-    if (amountBig !== 0n) amount = amountBig.toString();
-  }
-
-  let sourceChainId: bigint | null = null;
-  if (buf.length >= 73) {
-    const chainBig = bytesToBigInt(buf.slice(65, 73));
-    if (chainBig !== 0n) sourceChainId = chainBig;
-  }
-
-  return { viewTag, paymentTxHash, amount, sourceChainId };
+/** Extract the plaintext view_tag (byte 0) from the metadata blob. */
+function extractViewTag(metadata: Hex): number {
+  const hex = metadata.startsWith("0x") ? metadata.slice(2) : metadata;
+  if (hex.length < 2) throw new Error("metadata too short: missing view_tag");
+  return parseInt(hex.slice(0, 2), 16);
 }
 
 // ── RPC client ─────────────────────────────────────────────────────────────────
@@ -222,41 +192,42 @@ async function saveCheckpoint(block: bigint): Promise<void> {
 // ── Announcement writer ────────────────────────────────────────────────────────
 
 interface AnnouncementRow {
-  ephemeralKey: string;  // hex, no 0x prefix
+  ephemeralKey: string;       // full ciphertext hex, no 0x prefix
+  ephemeralKeyHash: string;   // hex, no 0x prefix
+  metadataBlob: string;       // hex, no 0x prefix
   viewTag: number;
   stealthAddress: string;
   txHash: string;
   blockNumber: bigint;
-  paymentTxHash: string | null;
-  amount: string | null;
   chain: string;
-  sourceChainId: bigint | null;
 }
 
 async function insertAnnouncement(row: AnnouncementRow): Promise<void> {
-  // Validate ephemeral key length (must be 1088 bytes = 2176 hex chars)
+  // Validate ephemeral key length (must be 1088 bytes = 2176 hex chars).
+  // This is the full ML-KEM ciphertext recovered from announce() calldata.
   if (row.ephemeralKey.length !== 2176) {
     throw new Error(
-      `ephemeralPubKey must be 1088 bytes (${2176} hex chars), got ${row.ephemeralKey.length / 2} bytes`
+      `ephemeral ciphertext must be 1088 bytes (${2176} hex chars), got ${row.ephemeralKey.length / 2} bytes`
     );
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
+  // ephemeral_key, ephemeral_key_hash, metadata_blob are BLOB columns — store as
+  // Buffers (matching the Envio indexer's canonical write).
   await turso.execute({
     sql: `INSERT OR IGNORE INTO announcements
-            (ephemeral_key, view_tag, timestamp, tx_hash, block_number,
-             payment_tx_hash, amount, chain, source_chain_id, stealth_address, record_source)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'indexer')`,
+            (ephemeral_key, ephemeral_key_hash, metadata_blob, view_tag, timestamp,
+             tx_hash, block_number, chain, stealth_address, on_chain, record_source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'indexer')`,
     args: [
-      row.ephemeralKey,
+      Buffer.from(row.ephemeralKey, "hex"),
+      Buffer.from(row.ephemeralKeyHash, "hex"),
+      Buffer.from(row.metadataBlob, "hex"),
       row.viewTag,
       nowSec,
       row.txHash,
       row.blockNumber.toString(),
-      row.paymentTxHash,
-      row.amount,
       row.chain,
-      row.sourceChainId !== null ? row.sourceChainId.toString() : null,
       row.stealthAddress,
     ],
   });
@@ -268,17 +239,19 @@ interface ProcessedLog {
   txHash: string;
   blockNumber: bigint;
   stealthAddress: Address;
-  ephemeralKey: string;
-  metadata: DecodedMetadata;
+  ephemeralKey: string;       // full 1088-byte ciphertext hex, no 0x
+  ephemeralKeyHash: string;   // 32-byte hash hex, no 0x
+  metadataBlob: string;       // raw encrypted metadata hex, no 0x
+  viewTag: number;
 }
 
-function processLog(log: {
+async function processLog(log: {
   data: Hex;
   topics: readonly [Hex, ...Hex[]];
   transactionHash: Hex | null;
   blockNumber: bigint | null;
   logIndex: number | null;
-}): ProcessedLog {
+}): Promise<ProcessedLog | null> {
   if (!log.transactionHash) throw new Error("Log is missing transactionHash (pending log?)");
   if (log.blockNumber === null) throw new Error("Log is missing blockNumber");
 
@@ -294,7 +267,7 @@ function processLog(log: {
     schemeId: bigint;
     stealthAddress: Address;
     caller: Address;
-    ephemeralPubKey: Hex;
+    ephemeralKeyHash: Hex;
     metadata: Hex;
   };
 
@@ -302,21 +275,30 @@ function processLog(log: {
     throw new Error(`Invalid stealthAddress in log: ${args.stealthAddress}`);
   }
 
-  if (!isHex(args.ephemeralPubKey) || args.ephemeralPubKey.length < 4) {
-    throw new Error("ephemeralPubKey is not valid hex");
+  const viewTag = extractViewTag(args.metadata);
+
+  // Recover the ciphertext from calldata and verify keccak256 against the event hash.
+  const tx = await viemClient.getTransaction({ hash: log.transactionHash });
+  let ek: Hex;
+  try {
+    ek = decodeEphemeralKey(tx.input);
+  } catch (e) {
+    console.warn(`[event-poller] tx ${log.transactionHash}: announce calldata decode failed (${e}); skipping`);
+    return null;
   }
-
-  // Strip 0x prefix for DB storage
-  const ephemeralKey = args.ephemeralPubKey.slice(2);
-
-  const metadata = decodeMetadata(args.metadata);
+  if (keccak256(ek).toLowerCase() !== args.ephemeralKeyHash.toLowerCase()) {
+    console.warn(`[event-poller] tx ${log.transactionHash}: ciphertext keccak256 != ephemeralKeyHash; skipping`);
+    return null;
+  }
 
   return {
     txHash: log.transactionHash,
     blockNumber: log.blockNumber,
     stealthAddress: args.stealthAddress,
-    ephemeralKey,
-    metadata,
+    ephemeralKey: ek.slice(2),
+    ephemeralKeyHash: args.ephemeralKeyHash.slice(2),
+    metadataBlob: args.metadata.startsWith("0x") ? args.metadata.slice(2) : args.metadata,
+    viewTag,
   };
 }
 
@@ -360,9 +342,9 @@ async function poll(): Promise<void> {
   let skipped = 0;
 
   for (const log of logs) {
-    let processed: ProcessedLog;
+    let processed: ProcessedLog | null;
     try {
-      processed = processLog(log as Parameters<typeof processLog>[0]);
+      processed = await processLog(log as Parameters<typeof processLog>[0]);
     } catch (e) {
       console.warn(
         `[event-poller] Skipping malformed log (tx=${log.transactionHash ?? "unknown"} block=${log.blockNumber ?? "unknown"}): ${e instanceof Error ? e.message : String(e)}`
@@ -371,17 +353,22 @@ async function poll(): Promise<void> {
       continue;
     }
 
+    // Null = ciphertext could not be recovered/verified from calldata → never store unverified.
+    if (!processed) {
+      skipped++;
+      continue;
+    }
+
     try {
       await insertAnnouncement({
         ephemeralKey: processed.ephemeralKey,
-        viewTag: processed.metadata.viewTag,
+        ephemeralKeyHash: processed.ephemeralKeyHash,
+        metadataBlob: processed.metadataBlob,
+        viewTag: processed.viewTag,
         stealthAddress: processed.stealthAddress,
         txHash: processed.txHash,
         blockNumber: processed.blockNumber,
-        paymentTxHash: processed.metadata.paymentTxHash,
-        amount: processed.metadata.amount,
         chain: "monad-testnet",
-        sourceChainId: processed.metadata.sourceChainId,
       });
       written++;
     } catch (e) {
