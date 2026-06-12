@@ -68,7 +68,11 @@ pub async fn create_stealth(
     // Attach stealth_address so the relayer can call announce(stealth_addr, …) later.
     let mut ann = payment.announcement.clone();
     ann.stealth_address = Some(payment.stealth_address.to_checksum_string());
-    let payment_id = state.pending_payments.insert(ann.clone(), payment.shared_secret);
+    let payment_id = state
+        .pending_payments
+        .insert(ann.clone(), payment.shared_secret)
+        .await
+        .map_err(|e| ApiError::internal(format!("pending persist failed: {e}")))?;
 
     let response = CreateStealthResponse {
         payment_id,
@@ -281,7 +285,7 @@ pub async fn publish_announcement(
     let request_start = Instant::now();
 
     // ── 1. Resolve announcement ───────────────────────────────────────────────
-    let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req)?;
+    let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req).await?;
 
     // ── 2. Local-only payment metadata (kept transiently, NOT persisted plaintext)
     announcement.payment_tx_hash = req
@@ -565,13 +569,18 @@ fn strip_hex_prefix(s: &str) -> &str {
 /// Returns `(announcement, shared_secret)` where `shared_secret` is `Some` only for
 /// the `payment_id` path. The fallback (raw `announcement`) has no secret available
 /// and metadata will be emitted in plaintext.
-fn resolve_pending_announcement(
+async fn resolve_pending_announcement(
     state: &AppState,
     req: &PublishAnnouncementRequest,
 ) -> Result<(Announcement, Option<[u8; 32]>)> {
     match (req.payment_id, req.announcement.as_ref()) {
         (Some(pid), _) => {
-            let pending = state.pending_payments.take(&pid).ok_or_else(|| {
+            let pending = state
+                .pending_payments
+                .take(&pid)
+                .await
+                .map_err(|e| ApiError::internal(format!("pending lookup failed: {e}")))?
+                .ok_or_else(|| {
                 ApiError::bad_request(
                     "Unknown or expired payment_id. Re-create the stealth payment \
                      via POST /api/v1/stealth/create.",

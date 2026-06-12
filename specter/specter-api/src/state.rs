@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy::signers::local::PrivateKeySigner;
 use specter_ens::{ResolverConfig, SpecterResolver};
@@ -511,7 +512,9 @@ impl AppState {
     pub async fn new(config: ApiConfig) -> Self {
         let backend = std::env::var("REGISTRY_BACKEND").unwrap_or_default();
 
-        let (registry, scan_store) = if backend == "turso" {
+        // `Some(db)` only on the Turso backend — used to build the durable
+        // pending-payment store after `db_keys` is loaded below.
+        let (registry, scan_store, turso_db) = if backend == "turso" {
             let url = std::env::var("TURSO_DATABASE_URL")
                 .expect("REGISTRY_BACKEND=turso requires TURSO_DATABASE_URL");
             let token = std::env::var("TURSO_AUTH_TOKEN")
@@ -523,13 +526,14 @@ impl AppState {
                 .await
                 .expect("Failed to connect to Turso database");
 
+            // Grab the shared DB handle BEFORE moving `turso` into the backend.
             let db = turso.database();
-            let scan = Arc::new(ScanPositionStore::new(db));
+            let scan = Arc::new(ScanPositionStore::new(db.clone()));
 
-            (RegistryBackend::Turso(turso), Some(scan))
+            (RegistryBackend::Turso(turso), Some(scan), Some(db))
         } else {
             info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
-            (RegistryBackend::Memory(MemoryRegistry::new()), None)
+            (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
         };
 
         // Load chain configuration
@@ -571,13 +575,32 @@ impl AppState {
             );
         }
 
+        // Durable pending-payment store: Turso when we have both a DB handle and
+        // a server key (so the shared secret can be wrapped at rest); otherwise
+        // the in-memory dev fallback.
+        let pending_ttl = Duration::from_secs(24 * 3600);
+        let pending_payments = match (turso_db, db_keys.as_ref()) {
+            (Some(db), Some(keys)) => {
+                info!("Pending-payment store: Turso (durable, KEK-wrapped secret)");
+                PendingPaymentStore::turso(
+                    specter_registry::turso::PendingStore::new(db),
+                    keys.clone(),
+                    pending_ttl,
+                )
+            }
+            _ => {
+                info!("Pending-payment store: in-memory (ephemeral dev fallback)");
+                PendingPaymentStore::memory(pending_ttl)
+            }
+        };
+
         Self {
             config: config.clone(),
             registry,
             scan_store,
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
-            pending_payments: Arc::new(PendingPaymentStore::new()),
+            pending_payments: Arc::new(pending_payments),
             chain_config,
             relayer_config,
             db_keys,
@@ -592,7 +615,7 @@ impl AppState {
             config,
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
-            pending_payments: Arc::new(PendingPaymentStore::new()),
+            pending_payments: Arc::new(PendingPaymentStore::memory(Duration::from_secs(24 * 3600))),
             chain_config: ChainConfig {
                 rpc_url: String::new(),
                 announcer_addr: String::new(),

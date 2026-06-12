@@ -61,3 +61,5 @@ base64 = "0.22"
 [dev-dependencies]
 tokio-test = { workspace = true }
 reqwest = { workspace = true }
+# Exposes TursoRegistry::new_test() for the pending-store durability round-trip test.
+specter-registry = { path = "../specter-registry", features = ["turso", "test-utils"] }
