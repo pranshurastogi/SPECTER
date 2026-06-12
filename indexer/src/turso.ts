@@ -41,7 +41,7 @@ export interface TursoAnnouncement {
   chain: string;
   /** Recipient stealth address (lowercase). */
   stealthAddress: string;
-  /** Log index within the Monad block (used as block_tx_index). */
+  /** Log index within the Monad block — used only for error-log context (not persisted). */
   blockTxIndex: number;
 }
 
@@ -124,8 +124,8 @@ export async function writeTursoAnnouncement(
   const sql = `
     INSERT OR IGNORE INTO announcements
       (view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, on_chain,
-       block_number, tx_hash, chain, stealth_address, block_tx_index)
-    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+       block_number, tx_hash, chain, stealth_address)
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
   `;
 
   // ephemeral_key, ephemeral_key_hash, metadata_blob are stored as BLOB —
@@ -144,7 +144,6 @@ export async function writeTursoAnnouncement(
     ann.txHash,                  // Monad announce tx hash — dedup key, always present
     ann.chain,
     ann.stealthAddress,
-    ann.blockTxIndex,
   ];
 
   let lastError: unknown;

@@ -268,14 +268,14 @@ describe("probeTursoConnection", () => {
 // ── Data integrity ────────────────────────────────────────────────────────────
 
 describe("writeTursoAnnouncement — argument integrity", () => {
-  it("passes all 10 positional args to execute", async () => {
+  it("passes all 9 positional args to execute", async () => {
     mockExecute.mockResolvedValueOnce(undefined);
     const ann = makeAnn();
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
     // view_tag, timestamp, ephemeral_key (Buffer), ephemeral_key_hash (Buffer),
-    // metadata_blob (Buffer), block_number, tx_hash, chain, stealth_address, block_tx_index
-    expect(call.args).toHaveLength(10);
+    // metadata_blob (Buffer), block_number, tx_hash, chain, stealth_address
+    expect(call.args).toHaveLength(9);
   });
 
   it("viewTag is passed as the first arg", async () => {
@@ -302,13 +302,5 @@ describe("writeTursoAnnouncement — argument integrity", () => {
     await writeTursoAnnouncement(ann);
     const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
     expect(call.args[8]).toBe(addr);
-  });
-
-  it("blockTxIndex (logIndex) is at position [9]", async () => {
-    mockExecute.mockResolvedValueOnce(undefined);
-    const ann = makeAnn({ blockTxIndex: 42 });
-    await writeTursoAnnouncement(ann);
-    const call = mockExecute.mock.calls[0]![0] as { args: unknown[] };
-    expect(call.args[9]).toBe(42);
   });
 });
