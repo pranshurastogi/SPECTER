@@ -5590,8 +5590,10 @@ name = "specter-api"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "dashmap 5.5.3",
  "dotenvy",
  "governor",
