@@ -322,6 +322,9 @@ impl ChainConfig {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Polymorphic registry backend — wraps either Memory or Turso.
+// The Memory variant carries several inline indexes (dev/test only); the size
+// gap vs. Turso is benign since the enum is always held behind `Arc<AppState>`.
+#[allow(clippy::large_enum_variant)]
 pub enum RegistryBackend {
     /// In-memory (ephemeral, for local dev/testing).
     Memory(MemoryRegistry),
@@ -372,6 +375,29 @@ impl RegistryBackend {
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse::<u64>().ok()),
+        }
+    }
+
+    /// Reserves a dedup slot for an announcement (inserts with `tx_hash = NULL`,
+    /// `on_chain = 0`). A duplicate `payment_tx_hash_hmac` returns
+    /// `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        match self {
+            Self::Memory(m) => m.reserve_announcement(ann).await,
+            Self::Turso(t) => t.reserve_announcement(ann).await,
+        }
+    }
+
+    /// Finalizes a reserved announcement after the relay tx is broadcast.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Memory(m) => m.finalize_announcement(id, view_tag, monad_tx_hash).await,
+            Self::Turso(t) => t.finalize_announcement(id, view_tag, monad_tx_hash).await,
         }
     }
 

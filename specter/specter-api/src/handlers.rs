@@ -283,7 +283,7 @@ pub async fn publish_announcement(
     // ── 1. Resolve announcement ───────────────────────────────────────────────
     let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req)?;
 
-    // ── 2. Enrich with client-supplied payment metadata ───────────────────────
+    // ── 2. Local-only payment metadata (kept transiently, NOT persisted plaintext)
     announcement.payment_tx_hash = req
         .payment_tx_hash
         .clone()
@@ -337,9 +337,42 @@ pub async fn publish_announcement(
         }
     }
 
-    // ── 5. Relay or accept dev-mode tx_hash ───────────────────────────────────
+    // ── 5. Build the encrypted blob + dedup MAC + key hash (BEFORE stripping) ──
+    // build_on_chain_metadata reads the plaintext payment fields, so it must run
+    // before they are nulled below.
+    let metadata_blob = build_on_chain_metadata(&announcement, shared_secret.as_ref());
+    if let (Some(keys), Some(ptx)) =
+        (state.db_keys.as_ref(), announcement.payment_tx_hash.as_deref())
+    {
+        announcement.payment_tx_hash_hmac = Some(keys.payment_hmac(&ptx.trim().to_lowercase()));
+    }
+    announcement.ephemeral_key_hash =
+        Some(specter_crypto::hash::keccak256(&announcement.ephemeral_key).to_vec());
+    announcement.metadata_blob = Some(metadata_blob.clone());
+
+    // Capture telemetry fields before stripping (source_chain_id is nulled below).
+    let view_tag = announcement.view_tag;
+    let chain_for_tel = announcement.chain.clone();
+    let chain_id_for_tel = req.source_chain_id;
+
+    // Strip plaintext payment fields from the PERSISTED row (they live only in the blob).
+    announcement.payment_tx_hash = None;
+    announcement.amount = None;
+    announcement.source_chain_id = None;
+    announcement.tx_hash = None;
+
+    // ── 6. Reserve the dedup slot BEFORE relaying ─────────────────────────────
+    let reserved_id = match state.registry.reserve_announcement(&announcement).await {
+        Ok(id) => id,
+        Err(specter_core::error::SpecterError::DuplicatePayment) => {
+            return Err(ApiError::conflict("announcement could not be published"));
+        }
+        Err(e) => return Err(ApiError::internal(format!("reserve failed: {e}"))),
+    };
+
+    // ── 7. Relay (or accept dev-mode tx_hash) using the SAME blob ─────────────
     let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
-        relay_announcement(&announcement, relayer, shared_secret.as_ref()).await?
+        relay_announcement(&announcement, relayer, &metadata_blob).await?
     } else {
         // Dev mode: client must supply tx_hash directly
         req.tx_hash
@@ -355,17 +388,14 @@ pub async fn publish_announcement(
             .to_string()
     };
 
-    announcement.tx_hash = Some(monad_tx_hash.clone());
-    let view_tag = announcement.view_tag;
-    let chain_for_tel = announcement.chain.clone();
-    let chain_id_for_tel = announcement.source_chain_id;
-
-    // ── 6. Write to registry ──────────────────────────────────────────────────
-    let id = state
+    // ── 8. Finalize the reserved row ──────────────────────────────────────────
+    state
         .registry
-        .publish(announcement)
+        .finalize_announcement(reserved_id, view_tag, &monad_tx_hash)
         .await
-        .map_err(|e| ApiError::bad_request(format!("Publish failed: {e}")))?;
+        .map_err(|e| ApiError::internal(format!("finalize failed: {e}")))?;
+    let id = reserved_id;
+    announcement.tx_hash = Some(monad_tx_hash.clone());
 
     let elapsed_ms = request_start.elapsed().as_millis() as u64;
 
@@ -557,13 +587,12 @@ fn resolve_pending_announcement(
 /// Broadcasts the announcement on Monad via the server-side relayer.
 /// Returns the Monad transaction hash as a lowercase hex string.
 ///
-/// When `shared_secret` is `Some`, metadata bytes [1..76] are AES-256-GCM encrypted
-/// so the on-chain event leaks only the view_tag. When `None` (fallback path),
-/// metadata is emitted in plaintext.
+/// `metadata` is the pre-built on-chain blob — the SAME bytes persisted in the
+/// registry row, so the stored and relayed metadata are byte-identical.
 async fn relay_announcement(
     announcement: &Announcement,
     relayer: &crate::state::RelayerConfig,
-    shared_secret: Option<&[u8; 32]>,
+    metadata: &[u8],
 ) -> Result<String> {
     let stealth_addr_str = announcement
         .stealth_address
@@ -580,8 +609,6 @@ async fn relay_announcement(
         .try_into()
         .map_err(|_| ApiError::internal("ephemeral_key must be 1088 bytes"))?;
 
-    let metadata = build_on_chain_metadata(announcement, shared_secret);
-
     let announcer_addr: Address = relayer
         .announcer_addr
         .parse()
@@ -593,7 +620,7 @@ async fn relay_announcement(
         announcer_addr,
         stealth_addr,
         &ek_arr,
-        &metadata,
+        metadata,
     )
     .await
     .map_err(|e| {

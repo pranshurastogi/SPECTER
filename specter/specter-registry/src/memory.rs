@@ -38,6 +38,9 @@ pub struct MemoryRegistry {
     view_tag_index: DashMap<u8, Vec<u64>>,
     /// Tx hash index: normalized tx_hash → announcement ID (for duplicate rejection)
     tx_hash_index: DashMap<String, u64>,
+    /// Payment HMAC dedup index: payment_tx_hash_hmac → announcement ID
+    /// (mirrors the Turso UNIQUE index used by the reserve flow).
+    payment_hmac_index: DashMap<Vec<u8>, u64>,
     /// Next announcement ID
     next_id: AtomicU64,
     /// Registry statistics
@@ -51,6 +54,7 @@ impl MemoryRegistry {
             announcements: DashMap::new(),
             view_tag_index: DashMap::new(),
             tx_hash_index: DashMap::new(),
+            payment_hmac_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -64,6 +68,7 @@ impl MemoryRegistry {
             announcements: DashMap::with_capacity(capacity),
             view_tag_index: DashMap::with_capacity(256), // One bucket per view tag
             tx_hash_index: DashMap::new(),
+            payment_hmac_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -84,6 +89,7 @@ impl MemoryRegistry {
         self.announcements.clear();
         self.view_tag_index.clear();
         self.tx_hash_index.clear();
+        self.payment_hmac_index.clear();
         self.next_id.store(1, Ordering::SeqCst);
         *self.stats.write() = AnnouncementStats::new();
     }
@@ -148,6 +154,51 @@ impl MemoryRegistry {
         }
 
         Ok(imported)
+    }
+
+    /// Reserves a dedup slot (parity with the Turso reserve flow). Inserts the
+    /// announcement with `tx_hash = None`; a duplicate `payment_tx_hash_hmac`
+    /// returns `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        if let Some(hmac) = &ann.payment_tx_hash_hmac {
+            if self.payment_hmac_index.contains_key(hmac) {
+                return Err(SpecterError::DuplicatePayment);
+            }
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut stored = ann.clone();
+        stored.id = id;
+        stored.tx_hash = None;
+
+        self.view_tag_index
+            .entry(stored.view_tag)
+            .or_default()
+            .push(id);
+        if let Some(hmac) = &stored.payment_tx_hash_hmac {
+            self.payment_hmac_index.insert(hmac.clone(), id);
+        }
+        self.stats.write().add(&stored);
+        self.announcements.insert(id, stored);
+        Ok(id)
+    }
+
+    /// Finalizes a reserved announcement by recording the relay tx hash.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        _view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        match self.announcements.get_mut(&id) {
+            Some(mut entry) => {
+                let normalized = Self::normalize_tx_hash(monad_tx_hash);
+                entry.tx_hash = Some(normalized.clone());
+                self.tx_hash_index.insert(normalized, id);
+                Ok(())
+            }
+            None => Err(SpecterError::AnnouncementNotFound(id.to_string())),
+        }
     }
 }
 

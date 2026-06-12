@@ -91,6 +91,10 @@ pub enum SpecterError {
     #[error("Duplicate announcement ID: {0}")]
     DuplicateAnnouncement(u64),
 
+    /// A reservation hit a UNIQUE constraint — e.g. this payment was already announced.
+    #[error("duplicate payment")]
+    DuplicatePayment,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // ENS ERRORS
     // ═══════════════════════════════════════════════════════════════════════════

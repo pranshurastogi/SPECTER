@@ -476,6 +476,40 @@ impl TursoRegistry {
         Ok(conn.last_insert_rowid() as u64)
     }
 
+    /// Reserves a dedup slot: inserts the (encrypted) announcement with
+    /// `on_chain = 0` and `tx_hash = NULL`. A duplicate `payment_tx_hash_hmac`
+    /// hits the UNIQUE index → `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        match self.insert_announcement_inner(ann, false, "api").await {
+            Ok(id) => {
+                self.cache.write().await.pop(&ann.view_tag);
+                Ok(id)
+            }
+            Err(SpecterError::RegistryError(m)) if m.to_lowercase().contains("unique constraint") => {
+                Err(SpecterError::DuplicatePayment)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Finalizes a reserved announcement after the relay tx is broadcast.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE announcements SET tx_hash = ?1, on_chain = 1 WHERE id = ?2",
+            params![monad_tx_hash.to_string(), id as i64],
+        )
+        .await
+        .map_err(|e| SpecterError::RegistryError(format!("finalize: {e}")))?;
+        self.cache.write().await.pop(&view_tag);
+        Ok(())
+    }
+
     fn normalize_tx_hash(hash: &str) -> String {
         hash.trim().to_lowercase()
     }
@@ -965,6 +999,28 @@ mod tests {
             r.unwrap();
         }
         assert_eq!(reg.count().await.unwrap(), 50);
+    }
+
+    #[tokio::test]
+    async fn reserve_dedups_and_finalize_sets_tx() {
+        let reg = TursoRegistry::new_test().await;
+        let mut a = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], 0x42);
+        a.stealth_address = Some("0x1111111111111111111111111111111111111111".into());
+        a.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);
+        let id = reg.reserve_announcement(&a).await.expect("first reserve ok");
+        // second reserve with same hmac → Duplicate
+        let mut b = Announcement::new(vec![0x43u8; KYBER_CIPHERTEXT_SIZE], 0x43);
+        b.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);
+        assert!(matches!(
+            reg.reserve_announcement(&b).await,
+            Err(specter_core::error::SpecterError::DuplicatePayment)
+        ));
+        // finalize sets tx_hash + on_chain
+        reg.finalize_announcement(id, 0x42, "0xdeadbeef")
+            .await
+            .expect("finalize ok");
+        let got = reg.get_by_id(id).await.unwrap().unwrap();
+        assert_eq!(got.tx_hash.as_deref(), Some("0xdeadbeef"));
     }
 
     #[tokio::test]
