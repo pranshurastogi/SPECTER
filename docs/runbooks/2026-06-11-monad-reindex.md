@@ -100,3 +100,53 @@ the same Turso DB; the old plaintext columns are untouched.
 - The `EphemeralKeyResolver` (Rust) is retained as an optional capability for
   client SDKs that scan directly from chain without the indexer; the server scan
   path does not use it.
+
+---
+
+## Phase 2 — at-rest hardening (operations)
+
+Phase 2 removes plaintext payment data at rest, adds API-driven double-announce
+dedup, cryptographic recipient/amount verification, and restart-durable pending
+payments.
+
+### Required env
+
+- **`SPECTER_DB_ENC_KEY`** — 32-byte base64 master key on the API service.
+  Generate: `openssl rand -base64 32`. **Required in production** when
+  `RELAYER_PRIVATE_KEY` is set; without it the API logs a loud startup warning and
+  degrades: no dedup MAC, telemetry records NO IP at all (fail-closed), and pending
+  payments fall back to in-memory (lost on restart).
+- Optional per-publish field `token` (ERC-20 token address) tightens payment
+  verification to that token; omitted ⇒ native match, else best-effort ERC-20.
+
+### Key custody (critical)
+
+- **Back up `SPECTER_DB_ENC_KEY` securely** (secret manager). It derives — via
+  SHAKE-256 domain separation — the dedup MAC key, the daily telemetry-hash salt,
+  and the AEAD key that wraps the pending ML-KEM shared secret.
+- **Losing or rotating it:** invalidates all outstanding pending payments (they
+  can no longer be unwrapped — clients must re-create; 24h TTL bounds the impact)
+  and resets the dedup MAC (a payment announced under the old key is no longer
+  recognized as a duplicate). Rotate during low traffic.
+- A Turso breach alone does NOT reveal pending secrets or raw IPs — they are
+  wrapped/hashed under this key, which lives only in the service env.
+
+### Schema v7
+
+- Verify after deploy: `SELECT value FROM registry_metadata WHERE key='schema_version';` → `7`.
+- New table: `pending_payments` (durable, KEK-wrapped `shared_secret_wrapped`).
+- v7 is additive (no drops); rollback to a v6 build remains compatible.
+
+### What changed at rest
+
+- **API announcement rows** now store the encrypted `metadata_blob` +
+  `ephemeral_key_hash` + `payment_tx_hash_hmac` — never plaintext
+  `payment_tx_hash`/`amount`/`source_chain_id` (those live only inside the
+  AEAD blob; the recipient decrypts them during scan).
+- **Telemetry** stores `ip_hash` (daily-salted SHAKE-256), never raw IPs.
+- **Double-announce dedup** is reserved before relay via the unique
+  `payment_tx_hash_hmac` index; a duplicate payment returns a generic `409`
+  (no field reveals "already announced"), so used payment hashes can't be enumerated.
+- **Payment verification** now proves the source-chain tx actually paid the
+  stealth address for ≥ the claimed amount (native or ERC-20); unverifiable
+  payments are rejected.
