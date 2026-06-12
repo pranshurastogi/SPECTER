@@ -320,11 +320,23 @@ pub async fn publish_announcement(
     {
         match state.config.chain_rpc_map.get(chain_name.as_str()) {
             Some(rpc_url) => {
-                verifier::verify_payment_tx(rpc_url, ptx).await.map_err(|e| {
-                    warn!(chain = %chain_name, tx = %ptx, "Payment verification failed: {e:?}");
-                    e
-                })?;
-                debug!(chain = %chain_name, tx = %ptx, "Payment verified on source chain");
+                let stealth = announcement.stealth_address.as_deref().unwrap_or_default();
+                let amount_u256 = announcement
+                    .amount
+                    .as_deref()
+                    .map(parse_amount_u256)
+                    .unwrap_or(alloy::primitives::U256::ZERO);
+                let token = req
+                    .token
+                    .as_deref()
+                    .and_then(|t| t.parse::<alloy::primitives::Address>().ok());
+                verifier::verify_payment_tx(rpc_url, ptx, stealth, amount_u256, token)
+                    .await
+                    .map_err(|e| {
+                        warn!(chain = %chain_name, tx = %ptx, "Payment verification failed: {e:?}");
+                        e
+                    })?;
+                debug!(chain = %chain_name, tx = %ptx, "Payment verified to stealth address");
             }
             None => {
                 warn!(
@@ -695,6 +707,18 @@ fn amount_str_to_bytes32(s: &str) -> [u8; 32] {
     }
 
     buf
+}
+
+/// Parses a wei amount string (hex "0x..." or decimal) into a `U256`,
+/// defaulting to `U256::ZERO` on parse failure.
+fn parse_amount_u256(s: &str) -> alloy::primitives::U256 {
+    let s = s.trim();
+    let parsed = if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        alloy::primitives::U256::from_str_radix(hex_str, 16)
+    } else {
+        alloy::primitives::U256::from_str_radix(s, 10)
+    };
+    parsed.unwrap_or(alloy::primitives::U256::ZERO)
 }
 
 /// Extracts the real client IP from forwarding headers or the socket address.

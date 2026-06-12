@@ -290,6 +290,10 @@ pub struct PublishAnnouncementRequest {
     pub amount: Option<String>,
     /// Human-readable source chain name (e.g. "arbitrum", "ethereum", "base").
     pub chain: Option<String>,
+    /// Optional ERC-20 token contract address for payment verification.
+    /// `None` ⇒ native transfer (or best-effort ERC-20 log scan).
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// Response for publish.
