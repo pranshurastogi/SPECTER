@@ -1,8 +1,1 @@
-//! v6 schema advances the version and is purely additive.
-
-use specter_registry::turso::schema::SCHEMA_VERSION;
-
-#[test]
-fn schema_version_is_6() {
-    assert_eq!(SCHEMA_VERSION, 6);
-}
+//! v6 schema is purely additive (superseded by v7; version constant lives in schema_v7 test).

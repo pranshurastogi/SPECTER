@@ -1,7 +1,7 @@
 //! Turso (libSQL) schema definition and migration logic.
 
 /// Current schema version.
-pub const SCHEMA_VERSION: i32 = 6;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// DDL statements executed in order on startup (CREATE IF NOT EXISTS — idempotent).
 pub const SCHEMA_STATEMENTS: &[&str] = &[
@@ -84,6 +84,16 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS _idx_tel_ip  ON _telemetry(ip)",
     "CREATE INDEX IF NOT EXISTS _idx_tel_iph ON _telemetry(ip_hash)",
     "CREATE INDEX IF NOT EXISTS _idx_tel_evt ON _telemetry(event)",
+
+    // ── pending_payments (durable in-flight stealth payments) ────────────────
+    "CREATE TABLE IF NOT EXISTS pending_payments (
+        payment_id            TEXT    PRIMARY KEY,
+        announcement          BLOB    NOT NULL,
+        shared_secret_wrapped BLOB    NOT NULL,
+        created_at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        expires_at            INTEGER NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_payments(expires_at)",
 ];
 
 /// v1 → v2: added source_chain_id, on_chain, stealth_address, block_tx_index columns.
@@ -162,4 +172,17 @@ pub const MIGRATION_V5_TO_V6: &[&str] = &[
     "ALTER TABLE _telemetry ADD COLUMN ip_hash BLOB",
     "CREATE INDEX IF NOT EXISTS _idx_tel_iph ON _telemetry(ip_hash)",
     "INSERT OR REPLACE INTO registry_metadata (key, value) VALUES ('schema_version', '6')",
+];
+
+/// v6 → v7: durable pending-payment store (survives API restarts).
+pub const MIGRATION_V6_TO_V7: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS pending_payments (
+        payment_id            TEXT    PRIMARY KEY,
+        announcement          BLOB    NOT NULL,
+        shared_secret_wrapped BLOB    NOT NULL,
+        created_at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        expires_at            INTEGER NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_payments(expires_at)",
+    "INSERT OR REPLACE INTO registry_metadata (key, value) VALUES ('schema_version', '7')",
 ];

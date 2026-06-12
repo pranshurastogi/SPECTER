@@ -143,6 +143,7 @@ impl TursoRegistry {
             .chain(schema::MIGRATION_V3_TO_V4)
             .chain(schema::MIGRATION_V4_TO_V5)
             .chain(schema::MIGRATION_V5_TO_V6)
+            .chain(schema::MIGRATION_V6_TO_V7)
         {
             if let Err(e) = conn.execute(stmt, ()).await {
                 if is_safe_migration_err(&e.to_string()) {
