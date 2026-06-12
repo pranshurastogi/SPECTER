@@ -53,11 +53,3 @@ alloy = { workspace = true }
 [[test]]
 name = "integration_full_flow"
 required-features = ["test-utils"]
-
-[[test]]
-name = "schema_v6"
-required-features = ["turso"]
-
-[[test]]
-name = "schema_v7"
-required-features = ["turso"]

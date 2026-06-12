@@ -93,11 +93,13 @@ async fn test_full_announcement_to_scan_flow() {
 
     assert_eq!(stored.id, id);
     assert_eq!(stored.view_tag, recipient_view_tag);
-    assert_eq!(stored.source_chain_id, Some(source_chain_id));
     assert_eq!(stored.block_number, Some(monad_block));
-    assert!(stored.payment_tx_hash.is_some());
-    assert!(stored.amount.is_some());
     assert!(stored.stealth_address.is_some());
+    // Payment fields are no longer stored as plaintext columns — they live inside
+    // the encrypted metadata_blob and are recovered in-memory at scan time.
+    assert_eq!(stored.source_chain_id, None);
+    assert_eq!(stored.payment_tx_hash, None);
+    assert_eq!(stored.amount, None);
 
     // ── Step 5: Recipient scans by view_tag ─────────────────────────────────
     let matches = registry
@@ -107,7 +109,6 @@ async fn test_full_announcement_to_scan_flow() {
 
     assert_eq!(matches.len(), 1, "should find exactly 1 announcement");
     assert_eq!(matches[0].view_tag, recipient_view_tag);
-    assert_eq!(matches[0].source_chain_id, Some(source_chain_id));
 
     // ── Step 6: View tag filtering — wrong tag returns nothing ──────────────
     let no_matches = registry
@@ -117,15 +118,15 @@ async fn test_full_announcement_to_scan_flow() {
     assert!(no_matches.is_empty(), "wrong view_tag should return no results");
 }
 
-/// Multiple senders, multiple chains → recipient only finds their own
+/// Multiple senders, same recipient view_tag → recipient finds exactly their own.
 #[tokio::test]
 async fn test_multichain_sender_single_recipient_scan() {
     let registry: TursoRegistry = TursoRegistry::new_test().await;
 
     let recipient_tag = 0x77u8;
     let chains = [
-        (42161u64, 36_100_001u64, 0xAAu8), // Arbitrum, block 1, different view_tag
-        (10143u64, 36_100_002u64, recipient_tag), // Monad itself, recipient's tag
+        (42161u64, 36_100_001u64, 0xAAu8), // Arbitrum, different view_tag
+        (10143u64, 36_100_002u64, recipient_tag), // Monad, recipient's tag
         (1u64,    36_100_003u64, 0xBBu8), // Ethereum, different view_tag
         (137u64,  36_100_004u64, recipient_tag), // Polygon, also recipient's tag
     ];
@@ -143,27 +144,15 @@ async fn test_multichain_sender_single_recipient_scan() {
         registry.insert_onchain_announcement(&ann).await.unwrap();
     }
 
-    // Total: 4 announcements
+    // Total: 4 announcements stored.
     assert_eq!(registry.count().await.unwrap(), 4);
 
-    // Recipient scans with their view_tag — finds 2 (Monad + Polygon)
-    let recipient_matches = registry
-        .get_by_view_tag(recipient_tag)
-        .await
-        .unwrap();
+    // Recipient scans with their view_tag — finds the 2 addressed to them (Monad + Polygon).
+    let recipient_matches = registry.get_by_view_tag(recipient_tag).await.unwrap();
     assert_eq!(recipient_matches.len(), 2);
-    // Both should have the recipient's view_tag
     assert!(recipient_matches.iter().all(|a| a.view_tag == recipient_tag));
-
-    // Get by source chain — only Arbitrum announcements
-    let arb_anns = registry.get_by_source_chain(42161).await.unwrap();
-    assert_eq!(arb_anns.len(), 1);
-    assert_eq!(arb_anns[0].source_chain_id, Some(42161));
-
-    // Get by source chain — only Polygon announcements
-    let matic_anns = registry.get_by_source_chain(137).await.unwrap();
-    assert_eq!(matic_anns.len(), 1);
-    assert_eq!(matic_anns[0].source_chain_id, Some(137));
+    // The source chain is no longer a stored column (it lives in the encrypted blob).
+    assert!(recipient_matches.iter().all(|a| a.source_chain_id.is_none()));
 }
 
 /// On-chain deduplication: replaying the same Monad event does not double-store
@@ -233,5 +222,5 @@ async fn test_time_range_scan() {
     // Scan only the middle window
     let range = registry.get_by_time_range(1500, 2500).await.unwrap();
     assert_eq!(range.len(), 1, "only the 2000-timestamp announcement should match");
-    assert_eq!(range[0].source_chain_id, Some(42161));
+    assert_eq!(range[0].timestamp, 2000);
 }
