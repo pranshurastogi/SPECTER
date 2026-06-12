@@ -240,8 +240,30 @@ pub fn scan_with_context_and_stats(
         match derive_stealth_keys(spending_pk, spending_sk, &shared_secret) {
             Ok(keys) => {
                 stats.discoveries += 1;
+                // Repopulate payment fields by decrypting the on-chain
+                // metadata blob with the per-announcement shared secret.
+                // The secret never leaves this crate. Decryption failure
+                // (tampered/foreign blob) is silently ignored — the
+                // announcement is still returned, just without enrichment.
+                let mut enriched = ann.clone();
+                if let Some(blob) = &ann.metadata_blob {
+                    if let Ok(pt) =
+                        specter_crypto::decrypt_announcement_metadata(blob, &shared_secret)
+                    {
+                        let meta = specter_core::types::AnnouncementMetadata::decode(&pt);
+                        if let Some(h) = meta.tx_hash {
+                            enriched.payment_tx_hash = Some(format!("0x{}", hex::encode(h)));
+                        }
+                        if let Some(a) = meta.amount {
+                            enriched.amount = Some(format!("0x{}", hex::encode(a)));
+                        }
+                        if meta.source_chain_id.is_some() {
+                            enriched.source_chain_id = meta.source_chain_id;
+                        }
+                    }
+                }
                 results.push(DiscoveryResult {
-                    announcement: ann.clone(),
+                    announcement: enriched,
                     keys,
                     index: idx,
                 });
@@ -555,5 +577,51 @@ mod tests {
             scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
         assert_eq!(discoveries.len(), 1);
         assert_eq!(discoveries[0].0, 1, "ours is at index 1");
+    }
+
+    /// During scanning, the recipient must decrypt the on-chain `metadata_blob`
+    /// using the per-announcement ML-KEM shared secret and repopulate the
+    /// payment fields (`payment_tx_hash`, `amount`, `source_chain_id`) that
+    /// Phase 1 moved into the AEAD-encrypted blob.
+    #[test]
+    fn scan_decrypts_metadata_blob_into_payment_fields() {
+        use specter_core::types::AnnouncementMetadata;
+        use specter_crypto::encrypt_announcement_metadata;
+
+        let viewing = generate_keypair();
+        let spending = generate_keypair();
+        let pk = KyberPublicKey::from_bytes(viewing.public.as_bytes()).unwrap();
+        let (ciphertext, shared_secret) = encapsulate(&pk).unwrap();
+        let view_tag = compute_view_tag(&shared_secret);
+
+        // Build plaintext metadata, encrypt it under the shared secret.
+        let tx = [0xAAu8; 32];
+        let mut amount = [0u8; 32];
+        amount[31] = 1; // 1 wei
+        let plaintext = AnnouncementMetadata::new(view_tag)
+            .with_tx_hash(tx)
+            .with_amount(amount)
+            .with_source_chain_id(42161)
+            .encode();
+        // shared_secret is already [u8; 32]; pass it directly.
+        let blob = encrypt_announcement_metadata(&plaintext, &shared_secret).to_vec();
+
+        let mut ann = Announcement::new(ciphertext.into_bytes(), view_tag);
+        ann.metadata_blob = Some(blob);
+
+        let (results, _stats) = scan_with_context_and_stats(
+            &[ann],
+            viewing.secret.as_bytes(),
+            spending.public.as_bytes(),
+            spending.secret.as_bytes(),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].announcement.source_chain_id, Some(42161));
+        assert_eq!(
+            results[0].announcement.payment_tx_hash,
+            Some(format!("0x{}", hex::encode(tx)))
+        );
+        assert!(results[0].announcement.amount.is_some());
     }
 }
