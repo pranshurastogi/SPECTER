@@ -40,14 +40,21 @@ Railway/host env, relayer key). The agent does not run these steps.
 
 ## Cutover steps
 
-1. **Apply Turso schema v6.** Start the API once on the new build; `init_schema`
-   runs the additive v5→v6 migration. Verify:
+1. **Apply the final Turso schema (fresh DB).** The schema was collapsed to a
+   single clean definition (`SCHEMA_VERSION = 1`) with **no migration ladder** —
+   there is no backward-compatible upgrade path. **Clear/recreate the Turso
+   database** (drop all tables, or provision a new DB) before first start, then
+   start the API once; `init_schema` creates the final tables. Verify:
    ```sql
-   SELECT value FROM registry_metadata WHERE key = 'schema_version';   -- expect 6
+   SELECT value FROM registry_metadata WHERE key = 'schema_version';   -- expect 1
    ```
-   Confirm the new columns exist:
+   Confirm the final announcements columns (no plaintext payment fields):
    ```sql
-   PRAGMA table_info(announcements);   -- expect ephemeral_key_hash, metadata_blob, payment_tx_hash_hmac
+   PRAGMA table_info(announcements);
+   -- expect: id, view_tag, timestamp, ephemeral_key, ephemeral_key_hash,
+   --         metadata_blob, payment_tx_hash_hmac, on_chain, block_number,
+   --         tx_hash, chain, stealth_address, record_source, created_at
+   -- (NO source_chain_id / payment_tx_hash / amount / block_tx_index)
    ```
 
 2. **Reset the event-poller checkpoint** so it replays from the deploy block:
@@ -133,7 +140,7 @@ payments.
 
 ### Schema v7
 
-- Verify after deploy: `SELECT value FROM registry_metadata WHERE key='schema_version';` → `7`.
+- Verify after deploy: `SELECT value FROM registry_metadata WHERE key='schema_version';` → `1` (final single schema; the `pending_payments` table is part of it).
 - New table: `pending_payments` (durable, KEK-wrapped `shared_secret_wrapped`).
 - v7 is additive (no drops); rollback to a v6 build remains compatible.
 
