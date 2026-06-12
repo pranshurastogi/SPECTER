@@ -5,11 +5,14 @@
 //!   2. Generate a recipient SPECTER wallet (ML-KEM keypair)
 //!   3. Derive stealth address via ML-KEM encapsulation
 //!   4. Send a micro-payment (1000 wei) to the stealth address on Monad testnet
-//!   5. Build AES-256-GCM encrypted metadata (93 bytes; view_tag + encrypted payload)
+//!   5. Build AES-256-GCM encrypted metadata + all hashes (view_tag = SHAKE-256,
+//!      ephemeralKeyHash = keccak256(ciphertext), payment_tx_hash_hmac = SHAKE-256 keyed MAC)
 //!   6. Publish to SPECTERAnnouncer (ciphertext in calldata; event emits keccak256 hash)
 //!   7. Resolve ciphertext from announce() calldata and verify keccak256(ephemeralKey)
-//!   8. Store in Turso (full ciphertext + ephemeral_key_hash + metadata_blob; no plaintext payment fields)
-//!   9. Scan by view_tag and recover the stealth address via recipient decapsulation
+//!   8. Store in Turso (full ciphertext + ephemeral_key_hash + metadata_blob + dedup MAC;
+//!      no plaintext payment fields)
+//!   9. Canonical recipient scan (scan_with_context_and_stats): decapsulate, view-tag
+//!      match, decrypt metadata_blob, and derive stealth keys — in one pass
 //!
 //! Usage:
 //!   cargo run --bin e2e-flow --features specter-cli/e2e
@@ -32,13 +35,13 @@ use specter_chain::calldata::RpcEphemeralKeyResolver;
 use specter_chain::publish_announcement;
 use specter_core::resolver::EphemeralKeyResolver;
 use specter_core::traits::AnnouncementRegistry;
-use specter_core::types::{AnnouncementBuilder, AnnouncementMetadata};
+use specter_core::types::{AnnouncementBuilder, AnnouncementMetadata, MetaAddress};
 use specter_crypto::{
-    decrypt_announcement_metadata, derive::derive_stealth_address, encrypt_announcement_metadata,
-    encapsulate, hash::keccak256, metadata::ENCRYPTED_METADATA_SIZE, view_tag::compute_view_tag,
+    derive::derive_stealth_address, encapsulate, encrypt_announcement_metadata, generate_keypair,
+    hash::keccak256, metadata::ENCRYPTED_METADATA_SIZE, view_tag::compute_view_tag, DbKeys,
 };
 use specter_registry::turso::TursoRegistry;
-use specter_stealth::wallet::SpecterWallet;
+use specter_stealth::discovery::scan_with_context_and_stats;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -126,11 +129,14 @@ async fn main() -> Result<()> {
     detail("Turso DB",           &redact(&turso_url));
     ok("Configuration loaded");
 
-    // ── [2/9] Generate recipient SPECTER wallet ───────────────────────────────
-    step(2, 9, "Generating ephemeral recipient SPECTER wallet (ML-KEM-1024)");
+    // ── [2/9] Generate recipient SPECTER keys ─────────────────────────────────
+    step(2, 9, "Generating ephemeral recipient SPECTER keys (ML-KEM-768)");
 
-    let recipient_wallet = SpecterWallet::generate().context("SpecterWallet::generate failed")?;
-    let meta = recipient_wallet.meta_address();
+    // Raw ML-KEM keypairs (spending + viewing) so the canonical recipient scan in
+    // step 9 can run with the recipient's secret keys — exactly as a wallet/SDK does.
+    let spending = generate_keypair();
+    let viewing = generate_keypair();
+    let meta = MetaAddress::new(spending.public.clone(), viewing.public.clone());
 
     detail(
         "Viewing key (pub)",
@@ -140,7 +146,7 @@ async fn main() -> Result<()> {
             meta.viewing_pk.as_bytes().len()
         ),
     );
-    ok("Recipient wallet generated");
+    ok("Recipient keys generated");
 
     // ── [3/9] ML-KEM encapsulation → stealth address ─────────────────────────
     step(3, 9, "Deriving stealth address via ML-KEM encapsulation");
@@ -255,13 +261,21 @@ async fn main() -> Result<()> {
     // keccak256(ciphertext) — emitted by the new Announcement event as ephemeralKeyHash
     let ephemeral_key_hash = keccak256(&ephemeral_key_arr);
 
-    detail("Byte [0]     view_tag",    &format!("0x{view_tag:02x} (plaintext)"));
-    detail("Metadata size",           &format!("{} bytes (encrypted)", encrypted_metadata.len()));
-    detail("ephemeralKeyHash",        &format!("0x{}...", hex::encode(&ephemeral_key_hash[..4])));
-    detail("Plaintext payment tx",    &format!("0x{}...", hex::encode(&tx_hash_bytes[..4])));
-    detail("Plaintext amount",        &format!("{amount_wei} wei"));
-    detail("Plaintext chain_id",      &format!("{MONAD_CHAIN_ID} (Monad testnet)"));
-    ok("Encrypted metadata ready");
+    // payment_tx_hash_hmac — Phase-2 keyed dedup MAC (SHAKE-256, derived from the
+    // server master key). Blocks double-announce without exposing the payment tx.
+    // The e2e uses a fixed demo master; production derives it from SPECTER_DB_ENC_KEY.
+    let db_keys = DbKeys::from_master(&[0x11u8; 32]);
+    let payment_tx_hex = format!("{send_tx_hash:?}").to_lowercase();
+    let payment_hmac = db_keys.payment_hmac(&payment_tx_hex);
+
+    detail("Byte [0]     view_tag",    &format!("0x{view_tag:02x}  (SHAKE-256, plaintext)"));
+    detail("Metadata size",           &format!("{} bytes (AES-256-GCM)", encrypted_metadata.len()));
+    detail("ephemeralKeyHash",        &format!("0x{}...  (keccak256 of ciphertext)", hex::encode(&ephemeral_key_hash[..4])));
+    detail("payment_tx_hash_hmac",    &format!("0x{}...  (SHAKE-256 keyed MAC)", hex::encode(&payment_hmac[..4])));
+    detail("Plaintext payment tx",    &format!("0x{}...  (encrypted into blob)", hex::encode(&tx_hash_bytes[..4])));
+    detail("Plaintext amount",        &format!("{amount_wei} wei  (encrypted into blob)"));
+    detail("Plaintext chain_id",      &format!("{MONAD_CHAIN_ID}  (encrypted into blob)"));
+    ok("Encrypted metadata + dedup MAC ready");
 
     // ── [6/9] Publish to SPECTERAnnouncer on Monad ───────────────────────────
     step(6, 9, "Publishing announcement to SPECTERAnnouncer contract");
@@ -326,11 +340,13 @@ async fn main() -> Result<()> {
 
     ok("Turso connected");
 
-    // Mirror indexer/poller: full ciphertext + hash + encrypted blob; no plaintext payment fields.
+    // Mirror the API relayer row: full ciphertext + key hash + encrypted blob + dedup
+    // MAC; NO plaintext payment fields (they live only inside the encrypted blob).
     let announcement = AnnouncementBuilder::new()
         .ephemeral_key(resolved_ephemeral)
         .ephemeral_key_hash(ephemeral_key_hash.to_vec())
         .metadata_blob(encrypted_metadata.to_vec())
+        .payment_tx_hash_hmac(payment_hmac.clone())
         .view_tag(view_tag)
         .stealth_address(stealth_addr_hex.clone())
         .block_number(monad_block)
@@ -441,50 +457,50 @@ async fn main() -> Result<()> {
         errs += 1;
     }
 
-    // Decrypt metadata blob and verify payment fields round-trip.
-    if let Some(blob) = &found.metadata_blob {
-        match decrypt_announcement_metadata(blob, &shared_secret) {
-            Ok(decrypted) => {
-                let meta = AnnouncementMetadata::decode(&decrypted);
-                if meta.tx_hash == Some(tx_hash_bytes) {
-                    ok("metadata decrypt:   payment tx_hash matches");
-                } else {
-                    fail_msg("metadata decrypt: payment tx_hash mismatch");
-                    errs += 1;
-                }
-                if meta.source_chain_id == Some(MONAD_CHAIN_ID) {
-                    ok("metadata decrypt:   source_chain_id matches");
-                } else {
-                    fail_msg("metadata decrypt: source_chain_id mismatch");
-                    errs += 1;
-                }
-            }
-            Err(e) => {
-                fail_msg(&format!("metadata decrypt failed: {e}"));
-                errs += 1;
-            }
-        }
-    }
+    // ── Canonical recipient scan ──────────────────────────────────────────────
+    // The real recipient/SDK path: scan_with_context_and_stats decapsulates the
+    // ciphertext, matches the view tag, decrypts metadata_blob, AND derives the
+    // stealth keys — all in one pass (no manual decrypt, no separate discovery).
+    let viewing_sk = viewing.secret.as_bytes().to_vec();
+    let spending_pk = spending.public.as_bytes().to_vec();
+    let spending_sk = spending.secret.as_bytes().to_vec();
+    let (discoveries, _scan_stats) = scan_with_context_and_stats(
+        std::slice::from_ref(found),
+        &viewing_sk,
+        &spending_pk,
+        &spending_sk,
+    );
 
-    // Recipient discovers the payment and recovers the stealth address.
-    match recipient_wallet.try_discover(&found.ephemeral_key, view_tag) {
-        Ok(Some(keys)) => {
-            let recovered = keys.address.to_checksum_string();
-            if recovered.eq_ignore_ascii_case(&stealth_addr_hex) {
-                ok(&format!("recipient discovery: stealth address {recovered}"));
+    match discoveries.first() {
+        Some(d) => {
+            let expected_ptx = format!("0x{}", hex::encode(tx_hash_bytes));
+            if d.announcement.payment_tx_hash.as_deref() == Some(expected_ptx.as_str()) {
+                ok("canonical scan:     payment tx_hash recovered from blob");
             } else {
                 fail_msg(&format!(
-                    "recipient discovery: expected {stealth_addr_hex}, got {recovered}"
+                    "canonical scan: payment tx_hash mismatch (got {:?})",
+                    d.announcement.payment_tx_hash
+                ));
+                errs += 1;
+            }
+            if d.announcement.source_chain_id == Some(MONAD_CHAIN_ID) {
+                ok("canonical scan:     source_chain_id recovered from blob");
+            } else {
+                fail_msg("canonical scan: source_chain_id not recovered from blob");
+                errs += 1;
+            }
+            let recovered = d.keys.address.to_checksum_string();
+            if recovered.eq_ignore_ascii_case(&stealth_addr_hex) {
+                ok(&format!("canonical scan:     stealth address recovered {recovered}"));
+            } else {
+                fail_msg(&format!(
+                    "canonical scan: expected {stealth_addr_hex}, got {recovered}"
                 ));
                 errs += 1;
             }
         }
-        Ok(None) => {
-            fail_msg("recipient discovery: view tag matched in DB but decapsulation returned None");
-            errs += 1;
-        }
-        Err(e) => {
-            fail_msg(&format!("recipient discovery failed: {e}"));
+        None => {
+            fail_msg("canonical scan: payment not discovered (view tag / decapsulation failed)");
             errs += 1;
         }
     }
