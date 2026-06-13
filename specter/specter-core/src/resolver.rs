@@ -5,8 +5,8 @@
 //! specter-chain) fetch that calldata and MUST verify keccak256 before
 //! returning. Kept here as a trait so the scanner has no chain/RPC dependency.
 
-use async_trait::async_trait;
 use crate::error::Result;
+use async_trait::async_trait;
 
 /// Resolves the full ML-KEM ciphertext from on-chain calldata for a given announcement.
 #[async_trait]

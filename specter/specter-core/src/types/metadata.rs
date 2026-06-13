@@ -123,10 +123,19 @@ impl AnnouncementMetadata {
             let mut arr = [0u8; 8];
             arr.copy_from_slice(&raw[65..73]);
             let val = u64::from_be_bytes(arr);
-            if val == 0 { None } else { Some(val) }
+            if val == 0 {
+                None
+            } else {
+                Some(val)
+            }
         };
 
-        Self { view_tag, tx_hash, amount, source_chain_id }
+        Self {
+            view_tag,
+            tx_hash,
+            amount,
+            source_chain_id,
+        }
     }
 
     /// Builder-style setter for `tx_hash`.

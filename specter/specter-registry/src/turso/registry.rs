@@ -31,7 +31,7 @@ fn is_safe_migration_err(msg: &str) -> bool {
         || m.contains("no such table")  // DROP TABLE IF EXISTS on already-gone table
         || m.contains("no such index")  // DROP INDEX IF EXISTS on already-gone index
         || m.contains("unique constraint") // idempotent INSERT OR REPLACE collision
-        || m.contains("no rows")        // DELETE on empty table
+        || m.contains("no rows") // DELETE on empty table
 }
 
 // ── helper converters ──────────────────────────────────────────────────────
@@ -301,7 +301,13 @@ impl TursoRegistry {
             .await
             .map_err(|e| SpecterError::RegistryError(format!("get_metadata row: {e}")))?
             .and_then(|r| r.get_value(0).ok())
-            .and_then(|v| if let Value::Text(s) = v { Some(s) } else { None }))
+            .and_then(|v| {
+                if let Value::Text(s) = v {
+                    Some(s)
+                } else {
+                    None
+                }
+            }))
     }
 
     /// Writes an internal telemetry event (fire-and-forget; errors are swallowed).
@@ -407,9 +413,18 @@ impl TursoRegistry {
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
                 Value::Blob(ann.ephemeral_key.clone()), // full ciphertext, or empty Vec for hash-only rows
-                ann.ephemeral_key_hash.clone().map(Value::Blob).unwrap_or(Value::Null),
-                ann.metadata_blob.clone().map(Value::Blob).unwrap_or(Value::Null),
-                ann.payment_tx_hash_hmac.clone().map(Value::Blob).unwrap_or(Value::Null),
+                ann.ephemeral_key_hash
+                    .clone()
+                    .map(Value::Blob)
+                    .unwrap_or(Value::Null),
+                ann.metadata_blob
+                    .clone()
+                    .map(Value::Blob)
+                    .unwrap_or(Value::Null),
+                ann.payment_tx_hash_hmac
+                    .clone()
+                    .map(Value::Blob)
+                    .unwrap_or(Value::Null),
                 Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
                 opt_text(ann.tx_hash.clone()),
@@ -433,7 +448,9 @@ impl TursoRegistry {
                 self.cache.write().await.pop(&ann.view_tag);
                 Ok(id)
             }
-            Err(SpecterError::RegistryError(m)) if m.to_lowercase().contains("unique constraint") => {
+            Err(SpecterError::RegistryError(m))
+                if m.to_lowercase().contains("unique constraint") =>
+            {
                 Err(SpecterError::DuplicatePayment)
             }
             Err(e) => Err(e),
@@ -917,7 +934,10 @@ mod tests {
         let mut a = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], 0x42);
         a.stealth_address = Some("0x1111111111111111111111111111111111111111".into());
         a.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);
-        let id = reg.reserve_announcement(&a).await.expect("first reserve ok");
+        let id = reg
+            .reserve_announcement(&a)
+            .await
+            .expect("first reserve ok");
         // second reserve with same hmac → Duplicate
         let mut b = Announcement::new(vec![0x43u8; KYBER_CIPHERTEXT_SIZE], 0x43);
         b.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);

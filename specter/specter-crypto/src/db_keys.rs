@@ -42,19 +42,31 @@ impl DbKeys {
         pending_wrap.copy_from_slice(&shake256(DOMAIN_DB_PENDING_WRAP, master, 32));
         let mut telemetry_salt = [0u8; 32];
         telemetry_salt.copy_from_slice(&shake256(DOMAIN_DB_TELEMETRY_SALT, master, 32));
-        Self { hmac_key, pending_wrap, telemetry_salt }
+        Self {
+            hmac_key,
+            pending_wrap,
+            telemetry_salt,
+        }
     }
 
     /// Keyed MAC over a normalized payment tx hash — the dedup key.
     /// SHAKE-256 is not length-extendable, so prefix-keying is a sound MAC.
     pub fn payment_hmac(&self, normalized_tx_hash: &str) -> Vec<u8> {
-        shake256_multi(DOMAIN_DB_PAYMENT_MAC, &[&self.hmac_key, normalized_tx_hash.as_bytes()], 32)
+        shake256_multi(
+            DOMAIN_DB_PAYMENT_MAC,
+            &[&self.hmac_key, normalized_tx_hash.as_bytes()],
+            32,
+        )
     }
 
     /// Daily-rotating telemetry IP hash. `unix_secs` is the event time.
     pub fn telemetry_ip_hash(&self, ip: &str, unix_secs: u64) -> Vec<u8> {
         let day = (unix_secs / 86_400).to_be_bytes();
-        shake256_multi(DOMAIN_DB_IP_HASH, &[&self.telemetry_salt, &day, ip.as_bytes()], 32)
+        shake256_multi(
+            DOMAIN_DB_IP_HASH,
+            &[&self.telemetry_salt, &day, ip.as_bytes()],
+            32,
+        )
     }
 
     /// AEAD-wrap a 32-byte secret for at-rest storage (random nonce, prepended).
@@ -147,7 +159,11 @@ mod tests {
     fn wrap_uses_random_nonce() {
         let k = keys();
         let secret = [0x42u8; 32];
-        assert_ne!(k.wrap_secret(&secret), k.wrap_secret(&secret), "nonce must be random");
+        assert_ne!(
+            k.wrap_secret(&secret),
+            k.wrap_secret(&secret),
+            "nonce must be random"
+        );
     }
 
     #[test]

@@ -408,7 +408,6 @@ impl AnnouncementStats {
             }
             _ => {}
         }
-
     }
 }
 
@@ -555,14 +554,17 @@ mod tests {
         assert!(json.contains("0x1234567890abcdef"));
 
         let ann_deserialized: Announcement = serde_json::from_str(&json).unwrap();
-        assert_eq!(ann_deserialized.stealth_address, Some(stealth_addr.to_string()));
+        assert_eq!(
+            ann_deserialized.stealth_address,
+            Some(stealth_addr.to_string())
+        );
     }
 
     #[test]
     fn test_announcement_stealth_address_skipped_when_none() {
         let ann = Announcement::new(make_valid_ephemeral_key(), 0x42);
         let json = serde_json::to_string(&ann).unwrap();
-        
+
         // stealth_address should not be serialized when None due to skip_serializing_if
         assert!(!json.contains("stealth_address"));
     }
@@ -586,7 +588,10 @@ mod tests {
     #[test]
     fn empty_with_no_hash_is_invalid() {
         let ann = Announcement::new(Vec::new(), 0x42);
-        assert!(ann.validate().is_err(), "no ciphertext and no hash is invalid");
+        assert!(
+            ann.validate().is_err(),
+            "no ciphertext and no hash is invalid"
+        );
     }
 
     #[test]

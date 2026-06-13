@@ -36,7 +36,10 @@ pub struct RelayerConfig {
 impl RelayerConfig {
     /// Loads relayer config from env. Returns `None` if any required var is missing.
     pub fn from_env() -> Option<Self> {
-        let raw_key = std::env::var("RELAYER_PRIVATE_KEY").ok()?.trim().to_string();
+        let raw_key = std::env::var("RELAYER_PRIVATE_KEY")
+            .ok()?
+            .trim()
+            .to_string();
         if raw_key.is_empty() {
             return None;
         }
@@ -47,7 +50,11 @@ impl RelayerConfig {
         let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
             .ok()
             .filter(|s| !s.is_empty())?;
-        Some(Self { signer, monad_rpc_url, announcer_addr })
+        Some(Self {
+            signer,
+            monad_rpc_url,
+            announcer_addr,
+        })
     }
 }
 
@@ -186,8 +193,8 @@ impl ApiConfig {
             .unwrap_or(false);
 
         // ENS resolution always uses Ethereum mainnet — real .eth names are not on Sepolia.
-        let rpc_url = std::env::var("ENS_RPC_URL")
-            .unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into());
+        let rpc_url =
+            std::env::var("ENS_RPC_URL").unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into());
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
             if use_testnet {
@@ -259,8 +266,8 @@ impl ChainConfig {
     ///
     /// Returns Ok with enabled=false if not configured.
     pub fn from_env() -> Result<Self> {
-        let announcement_source = std::env::var("ANNOUNCEMENT_SOURCE")
-            .unwrap_or_else(|_| "api".to_string());
+        let announcement_source =
+            std::env::var("ANNOUNCEMENT_SOURCE").unwrap_or_else(|_| "api".to_string());
 
         let enabled = announcement_source == "chain";
 
@@ -273,35 +280,41 @@ impl ChainConfig {
             });
         }
 
-        let rpc_url = std::env::var("MONAD_RPC_URL")
-            .map_err(|_| specter_core::error::SpecterError::ConfigError(
-                "MONAD_RPC_URL not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
-            ))?;
+        let rpc_url = std::env::var("MONAD_RPC_URL").map_err(|_| {
+            specter_core::error::SpecterError::ConfigError(
+                "MONAD_RPC_URL not set (required when ANNOUNCEMENT_SOURCE=chain)".into(),
+            )
+        })?;
 
-        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
-            .map_err(|_| specter_core::error::SpecterError::ConfigError(
-                "SPECTER_ANNOUNCER_ADDRESS not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
-            ))?;
+        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS").map_err(|_| {
+            specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_ADDRESS not set (required when ANNOUNCEMENT_SOURCE=chain)"
+                    .into(),
+            )
+        })?;
 
-        let deploy_block_str = std::env::var("SPECTER_ANNOUNCER_DEPLOY_BLOCK")
-            .map_err(|_| specter_core::error::SpecterError::ConfigError(
-                "SPECTER_ANNOUNCER_DEPLOY_BLOCK not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
-            ))?;
+        let deploy_block_str = std::env::var("SPECTER_ANNOUNCER_DEPLOY_BLOCK").map_err(|_| {
+            specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK not set (required when ANNOUNCEMENT_SOURCE=chain)"
+                    .into(),
+            )
+        })?;
 
-        let deploy_block = deploy_block_str.parse::<u64>()
-            .map_err(|_| specter_core::error::SpecterError::ConfigError(
-                "SPECTER_ANNOUNCER_DEPLOY_BLOCK must be a valid u64".into()
-            ))?;
+        let deploy_block = deploy_block_str.parse::<u64>().map_err(|_| {
+            specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK must be a valid u64".into(),
+            )
+        })?;
 
         if rpc_url.is_empty() {
             return Err(specter_core::error::SpecterError::ConfigError(
-                "MONAD_RPC_URL is empty".into()
+                "MONAD_RPC_URL is empty".into(),
             ));
         }
 
         if announcer_addr.is_empty() {
             return Err(specter_core::error::SpecterError::ConfigError(
-                "SPECTER_ANNOUNCER_ADDRESS is empty".into()
+                "SPECTER_ANNOUNCER_ADDRESS is empty".into(),
             ));
         }
 
@@ -414,8 +427,10 @@ impl RegistryBackend {
         ms: u64,
     ) {
         if let Self::Turso(t) = self {
-            t.write_telemetry(event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms)
-                .await;
+            t.write_telemetry(
+                event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms,
+            )
+            .await;
         }
     }
 }
@@ -534,7 +549,10 @@ impl AppState {
 
         // Load chain configuration
         let chain_config = ChainConfig::from_env().unwrap_or_else(|e| {
-            eprintln!("⚠️  Chain configuration error: {} (chain indexing disabled)", e);
+            eprintln!(
+                "⚠️  Chain configuration error: {} (chain indexing disabled)",
+                e
+            );
             ChainConfig {
                 rpc_url: String::new(),
                 announcer_addr: String::new(),
@@ -559,7 +577,9 @@ impl AppState {
         if relayer_config.is_some() {
             info!("Relayer configured — server-side gas-sponsored announcements enabled");
         } else {
-            eprintln!("⚠️  RELAYER_PRIVATE_KEY not set — running in dev mode (client supplies tx_hash)");
+            eprintln!(
+                "⚠️  RELAYER_PRIVATE_KEY not set — running in dev mode (client supplies tx_hash)"
+            );
         }
 
         let db_keys = Self::load_db_keys();
@@ -638,9 +658,13 @@ impl AppState {
 
     /// Loads `DbKeys` from `SPECTER_DB_ENC_KEY` if present and valid.
     pub fn load_db_keys() -> Option<std::sync::Arc<specter_crypto::DbKeys>> {
-        let b64 = std::env::var("SPECTER_DB_ENC_KEY").ok().filter(|s| !s.trim().is_empty())?;
+        let b64 = std::env::var("SPECTER_DB_ENC_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())?;
         match Self::decode_db_master(&b64) {
-            Ok(master) => Some(std::sync::Arc::new(specter_crypto::DbKeys::from_master(&master))),
+            Ok(master) => Some(std::sync::Arc::new(specter_crypto::DbKeys::from_master(
+                &master,
+            ))),
             Err(e) => {
                 tracing::error!("Invalid SPECTER_DB_ENC_KEY — at-rest hardening disabled: {e}");
                 None
@@ -682,7 +706,6 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     SuinsResolver::with_config(sc)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,7 +730,10 @@ mod tests {
         std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
 
         let result = ChainConfig::from_env();
-        assert!(result.is_err(), "Should fail when required env vars missing");
+        assert!(
+            result.is_err(),
+            "Should fail when required env vars missing"
+        );
 
         std::env::remove_var("ANNOUNCEMENT_SOURCE");
     }
@@ -716,13 +742,19 @@ mod tests {
     fn test_chain_config_with_valid_env_vars() {
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
-        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        std::env::set_var(
+            "SPECTER_ANNOUNCER_ADDRESS",
+            "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC",
+        );
         std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "37571591");
 
         let config = ChainConfig::from_env().expect("Should load valid config");
         assert!(config.enabled);
         assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");
-        assert_eq!(config.announcer_addr, "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        assert_eq!(
+            config.announcer_addr,
+            "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC"
+        );
         assert_eq!(config.deploy_block, 37571591);
 
         std::env::remove_var("ANNOUNCEMENT_SOURCE");
@@ -735,7 +767,10 @@ mod tests {
     fn test_chain_config_invalid_deploy_block() {
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
-        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        std::env::set_var(
+            "SPECTER_ANNOUNCER_ADDRESS",
+            "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC",
+        );
         std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "not_a_number");
 
         let result = ChainConfig::from_env();

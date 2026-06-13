@@ -112,9 +112,8 @@ impl PendingPaymentStore {
                 db_keys,
                 ttl,
             } => {
-                let blob = serde_json::to_vec(&announcement).map_err(|e| {
-                    SpecterError::RegistryError(format!("pending serialize: {e}"))
-                })?;
+                let blob = serde_json::to_vec(&announcement)
+                    .map_err(|e| SpecterError::RegistryError(format!("pending serialize: {e}")))?;
                 let wrapped = db_keys.wrap_secret(&shared_secret);
                 let expires_at = (now_secs() + ttl.as_secs()) as i64;
                 store
@@ -142,9 +141,7 @@ impl PendingPaymentStore {
     /// unknown or the entry has expired (expired entries are also removed).
     pub async fn take(&self, id: &Uuid) -> Result<Option<PendingPayment>, SpecterError> {
         match self {
-            Self::Turso {
-                store, db_keys, ..
-            } => {
+            Self::Turso { store, db_keys, .. } => {
                 let now = now_secs() as i64;
                 let Some((blob, wrapped)) = store.take(&id.to_string(), now).await? else {
                     return Ok(None);

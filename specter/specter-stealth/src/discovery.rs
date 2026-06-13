@@ -401,8 +401,7 @@ mod tests {
     #[test]
     fn scan_empty_list_returns_empty() {
         let (spending_pk, spending_sk, _vk, viewing_sk) = create_test_keys();
-        let discoveries =
-            scan_announcements(&[], &viewing_sk, &spending_pk, &spending_sk);
+        let discoveries = scan_announcements(&[], &viewing_sk, &spending_pk, &spending_sk);
         assert!(discoveries.is_empty());
     }
 
@@ -442,7 +441,9 @@ mod tests {
         ];
         // add 5 more noise
         for _ in 0..5 {
-            anns.push(create_announcement_for(generate_keypair().public.as_bytes()));
+            anns.push(create_announcement_for(
+                generate_keypair().public.as_bytes(),
+            ));
         }
 
         let flat = scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
@@ -485,16 +486,28 @@ mod tests {
 
     #[test]
     fn scan_stats_rate_is_zero_when_duration_zero() {
-        let stats = ScanStats { total_scanned: 100, duration_ms: 0, ..ScanStats::default() };
+        let stats = ScanStats {
+            total_scanned: 100,
+            duration_ms: 0,
+            ..ScanStats::default()
+        };
         assert_eq!(stats.rate(), 0.0);
     }
 
     #[test]
     fn scan_stats_rate_computed_correctly() {
-        let stats = ScanStats { total_scanned: 1000, duration_ms: 1000, ..ScanStats::default() };
+        let stats = ScanStats {
+            total_scanned: 1000,
+            duration_ms: 1000,
+            ..ScanStats::default()
+        };
         // 1000 announcements in 1000ms = 1000/s
         let rate = stats.rate();
-        assert!((rate - 1000.0).abs() < 0.01, "expected ~1000.0, got {}", rate);
+        assert!(
+            (rate - 1000.0).abs() < 0.01,
+            "expected ~1000.0, got {}",
+            rate
+        );
     }
 
     #[test]
@@ -560,8 +573,7 @@ mod tests {
         let wrong_addr = specter_core::types::EthAddress::zero();
 
         let ok =
-            verify_address_from_announcement(&ann, &viewing_sk, &spending_pk, &wrong_addr)
-                .unwrap();
+            verify_address_from_announcement(&ann, &viewing_sk, &spending_pk, &wrong_addr).unwrap();
         assert!(!ok, "wrong address should not verify");
     }
 
@@ -573,8 +585,7 @@ mod tests {
         let noise2 = create_announcement_for(generate_keypair().public.as_bytes());
         let anns = vec![noise1, ours, noise2];
 
-        let discoveries =
-            scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
+        let discoveries = scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
         assert_eq!(discoveries.len(), 1);
         assert_eq!(discoveries[0].0, 1, "ours is at index 1");
     }

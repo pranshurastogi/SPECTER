@@ -321,9 +321,7 @@ pub async fn publish_announcement(
     }
 
     // ── 4. Verify payment on source chain ─────────────────────────────────────
-    if let (Some(ptx), Some(chain_name)) =
-        (&announcement.payment_tx_hash, &announcement.chain)
-    {
+    if let (Some(ptx), Some(chain_name)) = (&announcement.payment_tx_hash, &announcement.chain) {
         match state.config.chain_rpc_map.get(chain_name.as_str()) {
             Some(rpc_url) => {
                 let stealth = announcement.stealth_address.as_deref().unwrap_or_default();
@@ -359,9 +357,10 @@ pub async fn publish_announcement(
     // build_on_chain_metadata reads the plaintext payment fields, so it must run
     // before they are nulled below.
     let metadata_blob = build_on_chain_metadata(&announcement, shared_secret.as_ref());
-    if let (Some(keys), Some(ptx)) =
-        (state.db_keys.as_ref(), announcement.payment_tx_hash.as_deref())
-    {
+    if let (Some(keys), Some(ptx)) = (
+        state.db_keys.as_ref(),
+        announcement.payment_tx_hash.as_deref(),
+    ) {
         announcement.payment_tx_hash_hmac = Some(keys.payment_hmac(&ptx.trim().to_lowercase()));
     }
     announcement.ephemeral_key_hash =
@@ -583,11 +582,11 @@ async fn resolve_pending_announcement(
                 .await
                 .map_err(|e| ApiError::internal(format!("pending lookup failed: {e}")))?
                 .ok_or_else(|| {
-                ApiError::bad_request(
-                    "Unknown or expired payment_id. Re-create the stealth payment \
+                    ApiError::bad_request(
+                        "Unknown or expired payment_id. Re-create the stealth payment \
                      via POST /api/v1/stealth/create.",
-                )
-            })?;
+                    )
+                })?;
             debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
             let secret = pending.shared_secret;
             Ok((pending.announcement, Some(secret)))
@@ -595,9 +594,11 @@ async fn resolve_pending_announcement(
         (None, Some(dto)) => {
             warn!("Publish via announcement fallback (no payment_id). Metadata will not be encrypted.");
             let mut ann: Announcement =
-                dto.clone().try_into().map_err(|e: specter_core::error::SpecterError| {
-                    ApiError::bad_request(format!("Invalid announcement: {}", e))
-                })?;
+                dto.clone()
+                    .try_into()
+                    .map_err(|e: specter_core::error::SpecterError| {
+                        ApiError::bad_request(format!("Invalid announcement: {}", e))
+                    })?;
             ann.id = 0;
             Ok((ann, None))
         }
@@ -622,9 +623,9 @@ async fn relay_announcement(
         .as_deref()
         .ok_or_else(|| ApiError::internal("stealth_address missing from pending payment"))?;
 
-    let stealth_addr: Address = stealth_addr_str
-        .parse()
-        .map_err(|e| ApiError::internal(format!("Invalid stealth_address '{stealth_addr_str}': {e}")))?;
+    let stealth_addr: Address = stealth_addr_str.parse().map_err(|e| {
+        ApiError::internal(format!("Invalid stealth_address '{stealth_addr_str}': {e}"))
+    })?;
 
     let ek_arr: [u8; 1088] = announcement
         .ephemeral_key
@@ -752,7 +753,10 @@ fn extract_client_ip(
         }
     }
     // CF-Connecting-IP: set by Cloudflare
-    if let Some(cf_ip) = headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()) {
+    if let Some(cf_ip) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+    {
         if let Ok(ip) = cf_ip.trim().parse::<IpAddr>() {
             return ip;
         }

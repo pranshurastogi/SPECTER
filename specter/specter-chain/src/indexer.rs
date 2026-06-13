@@ -96,8 +96,8 @@ impl ChainIndexerConfig {
     /// - `SPECTER_ANNOUNCER_ADDRESS`
     /// - `SPECTER_ANNOUNCER_DEPLOY_BLOCK`
     pub fn from_env() -> Result<Self> {
-        let rpc_url = std::env::var("MONAD_RPC_URL")
-            .map_err(|_| anyhow::anyhow!("MONAD_RPC_URL not set"))?;
+        let rpc_url =
+            std::env::var("MONAD_RPC_URL").map_err(|_| anyhow::anyhow!("MONAD_RPC_URL not set"))?;
 
         let addr_str = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
             .map_err(|_| anyhow::anyhow!("SPECTER_ANNOUNCER_ADDRESS not set"))?;
@@ -115,7 +115,11 @@ impl ChainIndexerConfig {
             return Err(anyhow::anyhow!("MONAD_RPC_URL is empty"));
         }
 
-        Ok(Self { rpc_url, announcer_addr, deploy_block })
+        Ok(Self {
+            rpc_url,
+            announcer_addr,
+            deploy_block,
+        })
     }
 }
 
@@ -169,7 +173,9 @@ mod tests {
     }
 
     fn zero_addr() -> Address {
-        "0x0000000000000000000000000000000000000000".parse().unwrap()
+        "0x0000000000000000000000000000000000000000"
+            .parse()
+            .unwrap()
     }
 
     #[test]
@@ -177,7 +183,9 @@ mod tests {
         let result = announcement_from_event(
             make_valid_ephemeral_key(),
             make_valid_metadata().to_vec(),
-            "0x1234567890123456789012345678901234567890".parse().unwrap(),
+            "0x1234567890123456789012345678901234567890"
+                .parse()
+                .unwrap(),
             1_000_000,
         );
 
@@ -252,12 +260,8 @@ mod tests {
 
     #[test]
     fn test_announcement_from_event_invalid_metadata_length() {
-        let result = announcement_from_event(
-            make_valid_ephemeral_key(),
-            vec![0u8; 76],
-            zero_addr(),
-            0,
-        );
+        let result =
+            announcement_from_event(make_valid_ephemeral_key(), vec![0u8; 76], zero_addr(), 0);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("77 bytes"));
@@ -266,12 +270,8 @@ mod tests {
     #[test]
     fn test_announcement_from_event_metadata_too_long() {
         // Exactly 77 bytes is required — reject anything else
-        let result = announcement_from_event(
-            make_valid_ephemeral_key(),
-            vec![0u8; 100],
-            zero_addr(),
-            0,
-        );
+        let result =
+            announcement_from_event(make_valid_ephemeral_key(), vec![0u8; 100], zero_addr(), 0);
         assert!(result.is_err());
     }
 
@@ -292,7 +292,9 @@ mod tests {
     fn test_chain_indexer_config_creation() {
         let config = ChainIndexerConfig {
             rpc_url: "https://testnet-rpc.monad.xyz".into(),
-            announcer_addr: "0x0000000000000000000000000000000000000001".parse().unwrap(),
+            announcer_addr: "0x0000000000000000000000000000000000000001"
+                .parse()
+                .unwrap(),
             deploy_block: 37571591,
         };
         assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");

@@ -613,8 +613,14 @@ mod tests {
     async fn announcements_without_tx_hash_can_coexist() {
         let registry = MemoryRegistry::new();
         // Neither has a tx_hash — both must succeed
-        let id1 = registry.publish(make_test_announcement(0x01)).await.unwrap();
-        let id2 = registry.publish(make_test_announcement(0x02)).await.unwrap();
+        let id1 = registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        let id2 = registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
         assert_ne!(id1, id2);
         assert_eq!(registry.len(), 2);
     }
@@ -628,7 +634,10 @@ mod tests {
 
         // A range where from == to == timestamp should include the entry
         let results = registry.get_by_time_range(500, 500).await.unwrap();
-        assert!(!results.is_empty(), "entry with timestamp==from==to should match");
+        assert!(
+            !results.is_empty(),
+            "entry with timestamp==from==to should match"
+        );
     }
 
     #[tokio::test]
@@ -640,7 +649,10 @@ mod tests {
 
         // Range [101, 200] should NOT include timestamp=100
         let results = registry.get_by_time_range(101, 200).await.unwrap();
-        assert!(results.is_empty(), "timestamp 100 should be outside [101, 200]");
+        assert!(
+            results.is_empty(),
+            "timestamp 100 should be outside [101, 200]"
+        );
     }
 
     #[tokio::test]
@@ -671,28 +683,52 @@ mod tests {
     #[tokio::test]
     async fn get_by_view_tag_after_clear_returns_empty() {
         let registry = MemoryRegistry::new();
-        registry.publish(make_test_announcement(0x42)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x42))
+            .await
+            .unwrap();
         registry.clear();
         let result = registry.get_by_view_tag(0x42).await.unwrap();
-        assert!(result.is_empty(), "after clear, view tag index must be empty");
+        assert!(
+            result.is_empty(),
+            "after clear, view tag index must be empty"
+        );
     }
 
     #[tokio::test]
     async fn publish_after_clear_restarts_ids_at_1() {
         let registry = MemoryRegistry::new();
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
-        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
         registry.clear();
-        let new_id = registry.publish(make_test_announcement(0x03)).await.unwrap();
+        let new_id = registry
+            .publish(make_test_announcement(0x03))
+            .await
+            .unwrap();
         assert_eq!(new_id, 1, "IDs should restart at 1 after clear");
     }
 
     #[tokio::test]
     async fn count_matches_len() {
         let registry = MemoryRegistry::new();
-        registry.publish(make_test_announcement(0x01)).await.unwrap();
-        registry.publish(make_test_announcement(0x02)).await.unwrap();
-        registry.publish(make_test_announcement(0x03)).await.unwrap();
+        registry
+            .publish(make_test_announcement(0x01))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x02))
+            .await
+            .unwrap();
+        registry
+            .publish(make_test_announcement(0x03))
+            .await
+            .unwrap();
         let count = registry.count().await.unwrap();
         assert_eq!(count, registry.len() as u64);
     }
