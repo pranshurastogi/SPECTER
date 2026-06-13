@@ -1,4 +1,4 @@
-import { createPublicClient, defineChain, http, type Chain, type PublicClient } from "viem";
+import { createPublicClient, defineChain, fallback, http, type Chain, type PublicClient } from "viem";
 import { arbitrumSepolia, mainnet, sepolia } from "viem/chains";
 import { sendUseTestnet } from "./chainConfig";
 import {
@@ -173,14 +173,44 @@ if (import.meta.env.DEV) {
   }
 }
 
+// Public fallback RPCs (no API key required). Used when the primary RPC
+// (e.g. Alchemy, Infura) is down, rate-limited, or returns 401.
+const EVM_FALLBACK_RPCS: Partial<Record<EvmTxChain, string[]>> = {
+  ethereum: sendUseTestnet
+    ? [
+        "https://ethereum-sepolia-rpc.publicnode.com",
+        "https://rpc.sepolia.org",
+        "https://rpc2.sepolia.org",
+      ]
+    : [
+        "https://ethereum.publicnode.com",
+        "https://cloudflare-eth.com",
+      ],
+  arbitrum: [
+    "https://sepolia-rollup.arbitrum.io/rpc",
+    "https://arbitrum-sepolia-rpc.publicnode.com",
+  ],
+};
+
 const evmClients = new Map<EvmTxChain, PublicClient>();
 
 export function getPublicClientForEvm(chain: EvmTxChain): PublicClient {
   const existing = evmClients.get(chain);
   if (existing) return existing;
+
+  const primaryUrl = getRpcUrlForEvm(chain);
+  const fallbacks = EVM_FALLBACK_RPCS[chain] ?? [];
+  // Exclude fallbacks that duplicate the primary to avoid redundant retries.
+  const uniqueFallbacks = fallbacks.filter((u) => u !== primaryUrl);
+
+  const transport =
+    uniqueFallbacks.length > 0
+      ? fallback([http(primaryUrl), ...uniqueFallbacks.map((u) => http(u))])
+      : http(primaryUrl);
+
   const client = createPublicClient({
     chain: getViemChainForEvm(chain),
-    transport: http(getRpcUrlForEvm(chain)),
+    transport,
   });
   evmClients.set(chain, client);
   return client;
