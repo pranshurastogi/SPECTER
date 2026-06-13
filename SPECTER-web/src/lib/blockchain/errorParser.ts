@@ -69,6 +69,20 @@ export function parseBlockchainError(error: unknown): ParsedError {
     };
   }
 
+  // RPC endpoint unauthorized (Alchemy/Infura API key expired, revoked, or domain-restricted)
+  // MetaMask surfaces this as code -32006 with httpStatus 401.
+  if (
+    err?.code === -32006 ||
+    err?.data?.httpStatus === 401 ||
+    err?.message?.toLowerCase().includes('unauthorized')
+  ) {
+    return {
+      title: 'RPC endpoint unauthorized',
+      message: 'The RPC provider rejected the request (401 Unauthorized). The API key may be expired or domain-restricted. Try removing the network from MetaMask and reconnecting, or contact the app team.',
+      isUserAction: true,
+    };
+  }
+
   // JSON-RPC protocol version error (Dynamic Labs / WalletConnect provider quirk)
   if (
     err?.message?.includes('Version of JSON-RPC protocol is not supported') ||

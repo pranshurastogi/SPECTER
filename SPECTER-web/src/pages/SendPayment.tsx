@@ -1123,22 +1123,59 @@ export default function SendPayment() {
           setPublishPhase("idle");
           return;
         }
-        // Do NOT pass `chain` here — we already switched chains above, and
-        // passing `chain` causes viem to re-validate via the wallet's EIP-1193
-        // provider. Some providers (Dynamic Labs / WalletConnect) return a
-        // "JSON-RPC protocol version not supported" error during that step for
-        // standard testnets (Sepolia, Arbitrum Sepolia). Omitting `chain` also
-        // lets the wallet estimate gas natively, avoiding stale maxFeePerGas
-        // rejections on Arbitrum Sepolia.
+        const evmPublicClient = getPublicClientForEvm(evmChain);
+
+        // Pre-fetch gas params from our own public client (which has reliable
+        // fallback RPCs). Dynamic Labs routes ALL wallet client RPC calls —
+        // including fee estimation — through MetaMask's EIP-1193 provider →
+        // MetaMask's internal Infura Sepolia endpoint. When that endpoint is
+        // down or returns a JSON-RPC error, sendTransaction fails before
+        // MetaMask even shows the popup. By preparing the tx here first and
+        // passing fully-formed params, MetaMask only needs to sign — no extra
+        // RPC calls are made by the wallet client.
+        let preparedGasParams: {
+          gas?: bigint;
+          maxFeePerGas?: bigint;
+          maxPriorityFeePerGas?: bigint;
+          gasPrice?: bigint;
+        } = {};
+        try {
+          const [feeData, gasEstimate] = await Promise.all([
+            evmPublicClient.estimateFeesPerGas(),
+            evmPublicClient.estimateGas({
+              account: primaryWallet.address as `0x${string}`,
+              to: stealthResult.stealth_address as `0x${string}`,
+              value: parseEther(amt),
+            }),
+          ]);
+          if (feeData.maxFeePerGas != null && feeData.maxPriorityFeePerGas != null) {
+            // EIP-1559: add 20% buffer so minor fee spikes don't bounce the tx.
+            preparedGasParams = {
+              gas: gasEstimate,
+              maxFeePerGas: (feeData.maxFeePerGas * 120n) / 100n,
+              maxPriorityFeePerGas: (feeData.maxPriorityFeePerGas * 120n) / 100n,
+            };
+          } else if (feeData.gasPrice != null) {
+            preparedGasParams = {
+              gas: gasEstimate,
+              gasPrice: (feeData.gasPrice * 120n) / 100n,
+            };
+          }
+        } catch {
+          // If our public client also fails, fall back to letting the wallet
+          // estimate gas itself (original behaviour). The error will surface
+          // from sendTransaction if gas estimation is truly broken.
+        }
+
         txHashResult = await walletClient.sendTransaction({
           to: stealthResult.stealth_address as `0x${string}`,
           value: parseEther(amt),
+          ...preparedGasParams,
         } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
         analytics.sendTxSubmitted(evmChain);
         broadcasted = true;
         setPublishPhase("broadcasting");
         setPendingTxHash(txHashResult);
-        const evmPublicClient = getPublicClientForEvm(evmChain);
         await evmPublicClient.waitForTransactionReceipt({ hash: txHashResult as `0x${string}` });
       } else {
         if (!suiAccount) {
