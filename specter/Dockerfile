@@ -7,6 +7,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 # Copy all workspace member crates (needed for cargo build -p specter-cli)
 COPY specter-core ./specter-core
+COPY specter-chain ./specter-chain
 COPY specter-crypto ./specter-crypto
 COPY specter-stealth ./specter-stealth
 COPY specter-registry ./specter-registry
