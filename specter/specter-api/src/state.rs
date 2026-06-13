@@ -63,8 +63,11 @@ impl RelayerConfig {
 pub struct ApiConfig {
     /// Ethereum mainnet RPC URL for ENS resolution.
     pub rpc_url: String,
-    /// When true, SuiNS and other non-ENS features use testnet defaults.
+    /// General testnet flag (controls Monad/EVM testnet behaviour).
     pub use_testnet: bool,
+    /// When true, SuiNS resolution uses testnet registry/package IDs.
+    /// Defaults to `use_testnet` when `USE_SUI_TESTNET` is not set.
+    pub use_sui_testnet: bool,
     /// Optional Pinata JWT used for pinning.
     pub pinata_jwt: Option<String>,
     /// Dedicated Pinata gateway (required for IPFS retrieves).
@@ -160,6 +163,7 @@ impl Default for ApiConfig {
         Self {
             rpc_url: DEFAULT_ETH_MAINNET_RPC.into(),
             use_testnet: false,
+            use_sui_testnet: false,
             pinata_jwt: None,
             pinata_gateway_url: String::new(),
             pinata_gateway_token: String::new(),
@@ -192,12 +196,19 @@ impl ApiConfig {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
+        // USE_SUI_TESTNET controls SuiNS registry/package selection independently
+        // of USE_TESTNET (which governs EVM/Monad behaviour). Defaults to USE_TESTNET
+        // when not explicitly set so existing single-flag setups keep working.
+        let use_sui_testnet = std::env::var("USE_SUI_TESTNET")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(use_testnet);
+
         // ENS resolution always uses Ethereum mainnet — real .eth names are not on Sepolia.
         let rpc_url =
             std::env::var("ENS_RPC_URL").unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into());
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
-            if use_testnet {
+            if use_sui_testnet {
                 DEFAULT_SUI_TESTNET_RPC.into()
             } else {
                 DEFAULT_SUI_MAINNET_RPC.into()
@@ -233,6 +244,7 @@ impl ApiConfig {
         Self {
             rpc_url,
             use_testnet,
+            use_sui_testnet,
             pinata_jwt: std::env::var("PINATA_JWT").ok(),
             pinata_gateway_url,
             pinata_gateway_token,
@@ -693,7 +705,7 @@ fn build_resolver(config: &ApiConfig) -> SpecterResolver {
 fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     let mut sc = SuinsResolverConfig::new(
         &config.sui_rpc_url,
-        config.use_testnet,
+        config.use_sui_testnet,
         &config.pinata_gateway_url,
         &config.pinata_gateway_token,
     );

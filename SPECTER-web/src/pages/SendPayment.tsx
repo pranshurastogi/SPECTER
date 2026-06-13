@@ -2179,59 +2179,34 @@ export default function SendPayment() {
                       ) : (
                         <div className="flex flex-col items-center w-full relative">
                           <ReceiptConfetti />
-                          <AnimatedTicket
-                            ticketId={String(announcementId)}
-                            amount={verifiedTx ? parseFloat(verifiedTx.amountFormatted) : parseFloat(amount) || 0}
-                            date={new Date()}
-                            cardHolder={resolvedENS?.ens_name ?? "Recipient"}
-                            last4Digits={stealthResult.stealth_address.replace(/^0x/, "").slice(-4)}
-                            barcodeValue={`${announcementId}${stealthResult.stealth_address.slice(2, 14)}`}
-                            currency={getSendChainConfig(verifiedTx?.chain ?? publishChain).currencySymbol}
-                          />
-                          <div className="w-full max-w-lg mt-4 rounded-lg border border-white/[0.08] bg-black/35 p-4">
-                            <p className="font-display text-[10px] font-bold tracking-[0.16em] uppercase text-emerald-400/75 mb-3">
-                              Payment published successfully
-                            </p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                              <div className="flex items-center gap-2 text-white/70">
-                                {getChainIcon(verifiedTx?.chain ?? publishChain, 15)}
-                                <span>Chain: {getSendChainConfig(verifiedTx?.chain ?? publishChain).label}</span>
-                              </div>
-                              <div className="text-white/70">
-                                Payment ID: <span className="font-mono">{stealthResult.payment_id.slice(0, 10)}...{stealthResult.payment_id.slice(-6)}</span>
-                              </div>
-                              <div className="text-white/70">
-                                Announcement: <span className="font-mono">#{announcementId}</span>
-                              </div>
-                              <div className="text-white/70">
-                                Tx: <span className="font-mono">{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(0, 10)}...{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(-6)}</span>
-                              </div>
-                              {monadTxHash && (
-                                <div className="text-white/70 md:col-span-2 flex items-center gap-1.5">
-                                  <span>
-                                    Monad announce:{" "}
-                                    <span className="font-mono">
-                                      {monadTxHash.slice(0, 10)}...{monadTxHash.slice(-6)}
-                                    </span>
-                                  </span>
-                                  {getExplorerTxUrl("monad", monadTxHash) && (
-                                    <a
-                                      href={getExplorerTxUrl("monad", monadTxHash)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-primary/60 hover:text-primary transition-colors"
-                                      aria-label="View announce transaction on Monad explorer"
-                                    >
-                                      <ExternalLink className="h-3 w-3" />
-                                    </a>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          {(() => {
+                            const finalChain = verifiedTx?.chain ?? publishChain;
+                            const finalTxHash = verifiedTx?.txHash ?? pendingTxHash ?? undefined;
+                            const txExplorerUrl = finalTxHash ? getExplorerTxUrl(finalChain, finalTxHash) : undefined;
+                            const monadExplorerUrl = monadTxHash ? getExplorerTxUrl("monad", monadTxHash) : undefined;
+                            return (
+                              <AnimatedTicket
+                                ticketId={String(announcementId)}
+                                amount={verifiedTx ? parseFloat(verifiedTx.amountFormatted) : parseFloat(amount) || 0}
+                                date={new Date()}
+                                cardHolder={resolvedENS?.ens_name ?? "Recipient"}
+                                last4Digits={stealthResult.stealth_address.replace(/^0x/, "").slice(-4)}
+                                barcodeValue={`${announcementId}${stealthResult.stealth_address.slice(2, 14)}`}
+                                currency={getSendChainConfig(finalChain).currencySymbol}
+                                chainLabel={getSendChainConfig(finalChain).label}
+                                paymentId={stealthResult.payment_id}
+                                announcementId={announcementId ?? undefined}
+                                txHash={finalTxHash}
+                                txUrl={txExplorerUrl || undefined}
+                                monadTxHash={monadTxHash ?? undefined}
+                                monadTxUrl={monadExplorerUrl || undefined}
+                              />
+                            );
+                          })()}
                           <div className="flex flex-col gap-3 mt-6 w-full max-w-xs mx-auto">
                             <DownloadJsonButton
                               data={{
+                                network: getSendChainConfig(verifiedTx?.chain ?? publishChain).label,
                                 stealth_address: stealthResult.stealth_address,
                                 stealth_sui_address: stealthResult.stealth_sui_address,
                                 amount_evm: verifiedTx && verifiedTx.chain !== "sui" ? verifiedTx.amountFormatted : amount,
@@ -2240,14 +2215,20 @@ export default function SendPayment() {
                                 payment_id: stealthResult.payment_id,
                                 recipient: resolvedENS?.ens_name,
                                 tx_hash: verifiedTx?.txHash ?? pendingTxHash ?? undefined,
+                                tx_explorer_url: (verifiedTx?.txHash ?? pendingTxHash)
+                                  ? getExplorerTxUrl(verifiedTx?.chain ?? publishChain, verifiedTx?.txHash ?? pendingTxHash ?? "")
+                                  : undefined,
                                 monad_announce_tx_hash: monadTxHash ?? undefined,
+                                monad_announce_explorer_url: monadTxHash
+                                  ? getExplorerTxUrl("monad", monadTxHash)
+                                  : undefined,
                               }}
-                              filename="specter-payment-details.json"
-                              label="Download"
+                              filename="specter-payment-receipt.json"
+                              label="Download Receipt"
                               variant="outline"
                               size="default"
                               className="w-full"
-                              tooltip="Save receipt as JSON"
+                              tooltip="Save full receipt as JSON"
                             />
                             <Button variant="quantum" className="w-full" onClick={handleSendAnother}>
                               Send Another

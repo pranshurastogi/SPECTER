@@ -5,7 +5,7 @@ import { isEthereumWallet } from "@dynamic-labs/ethereum";
 import { useQuery } from "@tanstack/react-query";
 import { getEnsNameForAddress } from "@/lib/blockchain/ensLookup";
 import { ENS_APP_URL, ENS_CHAIN_ID, ensAppProfileUrl, ensPublicClient } from "@/lib/blockchain/ensConfig";
-import { useTestnet } from "@/lib/blockchain/chainConfig";
+import { useSuiTestnet } from "@/lib/blockchain/chainConfig";
 import { setEnsTextRecord } from "@/lib/blockchain/ensSetText";
 import { setSuinsContentHash } from "@/lib/blockchain/suinsSetContent";
 import { parseBlockchainError, formatErrorMessage } from "@/lib/blockchain/errorParser";
@@ -13,6 +13,7 @@ import {
   useCurrentAccount,
   useDisconnectWallet,
   useSuiClient,
+  useSuiClientContext,
   useSignAndExecuteTransaction,
   ConnectModal,
 } from "@mysten/dapp-kit";
@@ -407,11 +408,12 @@ export default function GenerateKeys() {
   // Sui wallet (dapp-kit)
   const suiAccount = useCurrentAccount();
   const suiClient = useSuiClient();
+  const { network: suiClientNetwork } = useSuiClientContext();
   const { mutate: disconnectSui } = useDisconnectWallet();
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const suiAddress = suiAccount?.address;
   const suiConnected = !!suiAccount;
-  const suiNetwork = useTestnet ? "testnet" : "mainnet";
+  const suiNetwork = suiClientNetwork as 'mainnet' | 'testnet';
 
   // Query SuiNS names for connected Sui wallet
   const { data: suiNamesData, isLoading: fetchingSuiNames } = useQuery({
@@ -1224,9 +1226,14 @@ export default function GenerateKeys() {
                     exit={{ opacity: 0, x: -10 }}
                     className="space-y-5"
                   >
-                    <h2 className="font-display text-lg font-semibold text-foreground">
-                      Step 3 — Attach to SuiNS
-                    </h2>
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="font-display text-lg font-semibold text-foreground">
+                        Step 3 — Attach to SuiNS
+                      </h2>
+                      <span className="shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium bg-[#4DA2FF]/10 text-[#4DA2FF] border border-[#4DA2FF]/25">
+                        {useSuiTestnet ? "Sui Testnet" : "Sui Mainnet"}
+                      </span>
+                    </div>
                     <p className="text-sm text-muted-foreground">
                       Connect a Sui wallet to link your SuiNS name to your meta-address.
                     </p>
@@ -1326,7 +1333,7 @@ export default function GenerateKeys() {
                                 </div>
                                 <Button variant="outline" size="sm" className="w-full" asChild>
                                   <a
-                                    href={useTestnet ? `https://testnet.suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}` : `https://suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}`}
+                                    href={useSuiTestnet ? `https://testnet.suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}` : `https://suins.io/name/${encodeURIComponent(suinsUploadResult.suinsName)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center gap-1.5"
@@ -1342,8 +1349,8 @@ export default function GenerateKeys() {
                         ) : (
                           <p className="text-sm text-muted-foreground">
                             No SuiNS name found. Register a name at{" "}
-                            <a href={useTestnet ? "https://testnet.suins.io/" : "https://suins.io"} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                              {useTestnet ? "testnet.suins.io" : "suins.io"}
+                            <a href={useSuiTestnet ? "https://testnet.suins.io/" : "https://suins.io"} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                              {useSuiTestnet ? "testnet.suins.io" : "suins.io"}
                             </a>{" "}
                             first.
                           </p>

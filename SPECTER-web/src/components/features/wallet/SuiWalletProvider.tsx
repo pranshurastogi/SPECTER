@@ -1,6 +1,6 @@
 import { SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { getJsonRpcFullnodeUrl } from '@mysten/sui/jsonRpc';
-import { sendUseTestnet, useTestnet } from '@/lib/blockchain/chainConfig';
+import { useSuiTestnet } from '@/lib/blockchain/chainConfig';
 import '@mysten/dapp-kit/dist/index.css';
 
 const networks = {
@@ -8,7 +8,7 @@ const networks = {
   testnet: { url: getJsonRpcFullnodeUrl('testnet') },
 };
 
-const defaultNetwork = useTestnet || sendUseTestnet ? 'testnet' : 'mainnet';
+const defaultNetwork = useSuiTestnet ? 'testnet' : 'mainnet';
 
 export function SuiWalletProvider({ children }: { children: React.ReactNode }) {
   return (

@@ -127,8 +127,10 @@ export interface HealthResponse {
   version: string;
   uptime_seconds: number;
   announcements_count: number;
-  /** When true, backend uses testnet for SuiNS (ENS is always mainnet) */
+  /** General EVM/Monad testnet flag. */
   use_testnet?: boolean;
+  /** When true, backend resolves SuiNS against testnet registry (ENS is always mainnet). */
+  use_sui_testnet?: boolean;
 }
 
 export interface GenerateKeysResponse {
