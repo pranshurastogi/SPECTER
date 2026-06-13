@@ -96,12 +96,19 @@ pub struct DiscoveryDto {
     pub announcement_id: u64,
     /// Timestamp
     pub timestamp: u64,
-    /// Optional transaction hash
+    /// Monad announce() tx hash (registry row)
     pub tx_hash: Option<String>,
-    /// Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Source-chain payment tx hash, decrypted from the metadata blob
+    /// (present only when the recipient could decrypt the blob).
+    pub payment_tx_hash: Option<String>,
+    /// Amount in base units (hex uint256, e.g. "0x...0de0b6b3a7640000"),
+    /// decrypted from the metadata blob. Empty when unavailable.
     pub amount: String,
-    /// Chain identifier (e.g. "ethereum", "sui")
+    /// Chain name as stored at publish time (e.g. "monad-testnet", "sui")
     pub chain: String,
+    /// EIP-155 chain ID of the payment's source chain, decrypted from the
+    /// metadata blob — the most reliable chain identifier for clients.
+    pub source_chain_id: Option<u64>,
 }
 
 /// Scan statistics.

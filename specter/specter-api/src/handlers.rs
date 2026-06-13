@@ -147,8 +147,10 @@ pub async fn scan_payments(
             announcement_id: d.announcement.id,
             timestamp: d.announcement.timestamp,
             tx_hash: d.announcement.tx_hash.clone(),
+            payment_tx_hash: d.announcement.payment_tx_hash.clone(),
             amount: d.announcement.amount.clone().unwrap_or_default(),
             chain: d.announcement.chain.clone().unwrap_or_default(),
+            source_chain_id: d.announcement.source_chain_id,
         })
         .collect();
 
