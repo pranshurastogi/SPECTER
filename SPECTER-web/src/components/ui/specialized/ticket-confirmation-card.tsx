@@ -83,28 +83,29 @@ const ConfettiExplosion = () => {
       <style>
         {`
           @keyframes fall {
-            0% {
-                transform: translateY(-10vh) rotate(0deg);
-                opacity: 1;
-            }
-            100% {
-              transform: translateY(110vh) rotate(720deg);
-              opacity: 0;
-            }
+            0%   { transform: translateY(-5vh) rotate(0deg) translateX(0px);   opacity: 1; }
+            25%  { transform: translateY(25vh) rotate(180deg) translateX(12px); opacity: 1; }
+            50%  { transform: translateY(55vh) rotate(360deg) translateX(-8px); opacity: 0.9; }
+            75%  { transform: translateY(80vh) rotate(540deg) translateX(10px); opacity: 0.6; }
+            100% { transform: translateY(115vh) rotate(720deg) translateX(-5px); opacity: 0; }
           }
         `}
       </style>
-      <div className="fixed inset-0 z-0 pointer-events-none" aria-hidden="true">
+      <div className="fixed inset-0 z-[9999] pointer-events-none" aria-hidden="true">
         {Array.from({ length: confettiCount }).map((_, i) => (
           <div
             key={i}
-            className="absolute w-2 h-4"
+            className="absolute"
             style={{
+              width: `${4 + Math.random() * 6}px`,
+              height: `${8 + Math.random() * 10}px`,
               left: `${Math.random() * 100}%`,
-              top: `${-20 + Math.random() * 10}%`,
+              top: `${-5 + Math.random() * 5}%`,
               backgroundColor: colors[i % colors.length],
+              borderRadius: i % 3 === 0 ? '50%' : '2px',
               transform: `rotate(${Math.random() * 360}deg)`,
-              animation: `fall ${2.5 + Math.random() * 2.5}s ${Math.random() * 2}s linear forwards`,
+              animation: `fall ${2 + Math.random() * 3}s ${Math.random() * 1.5}s ease-in forwards`,
+              opacity: 0.9,
             }}
           />
         ))}

@@ -32,7 +32,7 @@
  * the core SPECTER protocol surface.
  */
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -57,6 +57,8 @@ import {
   ShieldCheck,
   LifeBuoy,
   X,
+  ImageDown,
+  FileDown,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
@@ -65,6 +67,8 @@ import { TooltipLabel } from "@/components/ui/specialized/tooltip-label";
 import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { PixelCanvas } from "@/components/ui/animations/pixel-canvas";
 import { AnimatedTicket } from "@/components/ui/specialized/ticket-confirmation-card";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import {
   api,
   ApiError,
@@ -342,6 +346,50 @@ function getFundingUrl(chain: TxChain): string {
 }
 
 export default function SendPayment() {
+  const ticketRef = useRef<HTMLDivElement>(null);
+
+  const captureTicketCanvas = async () => {
+    const el = ticketRef.current;
+    if (!el) return null;
+    return html2canvas(el, {
+      backgroundColor: null,
+      scale: 2,
+      useCORS: true,
+      logging: false,
+    });
+  };
+
+  const handleSaveImage = async () => {
+    try {
+      const canvas = await captureTicketCanvas();
+      if (!canvas) return;
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "specter-receipt.png";
+      a.click();
+      toast.success("Receipt saved as PNG");
+    } catch {
+      toast.error("Could not save image. Try again.");
+    }
+  };
+
+  const handleSavePdf = async () => {
+    try {
+      const canvas = await captureTicketCanvas();
+      if (!canvas) return;
+      const imgData = canvas.toDataURL("image/png");
+      const pxW = canvas.width / 2;
+      const pxH = canvas.height / 2;
+      const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [pxW, pxH] });
+      pdf.addImage(imgData, "PNG", 0, 0, pxW, pxH);
+      pdf.save("specter-receipt.pdf");
+      toast.success("Receipt saved as PDF");
+    } catch {
+      toast.error("Could not save PDF. Try again.");
+    }
+  };
+
   const [step, setStep] = useState<SendStep>("input");
   const [ensName, setEnsName] = useState("");
   const [amount, setAmount] = useState("");
@@ -2177,8 +2225,7 @@ export default function SendPayment() {
                           </TabsContent>
                         </Tabs>
                       ) : (
-                        <div className="flex flex-col items-center w-full relative">
-                          <ReceiptConfetti />
+                        <div className="flex flex-col items-center w-full">
                           {(() => {
                             const finalChain = verifiedTx?.chain ?? publishChain;
                             const finalTxHash = verifiedTx?.txHash ?? pendingTxHash ?? undefined;
@@ -2186,6 +2233,7 @@ export default function SendPayment() {
                             const monadExplorerUrl = monadTxHash ? getExplorerTxUrl("monad", monadTxHash) : undefined;
                             return (
                               <AnimatedTicket
+                                ref={ticketRef}
                                 ticketId={String(announcementId)}
                                 amount={verifiedTx ? parseFloat(verifiedTx.amountFormatted) : parseFloat(amount) || 0}
                                 date={new Date()}
@@ -2204,32 +2252,29 @@ export default function SendPayment() {
                             );
                           })()}
                           <div className="flex flex-col gap-3 mt-6 w-full max-w-xs mx-auto">
-                            <DownloadJsonButton
-                              data={{
-                                network: getSendChainConfig(verifiedTx?.chain ?? publishChain).label,
-                                stealth_address: stealthResult.stealth_address,
-                                stealth_sui_address: stealthResult.stealth_sui_address,
-                                amount_evm: verifiedTx && verifiedTx.chain !== "sui" ? verifiedTx.amountFormatted : amount,
-                                amount_sui: verifiedTx?.chain === "sui" ? verifiedTx.amountFormatted : undefined,
-                                announcement_id: announcementId,
-                                payment_id: stealthResult.payment_id,
-                                recipient: resolvedENS?.ens_name,
-                                tx_hash: verifiedTx?.txHash ?? pendingTxHash ?? undefined,
-                                tx_explorer_url: (verifiedTx?.txHash ?? pendingTxHash)
-                                  ? getExplorerTxUrl(verifiedTx?.chain ?? publishChain, verifiedTx?.txHash ?? pendingTxHash ?? "")
-                                  : undefined,
-                                monad_announce_tx_hash: monadTxHash ?? undefined,
-                                monad_announce_explorer_url: monadTxHash
-                                  ? getExplorerTxUrl("monad", monadTxHash)
-                                  : undefined,
-                              }}
-                              filename="specter-payment-receipt.json"
-                              label="Download Receipt"
-                              variant="outline"
-                              size="default"
-                              className="w-full"
-                              tooltip="Save full receipt as JSON"
-                            />
+                            <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground text-center">
+                              Save Receipt
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <Button
+                                variant="outline"
+                                size="default"
+                                className="w-full"
+                                onClick={handleSaveImage}
+                              >
+                                <ImageDown className="h-4 w-4 mr-2" />
+                                PNG
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="default"
+                                className="w-full"
+                                onClick={handleSavePdf}
+                              >
+                                <FileDown className="h-4 w-4 mr-2" />
+                                PDF
+                              </Button>
+                            </div>
                             <Button variant="quantum" className="w-full" onClick={handleSendAnother}>
                               Send Another
                               <ArrowRight className="ml-2 h-4 w-4" />
