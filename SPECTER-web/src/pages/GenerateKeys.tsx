@@ -331,6 +331,11 @@ export default function GenerateKeys() {
   const [suinsTxDigest, setSuinsTxDigest] = useState<string | null>(null);
   const [suinsUploadResult, setSuinsUploadResult] = useState<{ cid: string; text_record: string; suinsName: string } | null>(null);
   const [suinsConnectOpen, setSuinsConnectOpen] = useState(false);
+  const [suinsError, setSuinsError] = useState<{
+    type: 'name_not_found' | 'nft_not_found' | 'wrong_network' | 'tx_failed';
+    message: string;
+    detail?: string;
+  } | null>(null);
 
   // EVM wallet (Dynamic Labs)
   const { primaryWallet, setShowAuthFlow, handleLogOut } = useDynamicContext();
@@ -531,6 +536,11 @@ export default function GenerateKeys() {
     setSuinsUploading(true);
     setSuinsUploadResult(null);
     setSuinsTxDigest(null);
+    setSuinsError(null);
+
+    const networkLabel = suiNetwork === 'testnet' ? 'Sui Testnet' : 'Sui Mainnet';
+    const suinsPortalUrl = suiNetwork === 'testnet' ? 'https://testnet.suins.io' : 'https://suins.io';
+
     try {
       // 1. Upload meta-address to IPFS (backend)
       const res = await api.uploadIpfs({
@@ -539,15 +549,53 @@ export default function GenerateKeys() {
       });
       const textRecordValue = res.text_record; // ipfs://<CID>
 
-      // 2. Get name record for NFT ID
+      // 2. Look up the name record to get NFT ID
       const suinsClient = new SuinsClient({ client: suiClient, network: suiNetwork });
-      const nameRecord = await suinsClient.getNameRecord(primarySuiName);
-      if (!nameRecord?.nftId) {
-        toast.error("Could not find SuiNS name record NFT");
+      let nameRecord: Awaited<ReturnType<typeof suinsClient.getNameRecord>>;
+      try {
+        nameRecord = await suinsClient.getNameRecord(primarySuiName);
+      } catch (lookupErr) {
+        // Registry lookup failed — likely RPC error or name truly absent
+        const errStr = String(lookupErr);
+        const isNotFound = errStr.toLowerCase().includes('not found') || errStr.toLowerCase().includes('not registered');
+        setSuinsError({
+          type: 'name_not_found',
+          message: `"${primarySuiName}" is not registered on ${networkLabel}.`,
+          detail: isNotFound
+            ? `Register it at ${suinsPortalUrl} first, then come back.`
+            : `Registry lookup failed: ${errStr.slice(0, 120)}`,
+        });
         return;
       }
 
-      // 3. Set contentHash on-chain
+      if (!nameRecord?.nftId) {
+        setSuinsError({
+          type: 'name_not_found',
+          message: `"${primarySuiName}" has no active registration on ${networkLabel}.`,
+          detail: `Register it at ${suinsPortalUrl} first, then come back.`,
+        });
+        return;
+      }
+
+      // 3. Confirm the NFT object actually exists on-chain before building the tx.
+      //    A stale registry entry can reference a burned/expired NFT — fail early
+      //    with a clear message instead of a confusing wallet/RPC error.
+      try {
+        const nftObj = await suiClient.getObject({ id: nameRecord.nftId, options: { showType: true } });
+        // SuiObjectResponse has `data` when the object exists, `error` when it doesn't
+        if (!nftObj?.data || nftObj?.error) {
+          throw new Error('not_exists');
+        }
+      } catch {
+        setSuinsError({
+          type: 'nft_not_found',
+          message: `SuiNS NFT not found on ${networkLabel}.`,
+          detail: `The registry has a record for "${primarySuiName}" but the NFT (${nameRecord.nftId.slice(0, 10)}…) doesn't exist on-chain. It may have expired or been burned. Re-register the name at ${suinsPortalUrl} to get a fresh NFT.`,
+        });
+        return;
+      }
+
+      // 4. Set contentHash on-chain
       const digest = await setSuinsContentHash({
         suinsName: primarySuiName,
         nftId: nameRecord.nftId,
@@ -560,7 +608,7 @@ export default function GenerateKeys() {
       setSuinsTxDigest(digest);
       toast.info("Transaction submitted. Waiting for confirmation…");
 
-      // 4. Wait for tx confirmation
+      // 5. Wait for tx confirmation
       await suiClient.waitForTransaction({ digest });
 
       setSuinsUploadResult({ cid: res.cid, text_record: textRecordValue, suinsName: primarySuiName });
@@ -569,11 +617,25 @@ export default function GenerateKeys() {
       analytics.setupSuinsAttached(primarySuiName);
       toast.success("Meta address attached to SuiNS.");
     } catch (err) {
-      if (err instanceof ApiError) {
-        toast.error(err.message);
+      const errStr = String(err);
+      // Detect the "object does not exist" RPC error from the wallet/SDK
+      const isObjectMissing =
+        errStr.includes('notExists') ||
+        errStr.includes('does not exist') ||
+        errStr.includes('not found') ||
+        errStr.toLowerCase().includes('object_not_found');
+
+      if (isObjectMissing) {
+        setSuinsError({
+          type: 'nft_not_found',
+          message: `SuiNS NFT not found on ${networkLabel}.`,
+          detail: `The on-chain object referenced by your SuiNS registration doesn't exist on ${networkLabel}. This usually means the name was registered on the other network, or the NFT has expired. Re-register at ${suinsPortalUrl}.`,
+        });
+      } else if (err instanceof ApiError) {
+        setSuinsError({ type: 'tx_failed', message: err.message });
       } else {
         const parsed = parseBlockchainError(err);
-        toast.error(formatErrorMessage(parsed));
+        setSuinsError({ type: 'tx_failed', message: formatErrorMessage(parsed), detail: errStr.slice(0, 200) });
       }
       setSuinsTxDigest(null);
     } finally {
@@ -1295,6 +1357,35 @@ export default function GenerateKeys() {
                             </p>
                             {!suinsUploadResult ? (
                               <div className="space-y-2">
+                                {/* Inline error card */}
+                                {suinsError && (
+                                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 space-y-1.5">
+                                    <div className="flex items-start gap-2">
+                                      <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                                      <p className="text-sm font-medium text-destructive leading-snug">
+                                        {suinsError.message}
+                                      </p>
+                                    </div>
+                                    {suinsError.detail && (
+                                      <p className="text-xs text-muted-foreground pl-6 leading-relaxed">
+                                        {suinsError.detail}
+                                      </p>
+                                    )}
+                                    {(suinsError.type === 'name_not_found' || suinsError.type === 'nft_not_found') && (
+                                      <div className="pl-6 pt-0.5">
+                                        <a
+                                          href={useSuiTestnet ? 'https://testnet.suins.io' : 'https://suins.io'}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                        >
+                                          Open {useSuiTestnet ? 'testnet.suins.io' : 'suins.io'}
+                                          <ExternalLink className="h-3 w-3" />
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                                 {suinsTxDigest ? (
                                   <div className="p-3 rounded-lg bg-muted/50 border border-muted flex items-center gap-2">
                                     <Loader2 className="h-4 w-4 animate-spin shrink-0" />
@@ -1305,7 +1396,7 @@ export default function GenerateKeys() {
                                     <Button
                                       variant="quantum"
                                       size="default"
-                                      onClick={handleAttachToSuins}
+                                      onClick={() => { setSuinsError(null); handleAttachToSuins(); }}
                                       disabled={suinsUploading}
                                       className="w-full"
                                     >
@@ -1314,7 +1405,7 @@ export default function GenerateKeys() {
                                       ) : (
                                         <>
                                           <Upload className="h-4 w-4 mr-2" />
-                                          Attach to SuiNS
+                                          {suinsError ? 'Retry' : 'Attach to SuiNS'}
                                         </>
                                       )}
                                     </Button>
