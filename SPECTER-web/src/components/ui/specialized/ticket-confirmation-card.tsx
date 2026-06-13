@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, formatCryptoAmount } from "@/lib/utils";
 
 // --- Helper Components ---
@@ -125,6 +125,20 @@ export interface TicketProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Currency for amount display (default "USD"). Use "ETH" or "SUI" for crypto (shows icon). */
   currency?: string;
   icon?: React.ReactNode;
+  /** Network + chain label, e.g. "Sui Testnet" or "Sepolia". */
+  chainLabel?: string;
+  /** Full payment ID (shown truncated). */
+  paymentId?: string;
+  /** Announcement registry ID. */
+  announcementId?: string | number;
+  /** Source-chain transaction hash. */
+  txHash?: string;
+  /** Explorer URL for txHash — renders as a hyperlink. */
+  txUrl?: string;
+  /** Monad announce() transaction hash. */
+  monadTxHash?: string;
+  /** Explorer URL for monadTxHash. */
+  monadTxUrl?: string;
 }
 
 const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
@@ -138,6 +152,13 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
       last4Digits,
       barcodeValue,
       currency = "USD",
+      chainLabel,
+      paymentId,
+      announcementId,
+      txHash,
+      txUrl,
+      monadTxHash,
+      monadTxUrl,
       ...props
     },
     ref
@@ -232,6 +253,82 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
             <DashedLine />
 
             <Barcode value={barcodeValue} />
+
+            {/* Payment details — only rendered when at least one field is provided */}
+            {(chainLabel || paymentId || announcementId != null || txHash || monadTxHash) && (
+              <>
+                <DashedLine />
+                <div className="space-y-2 text-left">
+                  <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground">
+                    Transaction Details
+                  </p>
+                  <dl className="space-y-1.5">
+                    {chainLabel && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground shrink-0">Network</dt>
+                        <dd className="text-xs font-medium font-mono truncate text-right">{chainLabel}</dd>
+                      </div>
+                    )}
+                    {announcementId != null && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground shrink-0">Announcement</dt>
+                        <dd className="text-xs font-mono text-right">#{announcementId}</dd>
+                      </div>
+                    )}
+                    {paymentId && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground shrink-0">Payment ID</dt>
+                        <dd className="text-xs font-mono text-right truncate max-w-[160px]" title={paymentId}>
+                          {paymentId.slice(0, 8)}…{paymentId.slice(-6)}
+                        </dd>
+                      </div>
+                    )}
+                    {txHash && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground shrink-0">Tx</dt>
+                        <dd className="text-xs font-mono text-right flex items-center gap-1 min-w-0">
+                          <span className="truncate" title={txHash}>
+                            {txHash.slice(0, 10)}…{txHash.slice(-6)}
+                          </span>
+                          {txUrl && (
+                            <a
+                              href={txUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 text-primary/60 hover:text-primary transition-colors"
+                              aria-label="View transaction in explorer"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </dd>
+                      </div>
+                    )}
+                    {monadTxHash && (
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-xs text-muted-foreground shrink-0">Monad announce</dt>
+                        <dd className="text-xs font-mono text-right flex items-center gap-1 min-w-0">
+                          <span className="truncate" title={monadTxHash}>
+                            {monadTxHash.slice(0, 10)}…{monadTxHash.slice(-6)}
+                          </span>
+                          {monadTxUrl && (
+                            <a
+                              href={monadTxUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="shrink-0 text-primary/60 hover:text-primary transition-colors"
+                              aria-label="View Monad announcement in explorer"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </>

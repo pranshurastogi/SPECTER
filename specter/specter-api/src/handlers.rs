@@ -547,6 +547,7 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
         uptime_seconds: uptime,
         announcements_count: count,
         use_testnet: state.config.use_testnet,
+        use_sui_testnet: state.config.use_sui_testnet,
         relayer_ok,
         turso_ok,
         poller_last_block,

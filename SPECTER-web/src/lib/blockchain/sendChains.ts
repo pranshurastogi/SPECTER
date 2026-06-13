@@ -1,6 +1,6 @@
 import { createPublicClient, defineChain, fallback, http, type Chain, type PublicClient } from "viem";
 import { arbitrumSepolia, mainnet, sepolia } from "viem/chains";
-import { sendUseTestnet } from "./chainConfig";
+import { sendUseTestnet, useSuiTestnet } from "./chainConfig";
 import {
   CHAIN_STANDARDS,
   EIP155_CHAIN_IDS,
@@ -101,8 +101,8 @@ const EVM_CONFIG: Record<EvmTxChain, {
 
 const SUI_CONFIG: SendChainConfig = {
   id: "sui",
-  label: CHAIN_STANDARDS.sui.label,
-  shortLabel: CHAIN_STANDARDS.sui.shortLabel,
+  label: useSuiTestnet ? "Sui Testnet" : "Sui Mainnet",
+  shortLabel: useSuiTestnet ? "Sui Testnet" : "Sui",
   currencySymbol: CHAIN_STANDARDS.sui.currencySymbol,
   isEvm: false,
   colorClass: "text-[#4DA2FF]",
@@ -154,7 +154,7 @@ export function getRpcUrlForEvm(chain: EvmTxChain): string {
 export function getExplorerTxUrl(chain: TxChain, txHash: string): string {
   if (!txHash) return "";
   if (chain === "sui") {
-    const base = sendUseTestnet ? "https://suiscan.xyz/testnet/tx/" : "https://suiscan.xyz/mainnet/tx/";
+    const base = useSuiTestnet ? "https://suiscan.xyz/testnet/tx/" : "https://suiscan.xyz/mainnet/tx/";
     return `${base}${txHash}`;
   }
   const explorer = EVM_CONFIG[chain].chain.blockExplorers?.default?.url ?? "";

@@ -365,8 +365,10 @@ pub struct HealthResponse {
     pub version: String,
     pub uptime_seconds: u64,
     pub announcements_count: u64,
-    /// When true, backend uses testnet for SuiNS (ENS is always mainnet)
+    /// General EVM/Monad testnet flag.
     pub use_testnet: bool,
+    /// When true, backend resolves SuiNS against testnet registry (ENS is always mainnet).
+    pub use_sui_testnet: bool,
     /// True when RELAYER_PRIVATE_KEY is set and valid.
     pub relayer_ok: bool,
     /// True when Turso responds to a SELECT 1.
