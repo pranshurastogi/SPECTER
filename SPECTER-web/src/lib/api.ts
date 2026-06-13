@@ -28,6 +28,20 @@ function getBaseUrl(): string {
   return "http://localhost:3001";
 }
 
+function getApiKey(): string | undefined {
+  const key = import.meta.env.VITE_API_KEY;
+  return key && typeof key === "string" && key.length > 0 ? key : undefined;
+}
+
+/**
+ * Default request timeout. Publish is slower than everything else because the
+ * server relays announce() to Monad and waits for the receipt; scan can churn
+ * through thousands of ML-KEM decapsulations.
+ */
+const DEFAULT_TIMEOUT_MS = 30_000;
+const PUBLISH_TIMEOUT_MS = 120_000;
+const SCAN_TIMEOUT_MS = 120_000;
+
 async function handleResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let body: unknown = null;
@@ -57,9 +71,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 async function request<T>(
   path: string,
-  options: RequestInit & { query?: Record<string, string | number | undefined> } = {}
+  options: RequestInit & {
+    query?: Record<string, string | number | undefined>;
+    timeoutMs?: number;
+  } = {}
 ): Promise<T> {
-  const { query, ...init } = options;
+  const { query, timeoutMs = DEFAULT_TIMEOUT_MS, ...init } = options;
   const base = getBaseUrl();
   let url = `${base}${path}`;
   if (query) {
@@ -71,20 +88,37 @@ async function request<T>(
     if (qs) url += `?${qs}`;
   }
 
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string>),
   };
 
+  // Production backends gate every mutating endpoint behind X-API-Key.
+  const method = (init.method ?? "GET").toUpperCase();
+  const apiKey = getApiKey();
+  if (apiKey && method !== "GET") {
+    headers["X-API-Key"] = apiKey;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const res = await fetch(url, { ...init, headers });
-    return handleResponse<T>(res);
+    const res = await fetch(url, { ...init, headers, signal: controller.signal });
+    return await handleResponse<T>(res);
   } catch (err) {
     if (err instanceof ApiError) throw err;
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(
+        `SPECTER API timed out after ${Math.round(timeoutMs / 1000)}s. The request may still complete server-side — retry to check.`
+      );
+    }
     if (err instanceof TypeError && err.message === "Failed to fetch") {
       throw new ApiError("Cannot reach SPECTER API. Please try again in a moment.");
     }
     throw new ApiError(err instanceof Error ? err.message : "Unknown error");
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -152,9 +186,16 @@ export interface DiscoveryDto {
   announcement_id: number;
   timestamp: number;
   channel_id?: string | null;
+  /** Monad announce() tx hash from the registry row. */
   tx_hash?: string | null;
+  /** Source-chain payment tx hash, decrypted from the metadata blob. */
+  payment_tx_hash?: string | null;
+  /** Amount in base units (hex uint256 like "0x...de0b6b3a7640000"). May be "" when unavailable. */
   amount: string;
+  /** Chain name as stored at publish time (e.g. "monad-testnet", "sui"). May be "". */
   chain: string;
+  /** EIP-155 chain ID of the payment's source chain — most reliable chain identifier. */
+  source_chain_id?: number | null;
 }
 
 export interface ScanStatsDto {
@@ -204,22 +245,43 @@ export interface UploadIpfsResponse {
  * publishes the announcement it built, ensuring the view tag is correct.
  *
  * Fallback path: pass the full `announcement` DTO returned by `/stealth/create`
- * (use only if the server lost the pending entry, e.g. after a restart).
+ * (use only if the server lost the pending entry, e.g. after a restart or
+ * 24h TTL expiry). On the fallback path the metadata blob is NOT encrypted.
  *
- * The previously-supported loose `ephemeral_key` + `view_tag` fields have
- * been removed in favor of `payment_id`.
+ * Field semantics (must match `specter-api/src/dto.rs::PublishAnnouncementRequest`):
+ *  - `payment_tx_hash`  — the SOURCE-CHAIN payment tx hash. This is what the
+ *    server verifies via `CHAIN_RPC_<CHAIN>` and encodes into the encrypted
+ *    metadata blob.
+ *  - `tx_hash`          — the Monad announce() tx hash. Only required in dev
+ *    mode (no relayer); ignored when the server-side relayer is active.
+ *  - `amount`           — base units (wei / MIST) as a decimal string, NOT a
+ *    human-formatted amount. The server compares it against tx.value.
+ *  - `chain`            — backend chain name (e.g. "sepolia", "monad-testnet"),
+ *    must match the server's CHAIN_RPC_* map keys.
+ *  - `source_chain_id`  — EIP-155 chain ID of the payment's source chain.
  */
 export interface PublishAnnouncementRequest {
   payment_id?: string;
   announcement?: AnnouncementDto;
-  tx_hash: string;
+  /** Monad announce tx hash — dev-mode fallback only; ignored when relayer is active. */
+  tx_hash?: string | null;
+  /** Source-chain payment tx hash — verified server-side when CHAIN_RPC_<CHAIN> is set. */
+  payment_tx_hash?: string | null;
+  /** EIP-155 chain ID where `payment_tx_hash` was broadcast. */
+  source_chain_id?: number | null;
+  /** Amount in base units (wei/MIST), decimal string. */
   amount?: string | null;
+  /** Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet", "sui"). */
   chain?: string | null;
+  /** Optional ERC-20 token contract for token-payment verification. */
+  token?: string | null;
 }
 
 export interface PublishAnnouncementResponse {
   id: number;
   success: boolean;
+  /** Monad tx hash of the announce() call (present when the relayer broadcast it). */
+  monad_tx_hash?: string | null;
 }
 
 export interface ListAnnouncementsQuery {
@@ -267,6 +329,7 @@ export const api = {
     return request<ScanResponse>("/api/v1/stealth/scan", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: SCAN_TIMEOUT_MS,
     });
   },
 
@@ -303,6 +366,7 @@ export const api = {
     return request<PublishAnnouncementResponse>("/api/v1/registry/announcements", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: PUBLISH_TIMEOUT_MS,
     });
   },
 

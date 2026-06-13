@@ -1,0 +1,40 @@
+# Primary scan query — recipients call this with their own view tag.
+#
+# The view tag is the first byte of SHAKE-256(shared_secret). Since there are
+# 256 possible values, ~99.6% of non-matching events are filtered here before
+# attempting the expensive ML-KEM decapsulation.
+#
+# Variables:
+#   $viewTag   — recipient's computed view tag (0–255)
+#   $fromBlock — last checkpoint block (start from 0 for a full scan)
+#   $limit     — max results per page (default 1000; paginate via fromBlock)
+#
+# Usage example (GraphQL HTTP):
+#   { "viewTag": 42, "fromBlock": "36100042", "limit": 500 }
+
+query ScanByViewTag(
+  $viewTag: Int!
+  $fromBlock: numeric = "0"
+  $limit: Int = 1000
+) {
+  AnnouncementEvent(
+    where: {
+      viewTag: { _eq: $viewTag }
+      blockNumber: { _gte: $fromBlock }
+    }
+    order_by: { blockNumber: asc, logIndex: asc }
+    limit: $limit
+  ) {
+    id
+    stealthAddress
+    ephemeralPubKey
+    viewTag
+    txHash
+    sourceChainId
+    amount
+    blockNumber
+    blockTimestamp
+    transactionHash
+    logIndex
+  }
+}

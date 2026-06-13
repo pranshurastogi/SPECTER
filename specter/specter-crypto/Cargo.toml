@@ -20,6 +20,9 @@ zeroize = { workspace = true }
 subtle = { workspace = true }
 rand = { workspace = true }
 
+# AEAD encryption for on-chain metadata
+aes-gcm = { workspace = true }
+
 # Utilities
 hex = { workspace = true }
 

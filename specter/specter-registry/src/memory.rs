@@ -38,6 +38,9 @@ pub struct MemoryRegistry {
     view_tag_index: DashMap<u8, Vec<u64>>,
     /// Tx hash index: normalized tx_hash → announcement ID (for duplicate rejection)
     tx_hash_index: DashMap<String, u64>,
+    /// Payment HMAC dedup index: payment_tx_hash_hmac → announcement ID
+    /// (mirrors the Turso UNIQUE index used by the reserve flow).
+    payment_hmac_index: DashMap<Vec<u8>, u64>,
     /// Next announcement ID
     next_id: AtomicU64,
     /// Registry statistics
@@ -51,6 +54,7 @@ impl MemoryRegistry {
             announcements: DashMap::new(),
             view_tag_index: DashMap::new(),
             tx_hash_index: DashMap::new(),
+            payment_hmac_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -64,6 +68,7 @@ impl MemoryRegistry {
             announcements: DashMap::with_capacity(capacity),
             view_tag_index: DashMap::with_capacity(256), // One bucket per view tag
             tx_hash_index: DashMap::new(),
+            payment_hmac_index: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -84,6 +89,7 @@ impl MemoryRegistry {
         self.announcements.clear();
         self.view_tag_index.clear();
         self.tx_hash_index.clear();
+        self.payment_hmac_index.clear();
         self.next_id.store(1, Ordering::SeqCst);
         *self.stats.write() = AnnouncementStats::new();
     }
@@ -148,6 +154,51 @@ impl MemoryRegistry {
         }
 
         Ok(imported)
+    }
+
+    /// Reserves a dedup slot (parity with the Turso reserve flow). Inserts the
+    /// announcement with `tx_hash = None`; a duplicate `payment_tx_hash_hmac`
+    /// returns `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        if let Some(hmac) = &ann.payment_tx_hash_hmac {
+            if self.payment_hmac_index.contains_key(hmac) {
+                return Err(SpecterError::DuplicatePayment);
+            }
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut stored = ann.clone();
+        stored.id = id;
+        stored.tx_hash = None;
+
+        self.view_tag_index
+            .entry(stored.view_tag)
+            .or_default()
+            .push(id);
+        if let Some(hmac) = &stored.payment_tx_hash_hmac {
+            self.payment_hmac_index.insert(hmac.clone(), id);
+        }
+        self.stats.write().add(&stored);
+        self.announcements.insert(id, stored);
+        Ok(id)
+    }
+
+    /// Finalizes a reserved announcement by recording the relay tx hash.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        _view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        match self.announcements.get_mut(&id) {
+            Some(mut entry) => {
+                let normalized = Self::normalize_tx_hash(monad_tx_hash);
+                entry.tx_hash = Some(normalized.clone());
+                self.tx_hash_index.insert(normalized, id);
+                Ok(())
+            }
+            None => Err(SpecterError::AnnouncementNotFound(id.to_string())),
+        }
     }
 }
 
@@ -510,5 +561,154 @@ mod tests {
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
         assert_eq!(id3, 3);
+    }
+
+    #[tokio::test]
+    async fn duplicate_tx_hash_is_rejected() {
+        let registry = MemoryRegistry::new();
+        let mut ann1 = make_test_announcement(0x01);
+        ann1.tx_hash = Some("0xdeadbeef".to_string());
+
+        let mut ann2 = make_test_announcement(0x02);
+        ann2.tx_hash = Some("0xdeadbeef".to_string()); // same hash
+
+        registry.publish(ann1).await.unwrap();
+        let result = registry.publish(ann2).await;
+        assert!(result.is_err(), "duplicate tx_hash must be rejected");
+    }
+
+    #[tokio::test]
+    async fn duplicate_tx_hash_case_insensitive() {
+        let registry = MemoryRegistry::new();
+        let mut ann1 = make_test_announcement(0x01);
+        ann1.tx_hash = Some("0xDEADBEEF".to_string());
+
+        let mut ann2 = make_test_announcement(0x02);
+        ann2.tx_hash = Some("0xdeadbeef".to_string()); // same, different case
+
+        registry.publish(ann1).await.unwrap();
+        let result = registry.publish(ann2).await;
+        assert!(result.is_err(), "tx_hash matching must be case-insensitive");
+    }
+
+    #[tokio::test]
+    async fn empty_tx_hash_is_rejected() {
+        let registry = MemoryRegistry::new();
+        let mut ann = make_test_announcement(0x01);
+        ann.tx_hash = Some("".to_string()); // empty
+        let result = registry.publish(ann).await;
+        assert!(result.is_err(), "empty tx_hash must be rejected");
+    }
+
+    #[tokio::test]
+    async fn whitespace_only_tx_hash_is_rejected() {
+        let registry = MemoryRegistry::new();
+        let mut ann = make_test_announcement(0x01);
+        ann.tx_hash = Some("   ".to_string()); // whitespace only
+        let result = registry.publish(ann).await;
+        assert!(result.is_err(), "whitespace-only tx_hash must be rejected");
+    }
+
+    #[tokio::test]
+    async fn announcements_without_tx_hash_can_coexist() {
+        let registry = MemoryRegistry::new();
+        // Neither has a tx_hash — both must succeed
+        let id1 = registry.publish(make_test_announcement(0x01)).await.unwrap();
+        let id2 = registry.publish(make_test_announcement(0x02)).await.unwrap();
+        assert_ne!(id1, id2);
+        assert_eq!(registry.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn time_range_equal_start_end_returns_matching() {
+        let registry = MemoryRegistry::new();
+        let mut ann = make_test_announcement(0x01);
+        ann.timestamp = 500;
+        registry.publish(ann).await.unwrap();
+
+        // A range where from == to == timestamp should include the entry
+        let results = registry.get_by_time_range(500, 500).await.unwrap();
+        assert!(!results.is_empty(), "entry with timestamp==from==to should match");
+    }
+
+    #[tokio::test]
+    async fn time_range_exclusive_boundaries() {
+        let registry = MemoryRegistry::new();
+        let mut ann = make_test_announcement(0x01);
+        ann.timestamp = 100;
+        registry.publish(ann).await.unwrap();
+
+        // Range [101, 200] should NOT include timestamp=100
+        let results = registry.get_by_time_range(101, 200).await.unwrap();
+        assert!(results.is_empty(), "timestamp 100 should be outside [101, 200]");
+    }
+
+    #[tokio::test]
+    async fn stats_on_empty_registry() {
+        let registry = MemoryRegistry::new();
+        let stats = registry.stats();
+        assert_eq!(stats.total_count, 0);
+        // All view tag buckets should be zero
+        for count in &stats.view_tag_distribution {
+            assert_eq!(*count, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn stats_view_tag_distribution_all_256_values() {
+        let registry = MemoryRegistry::new();
+        // Publish one announcement for every possible view tag
+        for tag in 0u8..=255 {
+            registry.publish(make_test_announcement(tag)).await.unwrap();
+        }
+        let stats = registry.stats();
+        assert_eq!(stats.total_count, 256);
+        for (tag, &count) in stats.view_tag_distribution.iter().enumerate() {
+            assert_eq!(count, 1, "view tag {} should have exactly 1 entry", tag);
+        }
+    }
+
+    #[tokio::test]
+    async fn get_by_view_tag_after_clear_returns_empty() {
+        let registry = MemoryRegistry::new();
+        registry.publish(make_test_announcement(0x42)).await.unwrap();
+        registry.clear();
+        let result = registry.get_by_view_tag(0x42).await.unwrap();
+        assert!(result.is_empty(), "after clear, view tag index must be empty");
+    }
+
+    #[tokio::test]
+    async fn publish_after_clear_restarts_ids_at_1() {
+        let registry = MemoryRegistry::new();
+        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry.clear();
+        let new_id = registry.publish(make_test_announcement(0x03)).await.unwrap();
+        assert_eq!(new_id, 1, "IDs should restart at 1 after clear");
+    }
+
+    #[tokio::test]
+    async fn count_matches_len() {
+        let registry = MemoryRegistry::new();
+        registry.publish(make_test_announcement(0x01)).await.unwrap();
+        registry.publish(make_test_announcement(0x02)).await.unwrap();
+        registry.publish(make_test_announcement(0x03)).await.unwrap();
+        let count = registry.count().await.unwrap();
+        assert_eq!(count, registry.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn announcement_retrieved_by_id_has_correct_fields() {
+        let registry = MemoryRegistry::new();
+        let mut ann = make_test_announcement(0xab);
+        ann.tx_hash = Some("0xcafe".to_string());
+        ann.timestamp = 999_999;
+        let id = registry.publish(ann).await.unwrap();
+
+        let retrieved = registry.get_by_id(id).await.unwrap().unwrap();
+        assert_eq!(retrieved.view_tag, 0xab);
+        assert_eq!(retrieved.tx_hash.as_deref(), Some("0xcafe"));
+        assert_eq!(retrieved.timestamp, 999_999);
+        assert_eq!(retrieved.id, id);
     }
 }

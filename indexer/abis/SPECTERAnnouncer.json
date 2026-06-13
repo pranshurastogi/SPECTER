@@ -1,0 +1,33 @@
+{
+  "abi": [
+    {
+      "type": "event",
+      "name": "Announcement",
+      "inputs": [
+        { "name": "schemeId",        "type": "uint256", "indexed": true  },
+        { "name": "stealthAddress",  "type": "address", "indexed": true  },
+        { "name": "caller",          "type": "address", "indexed": true  },
+        { "name": "ephemeralPubKey", "type": "bytes",   "indexed": false },
+        { "name": "metadata",        "type": "bytes",   "indexed": false }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "announce",
+      "inputs": [
+        { "name": "stealthAddress",  "type": "address" },
+        { "name": "ephemeralPubKey", "type": "bytes"   },
+        { "name": "metadata",        "type": "bytes"   }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "deployBlock",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint256" }],
+      "stateMutability": "view"
+    }
+  ]
+}

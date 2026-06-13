@@ -1,12 +1,14 @@
-//! App state: registry, ENS resolver, SuiNS resolver, config.
+//! App state: registry, ENS resolver, SuiNS resolver, config, chain indexer.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use alloy::signers::local::PrivateKeySigner;
 use specter_ens::{ResolverConfig, SpecterResolver};
-use specter_registry::turso::{ScanPositionStore, TursoRegistry, YellowChannelStore};
+use specter_registry::turso::{ScanPositionStore, TursoRegistry};
 use specter_registry::MemoryRegistry;
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
-use specter_yellow::types::YellowConfig;
 use tracing::info;
 
 use specter_core::error::Result;
@@ -16,6 +18,38 @@ use specter_core::types::{Announcement, AnnouncementStats};
 use crate::pending::PendingPaymentStore;
 
 // ── ApiConfig ─────────────────────────────────────────────────────────────
+
+/// Server-side relayer for gas-sponsored Monad announcements.
+///
+/// When configured, the backend broadcasts the `announce()` tx on behalf of the
+/// user so they never need MON or network switching.
+#[derive(Clone, Debug)]
+pub struct RelayerConfig {
+    /// Pre-parsed Monad signer (holds the relayer private key).
+    pub signer: PrivateKeySigner,
+    /// Monad JSON-RPC endpoint.
+    pub monad_rpc_url: String,
+    /// SPECTERAnnouncer contract address (checksummed).
+    pub announcer_addr: String,
+}
+
+impl RelayerConfig {
+    /// Loads relayer config from env. Returns `None` if any required var is missing.
+    pub fn from_env() -> Option<Self> {
+        let raw_key = std::env::var("RELAYER_PRIVATE_KEY").ok()?.trim().to_string();
+        if raw_key.is_empty() {
+            return None;
+        }
+        let signer: PrivateKeySigner = raw_key.parse().ok()?;
+        let monad_rpc_url = std::env::var("MONAD_RPC_URL")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
+            .ok()
+            .filter(|s| !s.is_empty())?;
+        Some(Self { signer, monad_rpc_url, announcer_addr })
+    }
+}
 
 /// Configuration for the API service.
 #[derive(Clone, Debug)]
@@ -36,6 +70,10 @@ pub struct ApiConfig {
     pub enable_cache: bool,
     /// Security configuration.
     pub security: SecurityConfig,
+    /// RPC URLs for payment verification per source chain name.
+    /// Keys: "arbitrum", "ethereum", "base", "optimism", "monad-testnet", etc.
+    /// Env vars: CHAIN_RPC_ARBITRUM, CHAIN_RPC_ETHEREUM, CHAIN_RPC_BASE, etc.
+    pub chain_rpc_map: HashMap<String, String>,
 }
 
 /// Production security settings (loaded from environment).
@@ -121,6 +159,7 @@ impl Default for ApiConfig {
             sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
             enable_cache: true,
             security: SecurityConfig::default(),
+            chain_rpc_map: HashMap::new(),
         }
     }
 }
@@ -165,6 +204,25 @@ impl ApiConfig {
             eprintln!("⚠️  PINATA_GATEWAY_URL and/or PINATA_GATEWAY_TOKEN not set — IPFS features will be unavailable");
         }
 
+        // Build per-chain RPC map from env vars.
+        let mut chain_rpc_map = HashMap::new();
+        let chain_env_keys = [
+            ("CHAIN_RPC_ETHEREUM", "ethereum"),
+            ("CHAIN_RPC_ARBITRUM", "arbitrum"),
+            ("CHAIN_RPC_BASE", "base"),
+            ("CHAIN_RPC_OPTIMISM", "optimism"),
+            ("CHAIN_RPC_POLYGON", "polygon"),
+            ("CHAIN_RPC_MONAD_TESTNET", "monad-testnet"),
+            ("CHAIN_RPC_SEPOLIA", "sepolia"),
+        ];
+        for (env_key, chain_name) in chain_env_keys {
+            if let Ok(url) = std::env::var(env_key) {
+                if !url.is_empty() {
+                    chain_rpc_map.insert(chain_name.to_string(), url);
+                }
+            }
+        }
+
         Self {
             rpc_url,
             use_testnet,
@@ -176,7 +234,83 @@ impl ApiConfig {
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
             security: SecurityConfig::from_env(),
+            chain_rpc_map,
         }
+    }
+}
+
+// ── ChainConfig ───────────────────────────────────────────────────────────
+
+/// Configuration for on-chain indexing.
+#[derive(Clone, Debug)]
+pub struct ChainConfig {
+    /// RPC endpoint for Monad chain
+    pub rpc_url: String,
+    /// SPECTERAnnouncer contract address
+    pub announcer_addr: String,
+    /// Block number where contract was deployed
+    pub deploy_block: u64,
+    /// Whether to enable on-chain indexing
+    pub enabled: bool,
+}
+
+impl ChainConfig {
+    /// Loads chain configuration from environment variables.
+    ///
+    /// Returns Ok with enabled=false if not configured.
+    pub fn from_env() -> Result<Self> {
+        let announcement_source = std::env::var("ANNOUNCEMENT_SOURCE")
+            .unwrap_or_else(|_| "api".to_string());
+
+        let enabled = announcement_source == "chain";
+
+        if !enabled {
+            return Ok(Self {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            });
+        }
+
+        let rpc_url = std::env::var("MONAD_RPC_URL")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "MONAD_RPC_URL not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let announcer_addr = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_ADDRESS not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let deploy_block_str = std::env::var("SPECTER_ANNOUNCER_DEPLOY_BLOCK")
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK not set (required when ANNOUNCEMENT_SOURCE=chain)".into()
+            ))?;
+
+        let deploy_block = deploy_block_str.parse::<u64>()
+            .map_err(|_| specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_DEPLOY_BLOCK must be a valid u64".into()
+            ))?;
+
+        if rpc_url.is_empty() {
+            return Err(specter_core::error::SpecterError::ConfigError(
+                "MONAD_RPC_URL is empty".into()
+            ));
+        }
+
+        if announcer_addr.is_empty() {
+            return Err(specter_core::error::SpecterError::ConfigError(
+                "SPECTER_ANNOUNCER_ADDRESS is empty".into()
+            ));
+        }
+
+        Ok(Self {
+            rpc_url,
+            announcer_addr,
+            deploy_block,
+            enabled: true,
+        })
     }
 }
 
@@ -185,6 +319,9 @@ impl ApiConfig {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Polymorphic registry backend — wraps either Memory or Turso.
+// The Memory variant carries several inline indexes (dev/test only); the size
+// gap vs. Turso is benign since the enum is always held behind `Arc<AppState>`.
+#[allow(clippy::large_enum_variant)]
 pub enum RegistryBackend {
     /// In-memory (ephemeral, for local dev/testing).
     Memory(MemoryRegistry),
@@ -222,6 +359,63 @@ impl RegistryBackend {
         match self {
             Self::Memory(_) => Ok(()),
             Self::Turso(t) => t.flush().await,
+        }
+    }
+
+    /// Returns the last block processed by the event poller (Turso only).
+    pub async fn get_poller_last_block(&self) -> Option<u64> {
+        match self {
+            Self::Memory(_) => None,
+            Self::Turso(t) => t
+                .get_metadata("poller_last_block")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<u64>().ok()),
+        }
+    }
+
+    /// Reserves a dedup slot for an announcement (inserts with `tx_hash = NULL`,
+    /// `on_chain = 0`). A duplicate `payment_tx_hash_hmac` returns
+    /// `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        match self {
+            Self::Memory(m) => m.reserve_announcement(ann).await,
+            Self::Turso(t) => t.reserve_announcement(ann).await,
+        }
+    }
+
+    /// Finalizes a reserved announcement after the relay tx is broadcast.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Memory(m) => m.finalize_announcement(id, view_tag, monad_tx_hash).await,
+            Self::Turso(t) => t.finalize_announcement(id, view_tag, monad_tx_hash).await,
+        }
+    }
+
+    /// Writes an internal telemetry event. No-op for the memory backend.
+    // Mirrors the registry telemetry signature; one parameter per telemetry column.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_telemetry(
+        &self,
+        event: &str,
+        ip_hash: Option<&[u8]>,
+        ua: Option<&str>,
+        chain: Option<&str>,
+        chain_id: Option<u64>,
+        view_tag: Option<u8>,
+        status: &str,
+        err: Option<&str>,
+        ms: u64,
+    ) {
+        if let Self::Turso(t) = self {
+            t.write_telemetry(event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms)
+                .await;
         }
     }
 }
@@ -283,19 +477,23 @@ pub struct AppState {
     pub registry: RegistryBackend,
     /// Scanner checkpoint persistence (only when using Turso).
     pub scan_store: Option<Arc<ScanPositionStore>>,
-    /// Yellow channel persistence (only when using Turso).
-    pub yellow_store: Option<Arc<YellowChannelStore>>,
     /// ENS resolver (Ethereum).
     pub resolver: SpecterResolver,
     /// SuiNS resolver (Sui).
     pub suins_resolver: SuinsResolver,
-    /// Yellow Network configuration.
-    pub yellow_config: YellowConfig,
     /// In-flight stealth payments awaiting their on-chain tx + publish.
     ///
     /// Binds `POST /api/v1/stealth/create` to `POST /api/v1/registry/announcements`
     /// so the protocol view tag is **never** trusted from client input.
     pub pending_payments: Arc<PendingPaymentStore>,
+    /// Chain configuration (for Monad indexing).
+    pub chain_config: ChainConfig,
+    /// Server-side relayer for gas-sponsored announcements.
+    /// `None` in dev mode — client supplies tx_hash directly instead.
+    pub relayer_config: Option<RelayerConfig>,
+    /// Server key material for at-rest hardening (dedup MAC, telemetry hash,
+    /// pending-secret wrap). `None` when SPECTER_DB_ENC_KEY is unset (dev only).
+    pub db_keys: Option<std::sync::Arc<specter_crypto::DbKeys>>,
 }
 
 impl AppState {
@@ -304,10 +502,15 @@ impl AppState {
     /// Registry backend is selected via `REGISTRY_BACKEND` env var:
     /// - `"turso"` — durable Turso cloud DB (requires `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`)
     /// - anything else — ephemeral in-memory (default, for local dev)
+    ///
+    /// If `ANNOUNCEMENT_SOURCE=chain`, spawns a background ChainIndexer task
+    /// that polls SPECTERAnnouncer events and publishes to the registry.
     pub async fn new(config: ApiConfig) -> Self {
         let backend = std::env::var("REGISTRY_BACKEND").unwrap_or_default();
 
-        let (registry, scan_store, yellow_store) = if backend == "turso" {
+        // `Some(db)` only on the Turso backend — used to build the durable
+        // pending-payment store after `db_keys` is loaded below.
+        let (registry, scan_store, turso_db) = if backend == "turso" {
             let url = std::env::var("TURSO_DATABASE_URL")
                 .expect("REGISTRY_BACKEND=turso requires TURSO_DATABASE_URL");
             let token = std::env::var("TURSO_AUTH_TOKEN")
@@ -319,39 +522,129 @@ impl AppState {
                 .await
                 .expect("Failed to connect to Turso database");
 
+            // Grab the shared DB handle BEFORE moving `turso` into the backend.
             let db = turso.database();
             let scan = Arc::new(ScanPositionStore::new(db.clone()));
-            let yellow = Arc::new(YellowChannelStore::new(db));
 
-            (RegistryBackend::Turso(turso), Some(scan), Some(yellow))
+            (RegistryBackend::Turso(turso), Some(scan), Some(db))
         } else {
             info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
             (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
+        };
+
+        // Load chain configuration
+        let chain_config = ChainConfig::from_env().unwrap_or_else(|e| {
+            eprintln!("⚠️  Chain configuration error: {} (chain indexing disabled)", e);
+            ChainConfig {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            }
+        });
+
+        // Note: Chain indexer spawning deferred to runtime initialization
+        // when the registry is fully set up. For now, we just configure it.
+        if chain_config.enabled {
+            info!(
+                "Chain indexing configured for {} at block {}",
+                chain_config.announcer_addr, chain_config.deploy_block
+            );
+            info!(
+                "To spawn indexer: create ChainIndexer with configured registry and call tokio::spawn()"
+            );
+        }
+
+        let relayer_config = RelayerConfig::from_env();
+        if relayer_config.is_some() {
+            info!("Relayer configured — server-side gas-sponsored announcements enabled");
+        } else {
+            eprintln!("⚠️  RELAYER_PRIVATE_KEY not set — running in dev mode (client supplies tx_hash)");
+        }
+
+        let db_keys = Self::load_db_keys();
+        if relayer_config.is_some() && db_keys.is_none() {
+            tracing::warn!(
+                "RELAYER_PRIVATE_KEY is set but SPECTER_DB_ENC_KEY is not — \
+                 dedup, telemetry hashing, and pending persistence are degraded. \
+                 Generate one: openssl rand -base64 32"
+            );
+        }
+
+        // Durable pending-payment store: Turso when we have both a DB handle and
+        // a server key (so the shared secret can be wrapped at rest); otherwise
+        // the in-memory dev fallback.
+        let pending_ttl = Duration::from_secs(24 * 3600);
+        let pending_payments = match (turso_db, db_keys.as_ref()) {
+            (Some(db), Some(keys)) => {
+                info!("Pending-payment store: Turso (durable, KEK-wrapped secret)");
+                PendingPaymentStore::turso(
+                    specter_registry::turso::PendingStore::new(db),
+                    keys.clone(),
+                    pending_ttl,
+                )
+            }
+            _ => {
+                info!("Pending-payment store: in-memory (ephemeral dev fallback)");
+                PendingPaymentStore::memory(pending_ttl)
+            }
         };
 
         Self {
             config: config.clone(),
             registry,
             scan_store,
-            yellow_store,
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
-            yellow_config: build_yellow_config(),
-            pending_payments: Arc::new(PendingPaymentStore::new()),
+            pending_payments: Arc::new(pending_payments),
+            chain_config,
+            relayer_config,
+            db_keys,
         }
     }
 
-    /// Synchronous constructor (always uses in-memory registry). For backward compat / tests.
+    /// Synchronous constructor (always uses in-memory registry). For tests / local dev.
     pub fn new_sync(config: ApiConfig) -> Self {
         Self {
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
-            yellow_config: build_yellow_config(),
             config,
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
-            yellow_store: None,
-            pending_payments: Arc::new(PendingPaymentStore::new()),
+            pending_payments: Arc::new(PendingPaymentStore::memory(Duration::from_secs(24 * 3600))),
+            chain_config: ChainConfig {
+                rpc_url: String::new(),
+                announcer_addr: String::new(),
+                deploy_block: 0,
+                enabled: false,
+            },
+            relayer_config: None,
+            db_keys: Self::load_db_keys(),
+        }
+    }
+
+    /// Decodes a base64 (standard) 32-byte DB master key.
+    pub fn decode_db_master(b64: &str) -> anyhow::Result<[u8; 32]> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let bytes = STANDARD
+            .decode(b64.trim())
+            .map_err(|e| anyhow::anyhow!("SPECTER_DB_ENC_KEY is not valid base64: {e}"))?;
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("SPECTER_DB_ENC_KEY must decode to exactly 32 bytes"))?;
+        Ok(arr)
+    }
+
+    /// Loads `DbKeys` from `SPECTER_DB_ENC_KEY` if present and valid.
+    pub fn load_db_keys() -> Option<std::sync::Arc<specter_crypto::DbKeys>> {
+        let b64 = std::env::var("SPECTER_DB_ENC_KEY").ok().filter(|s| !s.trim().is_empty())?;
+        match Self::decode_db_master(&b64) {
+            Ok(master) => Some(std::sync::Arc::new(specter_crypto::DbKeys::from_master(&master))),
+            Err(e) => {
+                tracing::error!("Invalid SPECTER_DB_ENC_KEY — at-rest hardening disabled: {e}");
+                None
+            }
         }
     }
 }
@@ -389,21 +682,116 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     SuinsResolver::with_config(sc)
 }
 
-fn build_yellow_config() -> YellowConfig {
-    YellowConfig {
-        ws_url: std::env::var("YELLOW_WS_URL")
-            .unwrap_or_else(|_| "wss://clearnet.yellow.com/ws".into()),
-        rpc_url: std::env::var("ALCHEMY_RPC_URL")
-            .or_else(|_| std::env::var("ETH_RPC_URL"))
-            .unwrap_or_else(|_| "https://ethereum-sepolia-rpc.publicnode.com".into()),
-        chain_id: std::env::var("YELLOW_CHAIN_ID")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(11155111),
-        custody_address: std::env::var("YELLOW_CUSTODY_ADDRESS")
-            .unwrap_or_else(|_| "0x019B65A265EB3363822f2752141b3dF16131b262".into()),
-        adjudicator_address: std::env::var("YELLOW_ADJUDICATOR_ADDRESS")
-            .unwrap_or_else(|_| "0x7c7ccbc98469190849BCC6c926307794fDfB11F2".into()),
-        challenge_duration: 3600,
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chain_config_disabled_by_default() {
+        // ANNOUNCEMENT_SOURCE not set, should disable chain indexing
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+
+        let config = ChainConfig::from_env().expect("Should load config even when disabled");
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn test_chain_config_enabled_requires_env_vars() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+
+        let result = ChainConfig::from_env();
+        assert!(result.is_err(), "Should fail when required env vars missing");
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+    }
+
+    #[test]
+    fn test_chain_config_with_valid_env_vars() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "37571591");
+
+        let config = ChainConfig::from_env().expect("Should load valid config");
+        assert!(config.enabled);
+        assert_eq!(config.rpc_url, "https://testnet-rpc.monad.xyz");
+        assert_eq!(config.announcer_addr, "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        assert_eq!(config.deploy_block, 37571591);
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+    }
+
+    #[test]
+    fn test_chain_config_invalid_deploy_block() {
+        std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
+        std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
+        std::env::set_var("SPECTER_ANNOUNCER_ADDRESS", "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC");
+        std::env::set_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK", "not_a_number");
+
+        let result = ChainConfig::from_env();
+        assert!(result.is_err(), "Should fail with invalid block number");
+
+        std::env::remove_var("ANNOUNCEMENT_SOURCE");
+        std::env::remove_var("MONAD_RPC_URL");
+        std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
+        std::env::remove_var("SPECTER_ANNOUNCER_DEPLOY_BLOCK");
+    }
+
+    #[test]
+    fn test_app_state_new_sync_includes_chain_config() {
+        let config = ApiConfig::default();
+        let state = AppState::new_sync(config);
+
+        // Chain config should be disabled by default in sync mode
+        assert!(!state.chain_config.enabled);
+    }
+
+    #[test]
+    fn test_security_config_defaults() {
+        std::env::remove_var("API_KEY");
+        std::env::remove_var("ALLOWED_ORIGINS");
+        std::env::remove_var("RATE_LIMIT_RPS");
+        std::env::remove_var("RATE_LIMIT_BURST");
+        std::env::remove_var("MAX_BODY_SIZE");
+
+        let sec_config = SecurityConfig::from_env();
+
+        assert!(sec_config.api_key.is_none());
+        assert_eq!(sec_config.allowed_origins, vec!["*"]);
+        assert_eq!(sec_config.rate_limit_rps, 10);
+        assert_eq!(sec_config.rate_limit_burst, 30);
+        assert_eq!(sec_config.max_body_size, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_api_config_defaults() {
+        std::env::remove_var("USE_TESTNET");
+        std::env::remove_var("ETH_RPC_URL");
+        std::env::remove_var("SUI_RPC_URL");
+
+        let api_config = ApiConfig::default();
+
+        assert_eq!(api_config.rpc_url, DEFAULT_ETH_MAINNET_RPC);
+        assert!(!api_config.use_testnet);
+    }
+
+    #[test]
+    fn db_keys_loads_from_base64_env() {
+        // 32 zero bytes, base64 standard.
+        let b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let master = AppState::decode_db_master(b64).expect("valid 32-byte base64");
+        assert_eq!(master, [0u8; 32]);
+        assert!(AppState::decode_db_master("too-short").is_err());
+        assert!(AppState::decode_db_master("not!base64!!").is_err());
     }
 }

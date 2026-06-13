@@ -311,14 +311,9 @@ impl YellowClient {
         let announcements = registry.all_announcements();
 
         for ann in announcements {
-            // Only process announcements with channel_id
-            if ann.channel_id.is_none() {
-                continue;
-            }
-
             // Try to discover this announcement
             if let Some(keys) = wallet.try_discover(&ann.ephemeral_key, ann.view_tag)? {
-                let channel_id = hex::encode(ann.channel_id.unwrap());
+                let channel_id = ann.stealth_address.clone().unwrap_or_default();
 
                 info!(
                     channel_id,

@@ -76,26 +76,22 @@ impl<'a> ChannelDiscovery<'a> {
 
     /// Attempts to discover a single announcement.
     fn try_discover_channel(&self, ann: &Announcement) -> Result<Option<DiscoveredChannel>> {
-        // Only process announcements with channel_id
-        let channel_id = match ann.channel_id {
-            Some(id) => id,
-            None => return Ok(None),
-        };
-
         // Try to discover using wallet
         let keys = match self.wallet.try_discover(&ann.ephemeral_key, ann.view_tag)? {
             Some(k) => k,
             None => return Ok(None),
         };
 
+        let channel_id = ann.stealth_address.clone().unwrap_or_default();
+
         debug!(
-            channel_id = hex::encode(channel_id),
+            channel_id,
             stealth_address = %keys.address,
-            "Discovered private channel"
+            "Discovered channel announcement"
         );
 
         Ok(Some(DiscoveredChannel {
-            channel_id: hex::encode(channel_id),
+            channel_id,
             stealth_address: keys.address,
             stealth_private_key: keys.private_key.as_bytes().to_vec(),
             eth_private_key: keys.private_key.to_eth_private_key(),
@@ -106,10 +102,6 @@ impl<'a> ChannelDiscovery<'a> {
 
     /// Checks if a specific announcement is for this wallet.
     pub fn is_for_me(&self, ann: &Announcement) -> Result<bool> {
-        if ann.channel_id.is_none() {
-            return Ok(false);
-        }
-
         Ok(self
             .wallet
             .try_discover(&ann.ephemeral_key, ann.view_tag)?

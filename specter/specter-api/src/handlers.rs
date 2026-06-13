@@ -1,15 +1,18 @@
 //! API route handlers.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
+use alloy::primitives::Address;
 use axum::{
-    extract::{Path, Query, State},
-    http::header,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{header, HeaderMap},
     response::IntoResponse,
     Json,
 };
-use tracing::{debug, info};
+use specter_core::types::AnnouncementMetadata;
+use tracing::{debug, info, warn};
 
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
@@ -19,8 +22,11 @@ use specter_stealth::create_stealth_payment;
 use crate::dto::*;
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::verifier;
 
 type Result<T> = std::result::Result<T, ApiError>;
+
+// ── key generation ────────────────────────────────────────────────────────────
 
 /// POST /api/v1/keys/generate
 pub async fn generate_keys(
@@ -34,7 +40,6 @@ pub async fn generate_keys(
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
-    // Intentionally NO `view_tag` field on the response — see GenerateKeysResponse.
     let response = GenerateKeysResponse {
         spending_pk: hex::encode(spending.public.as_bytes()),
         spending_sk: hex::encode(spending.secret.as_bytes()),
@@ -47,6 +52,8 @@ pub async fn generate_keys(
     Ok(Json(response))
 }
 
+// ── stealth payment creation ──────────────────────────────────────────────────
+
 /// POST /api/v1/stealth/create
 pub async fn create_stealth(
     State(state): State<Arc<AppState>>,
@@ -58,18 +65,22 @@ pub async fn create_stealth(
     let payment = create_stealth_payment(&meta)
         .map_err(|e| ApiError::internal(format!("Failed to create stealth payment: {}", e)))?;
 
-    // Server retains the canonical announcement (correct view_tag + ephemeral
-    // key) keyed by payment_id. The frontend will quote this id back to
-    // `/api/v1/registry/announcements` after broadcasting the on-chain tx.
-    let payment_id = state.pending_payments.insert(payment.announcement.clone());
+    // Attach stealth_address so the relayer can call announce(stealth_addr, …) later.
+    let mut ann = payment.announcement.clone();
+    ann.stealth_address = Some(payment.stealth_address.to_checksum_string());
+    let payment_id = state
+        .pending_payments
+        .insert(ann.clone(), payment.shared_secret)
+        .await
+        .map_err(|e| ApiError::internal(format!("pending persist failed: {e}")))?;
 
     let response = CreateStealthResponse {
         payment_id,
         stealth_address: payment.stealth_address.to_checksum_string(),
         stealth_sui_address: payment.stealth_sui_address.to_hex_string(),
-        ephemeral_ciphertext: hex::encode(&payment.announcement.ephemeral_key),
-        view_tag: payment.announcement.view_tag,
-        announcement: AnnouncementDto::from(payment.announcement),
+        ephemeral_ciphertext: hex::encode(&ann.ephemeral_key),
+        view_tag: ann.view_tag,
+        announcement: AnnouncementDto::from(ann),
     };
 
     debug!(
@@ -82,14 +93,7 @@ pub async fn create_stealth(
     Ok(Json(response))
 }
 
-fn strip_hex_prefix(s: &str) -> &str {
-    let s = s.trim();
-    if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
-        &s[2..]
-    } else {
-        s
-    }
-}
+// ── scan ──────────────────────────────────────────────────────────────────────
 
 /// POST /api/v1/stealth/scan
 pub async fn scan_payments(
@@ -142,10 +146,11 @@ pub async fn scan_payments(
             eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
             announcement_id: d.announcement.id,
             timestamp: d.announcement.timestamp,
-            channel_id: d.announcement.channel_id.map(hex::encode),
             tx_hash: d.announcement.tx_hash.clone(),
+            payment_tx_hash: d.announcement.payment_tx_hash.clone(),
             amount: d.announcement.amount.clone().unwrap_or_default(),
             chain: d.announcement.chain.clone().unwrap_or_default(),
+            source_chain_id: d.announcement.source_chain_id,
         })
         .collect();
 
@@ -175,6 +180,8 @@ pub async fn scan_payments(
     }))
 }
 
+// ── ENS / SuiNS / IPFS ────────────────────────────────────────────────────────
+
 /// GET /api/v1/ens/resolve/:name
 pub async fn resolve_ens(
     State(state): State<Arc<AppState>>,
@@ -186,7 +193,7 @@ pub async fn resolve_ens(
         .await
         .map_err(ApiError::from)?;
 
-    let response = ResolveEnsResponse {
+    Ok(Json(ResolveEnsResponse {
         ens_name: result.ens_name,
         meta_address: result.meta_address.to_hex(),
         spending_pk: result.meta_address.spending_pk.to_hex(),
@@ -196,9 +203,7 @@ pub async fn resolve_ens(
         } else {
             Some(result.ipfs_cid)
         },
-    };
-
-    Ok(Json(response))
+    }))
 }
 
 /// GET /api/v1/suins/resolve/:name
@@ -217,7 +222,7 @@ pub async fn resolve_suins(
         .await
         .map_err(ApiError::from)?;
 
-    let response = ResolveSuinsResponse {
+    Ok(Json(ResolveSuinsResponse {
         suins_name: result.suins_name,
         meta_address: result.meta_address.to_hex(),
         spending_pk: result.meta_address.spending_pk.to_hex(),
@@ -227,9 +232,7 @@ pub async fn resolve_suins(
         } else {
             Some(result.ipfs_cid)
         },
-    };
-
-    Ok(Json(response))
+    }))
 }
 
 /// POST /api/v1/ipfs/upload
@@ -247,11 +250,10 @@ pub async fn upload_ipfs(
         .map_err(|e| ApiError::internal(format!("IPFS upload failed: {}", e)))?;
 
     let text_record = state.resolver.format_text_record(&cid);
-
     Ok(Json(UploadIpfsResponse { cid, text_record }))
 }
 
-/// GET /api/v1/ipfs/:cid - returns raw bytes (for "View on IPFS" via backend)
+/// GET /api/v1/ipfs/:cid
 pub async fn ipfs_get(
     State(state): State<Arc<AppState>>,
     Path(cid): Path<String>,
@@ -265,75 +267,200 @@ pub async fn ipfs_get(
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], data))
 }
 
+// ── registry publish ───────────────────────────────────────────────────────────
+
 /// POST /api/v1/registry/announcements
 ///
-/// Publishes a previously-created stealth payment. The protocol view tag is
-/// always derived server-side; clients can no longer supply a loose `view_tag`
-/// or `ephemeral_key` here.
-///
-/// Resolution order:
-///  1. `payment_id` (preferred) — server retrieves the pending announcement.
-///  2. `announcement` (fallback) — accepted only if the server restarted and
-///     the pending entry expired; logged for observability.
+/// Full publish flow:
+///   1. Resolve announcement from `payment_id` (preferred) or `announcement` (fallback).
+///   2. Validate ephemeral key size (must be 1088 bytes, non-zero).
+///   3. If `payment_tx_hash` + matching CHAIN_RPC_* env var: verify tx on source chain RPC.
+///   4. If relayer configured: broadcast `announce()` on Monad, return monad_tx_hash.
+///      If no relayer (dev mode): require client-supplied `tx_hash`.
+///   5. Write to registry with `record_source = 'api'`.
 pub async fn publish_announcement(
+    maybe_connect: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     Json(req): Json<PublishAnnouncementRequest>,
 ) -> Result<Json<PublishAnnouncementResponse>> {
-    let tx_hash = req.tx_hash.trim();
-    if tx_hash.is_empty() {
-        return Err(ApiError::bad_request(
-            "tx_hash is required and cannot be empty",
-        ));
+    let request_start = Instant::now();
+
+    // ── 1. Resolve announcement ───────────────────────────────────────────────
+    let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req).await?;
+
+    // ── 2. Local-only payment metadata (kept transiently, NOT persisted plaintext)
+    announcement.payment_tx_hash = req
+        .payment_tx_hash
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    announcement.amount = req
+        .amount
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    announcement.chain = req
+        .chain
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(chain_id) = req.source_chain_id {
+        announcement.source_chain_id = Some(chain_id);
     }
 
-    let mut announcement = match (req.payment_id, req.announcement) {
-        // Happy path: server-authoritative announcement bound to a payment_id.
-        (Some(pid), _) => {
-            let pending = state.pending_payments.take(&pid).ok_or_else(|| {
-                ApiError::bad_request(
-                    "Unknown or expired payment_id. Re-create the stealth payment.",
-                )
-            })?;
-            debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
-            pending.announcement
-        }
-        // Fallback: client provided the full create-time announcement DTO.
-        (None, Some(dto)) => {
-            tracing::warn!(
-                "Publish via announcement fallback (no payment_id). Verify clients are up-to-date."
-            );
-            let mut ann: Announcement =
-                dto.try_into()
-                    .map_err(|e: specter_core::error::SpecterError| {
-                        ApiError::bad_request(format!("Invalid announcement: {}", e))
+    // ── 3. Validate ephemeral key ─────────────────────────────────────────────
+    let ek_len = announcement.ephemeral_key.len();
+    if ek_len != 1088 {
+        return Err(ApiError::bad_request(format!(
+            "ephemeral_key must be exactly 1088 bytes, got {ek_len}"
+        )));
+    }
+    if announcement.ephemeral_key.iter().all(|&b| b == 0) {
+        return Err(ApiError::bad_request("ephemeral_key cannot be all zeros"));
+    }
+
+    // ── 4. Verify payment on source chain ─────────────────────────────────────
+    if let (Some(ptx), Some(chain_name)) =
+        (&announcement.payment_tx_hash, &announcement.chain)
+    {
+        match state.config.chain_rpc_map.get(chain_name.as_str()) {
+            Some(rpc_url) => {
+                let stealth = announcement.stealth_address.as_deref().unwrap_or_default();
+                let amount_u256 = announcement
+                    .amount
+                    .as_deref()
+                    .map(parse_amount_u256)
+                    .unwrap_or(alloy::primitives::U256::ZERO);
+                let token = req
+                    .token
+                    .as_deref()
+                    .and_then(|t| t.parse::<alloy::primitives::Address>().ok());
+                verifier::verify_payment_tx(rpc_url, ptx, stealth, amount_u256, token)
+                    .await
+                    .map_err(|e| {
+                        warn!(chain = %chain_name, tx = %ptx, "Payment verification failed: {e:?}");
+                        e
                     })?;
-            // Force fresh id assignment by the registry.
-            ann.id = 0;
-            ann
+                debug!(chain = %chain_name, tx = %ptx, "Payment verified to stealth address");
+            }
+            None => {
+                warn!(
+                    chain = %chain_name,
+                    "No RPC configured for chain — skipping payment verification. \
+                     Set CHAIN_RPC_{} to enable.",
+                    chain_name.to_uppercase().replace('-', "_")
+                );
+            }
         }
-        (None, None) => {
-            return Err(ApiError::bad_request(
-                "Either payment_id or announcement is required",
-            ));
+    }
+
+    // ── 5. Build the encrypted blob + dedup MAC + key hash (BEFORE stripping) ──
+    // build_on_chain_metadata reads the plaintext payment fields, so it must run
+    // before they are nulled below.
+    let metadata_blob = build_on_chain_metadata(&announcement, shared_secret.as_ref());
+    if let (Some(keys), Some(ptx)) =
+        (state.db_keys.as_ref(), announcement.payment_tx_hash.as_deref())
+    {
+        announcement.payment_tx_hash_hmac = Some(keys.payment_hmac(&ptx.trim().to_lowercase()));
+    }
+    announcement.ephemeral_key_hash =
+        Some(specter_crypto::hash::keccak256(&announcement.ephemeral_key).to_vec());
+    announcement.metadata_blob = Some(metadata_blob.clone());
+
+    // Capture telemetry fields before stripping (source_chain_id is nulled below).
+    let view_tag = announcement.view_tag;
+    let chain_for_tel = announcement.chain.clone();
+    let chain_id_for_tel = req.source_chain_id;
+
+    // Strip plaintext payment fields from the PERSISTED row (they live only in the blob).
+    announcement.payment_tx_hash = None;
+    announcement.amount = None;
+    announcement.source_chain_id = None;
+    announcement.tx_hash = None;
+
+    // ── 6. Reserve the dedup slot BEFORE relaying ─────────────────────────────
+    let reserved_id = match state.registry.reserve_announcement(&announcement).await {
+        Ok(id) => id,
+        Err(specter_core::error::SpecterError::DuplicatePayment) => {
+            return Err(ApiError::conflict("announcement could not be published"));
         }
+        Err(e) => return Err(ApiError::internal(format!("reserve failed: {e}"))),
     };
 
-    announcement.tx_hash = Some(tx_hash.to_string());
-    announcement.amount = req.amount.filter(|s| !s.trim().is_empty());
-    announcement.chain = req.chain.filter(|s| !s.trim().is_empty());
+    // ── 7. Relay (or accept dev-mode tx_hash) using the SAME blob ─────────────
+    let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
+        relay_announcement(&announcement, relayer, &metadata_blob).await?
+    } else {
+        // Dev mode: client must supply tx_hash directly
+        req.tx_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                ApiError::bad_request(
+                    "tx_hash is required when the relayer is not configured (dev mode). \
+                     Set RELAYER_PRIVATE_KEY to enable server-side relay.",
+                )
+            })?
+            .to_string()
+    };
 
-    let view_tag = announcement.view_tag;
-
-    let id = state
+    // ── 8. Finalize the reserved row ──────────────────────────────────────────
+    state
         .registry
-        .publish(announcement)
+        .finalize_announcement(reserved_id, view_tag, &monad_tx_hash)
         .await
-        .map_err(|e| ApiError::bad_request(format!("Invalid announcement: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("finalize failed: {e}")))?;
+    let id = reserved_id;
+    announcement.tx_hash = Some(monad_tx_hash.clone());
 
-    info!(id, view_tag, "Published announcement");
+    let elapsed_ms = request_start.elapsed().as_millis() as u64;
 
-    Ok(Json(PublishAnnouncementResponse { id, success: true }))
+    info!(
+        id,
+        view_tag,
+        monad_tx_hash = %monad_tx_hash,
+        "Published announcement"
+    );
+
+    // ── 7. Telemetry (best-effort) ────────────────────────────────────────────
+    let ip = extract_client_ip(&headers, maybe_connect.as_ref());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ip_hash = state
+        .db_keys
+        .as_ref()
+        .map(|k| k.telemetry_ip_hash(&ip.to_string(), now));
+    let ua = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    state
+        .registry
+        .write_telemetry(
+            "announce",
+            ip_hash.as_deref(),
+            ua.as_deref(),
+            chain_for_tel.as_deref(),
+            chain_id_for_tel,
+            Some(view_tag),
+            "success",
+            None,
+            elapsed_ms,
+        )
+        .await;
+
+    Ok(Json(PublishAnnouncementResponse {
+        id,
+        success: true,
+        monad_tx_hash: Some(monad_tx_hash),
+    }))
 }
+
+// ── registry list / stats ──────────────────────────────────────────────────────
 
 /// GET /api/v1/registry/announcements
 pub async fn list_announcements(
@@ -397,6 +524,8 @@ pub async fn get_registry_stats(
     }))
 }
 
+// ── health ─────────────────────────────────────────────────────────────────────
+
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// GET /health
@@ -405,316 +534,230 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
     let uptime = start.elapsed().as_secs();
 
     let count = state.registry.count().await.unwrap_or(0);
+    let turso_ok = state.registry.health_check().await.is_ok();
+    let relayer_ok = state.relayer_config.is_some();
+
+    let poller_last_block = state.registry.get_poller_last_block().await;
+    let poller_ok = poller_last_block.map(|b| b > 0).unwrap_or(false);
+
+    let status = if turso_ok { "ok" } else { "degraded" }.to_string();
 
     Json(HealthResponse {
-        status: "ok".into(),
+        status,
         version: env!("CARGO_PKG_VERSION").into(),
         uptime_seconds: uptime,
         announcements_count: count,
         use_testnet: state.config.use_testnet,
+        relayer_ok,
+        turso_ok,
+        poller_last_block,
+        poller_ok,
     })
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Yellow Network Handlers
-// ═══════════════════════════════════════════════════════════════════════════
+// ── private helpers ────────────────────────────────────────────────────────────
 
-/// POST /api/v1/yellow/channel/create
-///
-/// Creates a private trading channel using SPECTER stealth addresses.
-/// 1. Resolves recipient ENS name → meta-address
-/// 2. Creates stealth address for recipient
-/// 3. Generates channel ID and announcement data
-pub async fn yellow_create_channel(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<YellowCreateChannelRequest>,
-) -> Result<Json<YellowCreateChannelResponse>> {
-    info!(recipient = %req.recipient, token = %req.token, amount = %req.amount, "Creating private Yellow channel");
-
-    // Resolve meta-address from ENS or hex
-    let meta_address = if req.recipient.ends_with(".eth") {
-        state
-            .resolver
-            .resolve(&req.recipient)
-            .await
-            .map_err(ApiError::from)?
+fn strip_hex_prefix(s: &str) -> &str {
+    let s = s.trim();
+    if s.len() >= 2 && s.get(..2).map(|p| p.eq_ignore_ascii_case("0x")) == Some(true) {
+        &s[2..]
     } else {
-        MetaAddress::from_hex(&req.recipient)
-            .map_err(|e| ApiError::bad_request(format!("Invalid recipient: {}", e)))?
-    };
-
-    // Create stealth payment (generates stealth address + ephemeral key)
-    let payment = create_stealth_payment(&meta_address)
-        .map_err(|e| ApiError::internal(format!("Stealth payment creation failed: {}", e)))?;
-
-    // Use provided channel_id (from on-chain create) or generate random
-    let (channel_id_bytes, channel_id) =
-        if let Some(ref id) = req.channel_id.filter(|s| !s.trim().is_empty()) {
-            let decoded = hex::decode(strip_hex_prefix(id))
-                .map_err(|e| ApiError::bad_request(format!("Invalid channel_id hex: {}", e)))?;
-            if decoded.len() != 32 {
-                return Err(ApiError::bad_request(
-                    "channel_id must be 32 bytes (64 hex chars)".to_string(),
-                ));
-            }
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&decoded);
-            (arr, id.clone())
-        } else {
-            use rand::RngCore;
-            let mut arr = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut arr);
-            (arr, hex::encode(arr))
-        };
-
-    let stealth_address = payment.stealth_address.to_checksum_string();
-    let ephemeral_key = hex::encode(&payment.announcement.ephemeral_key);
-    let view_tag = payment.announcement.view_tag;
-
-    // Publish announcement with channel_id to registry
-    let mut announcement = Announcement::with_channel(
-        payment.announcement.ephemeral_key,
-        view_tag,
-        channel_id_bytes,
-    );
-    announcement.amount = Some(req.amount.clone());
-    announcement.chain = Some("ethereum".into());
-
-    let ann_id = state
-        .registry
-        .publish(announcement)
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to publish announcement: {}", e)))?;
-
-    info!(ann_id, channel_id = %channel_id, "Yellow channel created with announcement");
-
-    Ok(Json(YellowCreateChannelResponse {
-        channel_id: channel_id.clone(),
-        stealth_address,
-        announcement: YellowAnnouncementData {
-            ephemeral_key,
-            view_tag,
-            channel_id,
-        },
-        tx_hash: format!("0x{}", hex::encode(&channel_id_bytes[..16])),
-    }))
-}
-
-/// POST /api/v1/yellow/channel/discover
-///
-/// Scans SPECTER announcements for channels addressed to this wallet.
-pub async fn yellow_discover_channels(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<YellowDiscoverRequest>,
-) -> Result<Json<YellowDiscoverResponse>> {
-    let viewing_sk = hex::decode(strip_hex_prefix(&req.viewing_sk))?;
-    let spending_pk = hex::decode(strip_hex_prefix(&req.spending_pk))?;
-    let spending_sk = hex::decode(strip_hex_prefix(&req.spending_sk))?;
-
-    info!("Scanning for private Yellow channels...");
-
-    let announcements = state.registry.all_announcements().await;
-
-    let discoveries = specter_stealth::discovery::scan_with_context(
-        &announcements,
-        &viewing_sk,
-        &spending_pk,
-        &spending_sk,
-    );
-
-    let channels: Vec<YellowDiscoveredChannelDto> = discoveries
-        .into_iter()
-        .filter(|d| d.announcement.channel_id.is_some())
-        .map(|d| {
-            let amount = d.announcement.amount.clone().unwrap_or_else(|| "0".into());
-            let token = "USDC".into();
-            YellowDiscoveredChannelDto {
-                channel_id: d
-                    .announcement
-                    .channel_id
-                    .map(hex::encode)
-                    .unwrap_or_default(),
-                stealth_address: d.keys.address.to_checksum_string(),
-                eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
-                status: "open".into(),
-                discovered_at: d.announcement.timestamp,
-                amount,
-                token,
-            }
-        })
-        .collect();
-
-    info!(count = channels.len(), "Yellow channel discovery complete");
-
-    Ok(Json(YellowDiscoverResponse { channels }))
-}
-
-/// POST /api/v1/yellow/channel/fund
-///
-/// Adds funds to an existing Yellow channel.
-pub async fn yellow_fund_channel(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<YellowFundChannelRequest>,
-) -> Result<Json<YellowFundChannelResponse>> {
-    info!(channel_id = %req.channel_id, amount = %req.amount, "Funding Yellow channel");
-
-    // In production, would interact with Yellow's custody contract on Sepolia
-    Ok(Json(YellowFundChannelResponse {
-        tx_hash: format!(
-            "0x{}",
-            hex::encode(
-                req.channel_id
-                    .as_bytes()
-                    .get(..16)
-                    .unwrap_or(b"pending_fund_tx_")
-            )
-        ),
-        new_balance: req.amount,
-    }))
-}
-
-/// POST /api/v1/yellow/channel/close
-///
-/// Records the channel close and returns final balances. Does NOT submit an L1 transaction:
-/// the frontend sends the close to Yellow Network (closeSession); real on-chain settlement
-/// is performed by Yellow's ClearNode/adjudicator when they process the close. In sandbox
-/// mode, Yellow may not perform real Sepolia settlement, so USDC balance may not change.
-pub async fn yellow_close_channel(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<YellowCloseChannelRequest>,
-) -> Result<Json<YellowCloseChannelResponse>> {
-    info!(channel_id = %req.channel_id, "Closing Yellow channel");
-
-    // Look up the channel announcement to get the funded amount
-    let announcements = state.registry.all_announcements().await;
-    let channel_id_bytes = hex::decode(strip_hex_prefix(&req.channel_id)).unwrap_or_default();
-    let mut channel_id_arr = [0u8; 32];
-    if channel_id_bytes.len() == 32 {
-        channel_id_arr.copy_from_slice(&channel_id_bytes);
+        s
     }
-    let matching = announcements
-        .iter()
-        .find(|a| a.channel_id == Some(channel_id_arr));
-    let amount = matching
-        .and_then(|a| a.amount.clone())
-        .unwrap_or_else(|| "0".into());
-
-    // Placeholder tx_hash for UI reference; no L1 tx is submitted by this backend.
-    let placeholder_tx = format!(
-        "0x{}",
-        hex::encode(channel_id_bytes.get(..16).unwrap_or(b"pending_close_tx"))
-    );
-
-    Ok(Json(YellowCloseChannelResponse {
-        tx_hash: placeholder_tx,
-        tx_hash_is_placeholder: true,
-        final_balances: vec![YellowAllocationDto {
-            destination: "stealth_address".into(),
-            token: "USDC".into(),
-            amount,
-        }],
-    }))
 }
 
-/// GET /api/v1/yellow/channel/:id/status
+/// Resolves an `Announcement` and its associated shared secret from the pending store.
 ///
-/// Returns current status of a Yellow channel.
-pub async fn yellow_channel_status(
-    State(state): State<Arc<AppState>>,
-    Path(channel_id): Path<String>,
-) -> Result<Json<YellowChannelStatusResponse>> {
-    // Look for announcements with this channel_id
-    let announcements = state.registry.all_announcements().await;
-
-    let channel_id_bytes = hex::decode(strip_hex_prefix(&channel_id))
-        .map_err(|e| ApiError::bad_request(format!("Invalid channel_id: {}", e)))?;
-
-    let mut channel_id_arr = [0u8; 32];
-    if channel_id_bytes.len() == 32 {
-        channel_id_arr.copy_from_slice(&channel_id_bytes);
-    }
-
-    let matching = announcements
-        .iter()
-        .find(|a| a.channel_id == Some(channel_id_arr));
-
-    let created_at = matching.map(|a| a.timestamp).unwrap_or(0);
-    let amount = matching
-        .and_then(|a| a.amount.clone())
-        .unwrap_or_else(|| "0".into());
-
-    let balances = if matching.is_some() {
-        vec![YellowAllocationDto {
-            destination: "stealth".into(),
-            token: "USDC".into(),
-            amount,
-        }]
-    } else {
-        vec![]
-    };
-
-    Ok(Json(YellowChannelStatusResponse {
-        channel_id: channel_id.clone(),
-        status: if matching.is_some() {
-            "open"
-        } else {
-            "unknown"
+/// Returns `(announcement, shared_secret)` where `shared_secret` is `Some` only for
+/// the `payment_id` path. The fallback (raw `announcement`) has no secret available
+/// and metadata will be emitted in plaintext.
+async fn resolve_pending_announcement(
+    state: &AppState,
+    req: &PublishAnnouncementRequest,
+) -> Result<(Announcement, Option<[u8; 32]>)> {
+    match (req.payment_id, req.announcement.as_ref()) {
+        (Some(pid), _) => {
+            let pending = state
+                .pending_payments
+                .take(&pid)
+                .await
+                .map_err(|e| ApiError::internal(format!("pending lookup failed: {e}")))?
+                .ok_or_else(|| {
+                ApiError::bad_request(
+                    "Unknown or expired payment_id. Re-create the stealth payment \
+                     via POST /api/v1/stealth/create.",
+                )
+            })?;
+            debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
+            let secret = pending.shared_secret;
+            Ok((pending.announcement, Some(secret)))
         }
-        .into(),
-        balances,
-        participants: vec![],
-        created_at,
-        version: 1,
-    }))
+        (None, Some(dto)) => {
+            warn!("Publish via announcement fallback (no payment_id). Metadata will not be encrypted.");
+            let mut ann: Announcement =
+                dto.clone().try_into().map_err(|e: specter_core::error::SpecterError| {
+                    ApiError::bad_request(format!("Invalid announcement: {}", e))
+                })?;
+            ann.id = 0;
+            Ok((ann, None))
+        }
+        (None, None) => Err(ApiError::bad_request(
+            "Either payment_id or announcement is required",
+        )),
+    }
 }
 
-/// POST /api/v1/yellow/transfer
+/// Broadcasts the announcement on Monad via the server-side relayer.
+/// Returns the Monad transaction hash as a lowercase hex string.
 ///
-/// Executes an off-chain transfer within a Yellow channel.
-pub async fn yellow_transfer(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<YellowTransferRequest>,
-) -> Result<Json<YellowTransferResponse>> {
-    info!(
-        channel_id = %req.channel_id,
-        destination = %req.destination,
-        amount = %req.amount,
-        asset = %req.asset,
-        "Off-chain transfer"
-    );
+/// `metadata` is the pre-built on-chain blob — the SAME bytes persisted in the
+/// registry row, so the stored and relayed metadata are byte-identical.
+async fn relay_announcement(
+    announcement: &Announcement,
+    relayer: &crate::state::RelayerConfig,
+    metadata: &[u8],
+) -> Result<String> {
+    let stealth_addr_str = announcement
+        .stealth_address
+        .as_deref()
+        .ok_or_else(|| ApiError::internal("stealth_address missing from pending payment"))?;
 
-    Ok(Json(YellowTransferResponse {
-        new_state_version: 2,
-        balances: vec![YellowAllocationDto {
-            destination: req.destination,
-            token: req.asset,
-            amount: req.amount,
-        }],
-    }))
+    let stealth_addr: Address = stealth_addr_str
+        .parse()
+        .map_err(|e| ApiError::internal(format!("Invalid stealth_address '{stealth_addr_str}': {e}")))?;
+
+    let ek_arr: [u8; 1088] = announcement
+        .ephemeral_key
+        .as_slice()
+        .try_into()
+        .map_err(|_| ApiError::internal("ephemeral_key must be 1088 bytes"))?;
+
+    let announcer_addr: Address = relayer
+        .announcer_addr
+        .parse()
+        .map_err(|e| ApiError::internal(format!("Invalid announcer address: {e}")))?;
+
+    let hash = specter_chain::announcer::publish_announcement(
+        &relayer.monad_rpc_url,
+        relayer.signer.clone(),
+        announcer_addr,
+        stealth_addr,
+        &ek_arr,
+        metadata,
+    )
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Relayer failed to broadcast announcement");
+        ApiError::internal(format!("Relay failed: {e}"))
+    })?;
+
+    Ok(format!("{hash}"))
 }
 
-/// GET /api/v1/yellow/config
+/// Encodes on-chain metadata from an announcement's payment fields.
 ///
-/// Returns Yellow Network configuration.
-pub async fn yellow_config(State(state): State<Arc<AppState>>) -> Json<YellowConfigResponse> {
-    let config = &state.yellow_config;
+/// When `shared_secret` is `Some`, returns 93 bytes (AES-256-GCM encrypted).
+/// When `None`, returns 77 bytes (plaintext). The contract accepts both sizes.
+fn build_on_chain_metadata(ann: &Announcement, shared_secret: Option<&[u8; 32]>) -> Vec<u8> {
+    let mut meta = AnnouncementMetadata::new(ann.view_tag);
 
-    Json(YellowConfigResponse {
-        ws_url: config.ws_url.clone(),
-        custody_address: config.custody_address.clone(),
-        adjudicator_address: config.adjudicator_address.clone(),
-        chain_id: config.chain_id,
-        supported_tokens: vec![
-            YellowTokenInfo {
-                symbol: "USDC".into(),
-                address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238".into(),
-                decimals: 6,
-            },
-            YellowTokenInfo {
-                symbol: "ETH".into(),
-                address: "0x0000000000000000000000000000000000000000".into(),
-                decimals: 18,
-            },
-        ],
-    })
+    if let Some(ptx) = &ann.payment_tx_hash {
+        let bytes = hex_str_to_bytes32(ptx);
+        if bytes.iter().any(|&b| b != 0) {
+            meta = meta.with_tx_hash(bytes);
+        }
+    }
+
+    if let Some(amt) = &ann.amount {
+        let bytes = amount_str_to_bytes32(amt);
+        if bytes.iter().any(|&b| b != 0) {
+            meta = meta.with_amount(bytes);
+        }
+    }
+
+    if let Some(chain_id) = ann.source_chain_id {
+        meta = meta.with_source_chain_id(chain_id);
+    }
+
+    let plaintext = meta.encode();
+
+    match shared_secret {
+        Some(secret) => specter_crypto::encrypt_announcement_metadata(&plaintext, secret).to_vec(),
+        None => {
+            warn!("publishing announcement without metadata encryption (no shared secret)");
+            plaintext.to_vec()
+        }
+    }
+}
+
+/// Parses a hex tx hash string ("0x..." or bare hex) into a 32-byte array.
+fn hex_str_to_bytes32(s: &str) -> [u8; 32] {
+    let hex = strip_hex_prefix(s.trim());
+    let mut buf = [0u8; 32];
+    if let Ok(decoded) = hex::decode(hex) {
+        if decoded.len() == 32 {
+            buf.copy_from_slice(&decoded);
+        }
+    }
+    buf
+}
+
+/// Parses a wei amount string (decimal or "0x..." hex) into a 32-byte big-endian uint256.
+fn amount_str_to_bytes32(s: &str) -> [u8; 32] {
+    let s = s.trim();
+    let mut buf = [0u8; 32];
+
+    if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        if let Ok(decoded) = hex::decode(hex_str) {
+            let start = 32usize.saturating_sub(decoded.len());
+            let len = decoded.len().min(32);
+            buf[start..start + len].copy_from_slice(&decoded[..len]);
+        }
+    } else if let Ok(n) = s.parse::<u128>() {
+        buf[16..].copy_from_slice(&n.to_be_bytes());
+    }
+
+    buf
+}
+
+/// Parses a wei amount string (hex "0x..." or decimal) into a `U256`,
+/// defaulting to `U256::ZERO` on parse failure.
+fn parse_amount_u256(s: &str) -> alloy::primitives::U256 {
+    let s = s.trim();
+    let parsed = if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        alloy::primitives::U256::from_str_radix(hex_str, 16)
+    } else {
+        alloy::primitives::U256::from_str_radix(s, 10)
+    };
+    parsed.unwrap_or(alloy::primitives::U256::ZERO)
+}
+
+/// Extracts the real client IP from forwarding headers or the socket address.
+fn extract_client_ip(
+    headers: &HeaderMap,
+    connect_info: Option<&ConnectInfo<SocketAddr>>,
+) -> IpAddr {
+    // X-Forwarded-For: leftmost entry is the original client (set by proxies/CDNs)
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = xff.split(',').next() {
+            if let Ok(ip) = first.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    // X-Real-IP: set by nginx
+    if let Some(real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = real_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    // CF-Connecting-IP: set by Cloudflare
+    if let Some(cf_ip) = headers.get("cf-connecting-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = cf_ip.trim().parse::<IpAddr>() {
+            return ip;
+        }
+    }
+    connect_info
+        .map(|ci| ci.0.ip())
+        .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
 }

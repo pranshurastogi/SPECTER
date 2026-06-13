@@ -1,0 +1,24 @@
+name: specter-announcer-indexer
+description: "Indexes SPECTER stealth address announcements on Monad testnet"
+
+# Envio HyperIndex configuration for SPECTERAnnouncer
+# Dual-write: Envio Postgres (GraphQL) + Turso remote DB (SPECTER API scanning)
+
+field_selection:
+  transaction_fields:
+    - hash    # Needed for Turso deduplication and event ID construction
+    - input   # announce() calldata — used to resolve the full ML-KEM ciphertext at index time
+
+networks:
+  - id: 10143   # Monad testnet
+    start_block: 37571591   # SPECTERAnnouncer deploy block
+    # Wait 2 blocks before processing — MonadBFT achieves single-slot finality
+    # but we add a small buffer to guard against any transient reorgs
+    confirmed_block_threshold: 2
+
+    contracts:
+      - name: SPECTERAnnouncer
+        address: "0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC"
+        handler: ./src/EventHandlers.ts
+        events:
+          - event: "Announcement(uint256 schemeId, address indexed stealthAddress, address indexed caller, bytes32 ephemeralKeyHash, bytes metadata)"

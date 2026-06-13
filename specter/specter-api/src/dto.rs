@@ -29,9 +29,6 @@ pub struct GenerateKeysResponse {
 pub struct CreateStealthRequest {
     /// Meta-address (hex-encoded)
     pub meta_address: String,
-    /// Optional: Yellow channel ID (hex)
-    #[allow(dead_code)]
-    pub channel_id: Option<String>,
 }
 
 /// Response for stealth payment creation.
@@ -99,14 +96,19 @@ pub struct DiscoveryDto {
     pub announcement_id: u64,
     /// Timestamp
     pub timestamp: u64,
-    /// Optional channel ID
-    pub channel_id: Option<String>,
-    /// Optional transaction hash
+    /// Monad announce() tx hash (registry row)
     pub tx_hash: Option<String>,
-    /// Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Source-chain payment tx hash, decrypted from the metadata blob
+    /// (present only when the recipient could decrypt the blob).
+    pub payment_tx_hash: Option<String>,
+    /// Amount in base units (hex uint256, e.g. "0x...0de0b6b3a7640000"),
+    /// decrypted from the metadata blob. Empty when unavailable.
     pub amount: String,
-    /// Chain identifier (e.g. "ethereum", "sui")
+    /// Chain name as stored at publish time (e.g. "monad-testnet", "sui")
     pub chain: String,
+    /// EIP-155 chain ID of the payment's source chain, decrypted from the
+    /// metadata blob — the most reliable chain identifier for clients.
+    pub source_chain_id: Option<u64>,
 }
 
 /// Scan statistics.
@@ -184,20 +186,30 @@ pub struct UploadIpfsResponse {
 pub struct AnnouncementDto {
     /// Announcement ID
     pub id: u64,
-    /// Ephemeral ciphertext (hex)
+    /// ML-KEM ephemeral ciphertext (hex, 1088 bytes)
     pub ephemeral_key: String,
-    /// View tag
+    /// View tag (0–255)
     pub view_tag: u8,
-    /// Timestamp
+    /// Unix timestamp
     pub timestamp: u64,
-    /// Optional channel ID (hex)
-    pub channel_id: Option<String>,
-    /// Optional transaction hash (when published with verified tx)
+    /// EIP-155 chain ID of the payment's source chain (e.g. 42161 = Arbitrum)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_chain_id: Option<u64>,
+    /// Monad announce tx hash — the SPECTERAnnouncer.announce() call (dedup key)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
-    /// Optional amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Payment tx hash on the source chain — from metadata bytes [1..33]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment_tx_hash: Option<String>,
+    /// Raw amount hex uint256 (e.g. "0x...de0b6b3a7640000" = 1 ETH in wei)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount: Option<String>,
-    /// Optional chain identifier (e.g. "ethereum", "sui")
+    /// Human-readable chain name (e.g. "monad-testnet", "arbitrum-one")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain: Option<String>,
+    /// Recipient stealth address (checksummed)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stealth_address: Option<String>,
 }
 
 impl From<Announcement> for AnnouncementDto {
@@ -207,10 +219,12 @@ impl From<Announcement> for AnnouncementDto {
             ephemeral_key: hex::encode(&ann.ephemeral_key),
             view_tag: ann.view_tag,
             timestamp: ann.timestamp,
-            channel_id: ann.channel_id.map(hex::encode),
+            source_chain_id: ann.source_chain_id,
             tx_hash: ann.tx_hash,
+            payment_tx_hash: ann.payment_tx_hash,
             amount: ann.amount,
             chain: ann.chain,
+            stealth_address: ann.stealth_address,
         }
     }
 }
@@ -220,32 +234,23 @@ impl TryFrom<AnnouncementDto> for Announcement {
 
     fn try_from(dto: AnnouncementDto) -> Result<Self, Self::Error> {
         let ephemeral_key = hex::decode(&dto.ephemeral_key)?;
-        let channel_id = dto
-            .channel_id
-            .map(|s| {
-                let bytes = hex::decode(&s)?;
-                let mut arr = [0u8; 32];
-                if bytes.len() == 32 {
-                    arr.copy_from_slice(&bytes);
-                    Ok(arr)
-                } else {
-                    Err(specter_core::error::SpecterError::ValidationError(
-                        "channel_id must be 32 bytes".into(),
-                    ))
-                }
-            })
-            .transpose()?;
 
         Ok(Announcement {
             id: dto.id,
             ephemeral_key,
+            // Client DTOs never carry these; chain-sourced fields only.
+            ephemeral_key_hash: None,
+            metadata_blob: None,
+            payment_tx_hash_hmac: None,
             view_tag: dto.view_tag,
             timestamp: dto.timestamp,
-            channel_id,
+            source_chain_id: dto.source_chain_id,
             block_number: None,
             tx_hash: dto.tx_hash,
+            payment_tx_hash: dto.payment_tx_hash,
             amount: dto.amount,
             chain: dto.chain,
+            stealth_address: dto.stealth_address,
         })
     }
 }
@@ -275,21 +280,40 @@ pub struct PublishAnnouncementRequest {
     /// Fallback: full announcement DTO returned by `/api/v1/stealth/create`.
     #[serde(default)]
     pub announcement: Option<AnnouncementDto>,
-    /// Transaction hash (required; for duplicate detection and storage)
-    pub tx_hash: String,
-    /// Amount (human-readable, e.g. "0.1" ETH or "1.5" SUI)
+    /// Monad announce tx hash.
+    /// Required in dev mode (no relayer). Ignored when relayer is active —
+    /// the server generates it after broadcasting to Monad.
+    #[serde(default)]
+    pub tx_hash: Option<String>,
+    /// Source-chain payment tx hash to be verified on `chain`'s RPC.
+    /// When provided and a matching CHAIN_RPC_* is configured, the server
+    /// calls eth_getTransactionReceipt and rejects reverted or missing txs.
+    #[serde(default)]
+    pub payment_tx_hash: Option<String>,
+    /// EIP-155 chain ID of the chain where `payment_tx_hash` was broadcast.
+    #[serde(default)]
+    pub source_chain_id: Option<u64>,
+    /// Human-readable amount string (e.g. "1000000000000000000" wei, or "0x0de0b6b3a7640000").
     pub amount: Option<String>,
-    /// Chain identifier (e.g. "ethereum", "sui")
+    /// Human-readable source chain name (e.g. "arbitrum", "ethereum", "base").
     pub chain: Option<String>,
+    /// Optional ERC-20 token contract address for payment verification.
+    /// `None` ⇒ native transfer (or best-effort ERC-20 log scan).
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 /// Response for publish.
 #[derive(Debug, Serialize)]
 pub struct PublishAnnouncementResponse {
-    /// Assigned announcement ID
+    /// Assigned announcement ID in the registry.
     pub id: u64,
-    /// Confirmation
+    /// Always true on success.
     pub success: bool,
+    /// Monad tx hash of the announce() call.
+    /// Present when the relayer broadcast it; equal to req.tx_hash in dev mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monad_tx_hash: Option<String>,
 }
 
 /// Query parameters for listing announcements.
@@ -337,205 +361,20 @@ pub struct ViewTagCount {
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
-    /// Status
     pub status: String,
-    /// Version
     pub version: String,
-    /// Uptime in seconds
     pub uptime_seconds: u64,
-    /// Total announcements in registry
     pub announcements_count: u64,
     /// When true, backend uses testnet for SuiNS (ENS is always mainnet)
     pub use_testnet: bool,
+    /// True when RELAYER_PRIVATE_KEY is set and valid.
+    pub relayer_ok: bool,
+    /// True when Turso responds to a SELECT 1.
+    pub turso_ok: bool,
+    /// Last Monad block number processed by the event poller (from registry_metadata).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poller_last_block: Option<u64>,
+    /// True when the poller has processed at least one block.
+    pub poller_ok: bool,
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Yellow Network DTOs
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Request to create a private Yellow channel.
-#[derive(Debug, Deserialize)]
-pub struct YellowCreateChannelRequest {
-    /// Recipient ENS name (e.g. "bob.eth") or meta-address hex
-    pub recipient: String,
-    /// Token address
-    pub token: String,
-    /// Initial funding amount (human-readable)
-    pub amount: String,
-    /// Optional: real channel ID from on-chain create (hex). When set, used for the announcement instead of generating a random ID.
-    pub channel_id: Option<String>,
-}
-
-/// Response for private Yellow channel creation.
-#[derive(Debug, Serialize)]
-pub struct YellowCreateChannelResponse {
-    /// Channel ID
-    pub channel_id: String,
-    /// Stealth address for recipient
-    pub stealth_address: String,
-    /// Announcement data (ephemeral_key, view_tag, channel_id)
-    pub announcement: YellowAnnouncementData,
-    /// Transaction hash
-    pub tx_hash: String,
-}
-
-/// Announcement data included in channel creation response.
-#[derive(Debug, Serialize)]
-pub struct YellowAnnouncementData {
-    /// Ephemeral ciphertext (hex)
-    pub ephemeral_key: String,
-    /// View tag
-    pub view_tag: u8,
-    /// Channel ID (hex)
-    pub channel_id: String,
-}
-
-/// Request to discover private Yellow channels.
-#[derive(Debug, Deserialize)]
-pub struct YellowDiscoverRequest {
-    /// Viewing secret key (hex)
-    pub viewing_sk: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
-    /// Spending secret key (hex)
-    pub spending_sk: String,
-}
-
-/// A discovered Yellow channel.
-#[derive(Debug, Serialize)]
-pub struct YellowDiscoveredChannelDto {
-    /// Channel ID
-    pub channel_id: String,
-    /// Stealth address
-    pub stealth_address: String,
-    /// Ethereum private key for stealth address (hex)
-    pub eth_private_key: String,
-    /// Channel status
-    pub status: String,
-    /// Discovery timestamp
-    pub discovered_at: u64,
-    /// Funded amount (from announcement)
-    pub amount: String,
-    /// Token symbol (e.g. "USDC")
-    pub token: String,
-}
-
-/// Response for Yellow channel discovery.
-#[derive(Debug, Serialize)]
-pub struct YellowDiscoverResponse {
-    /// Discovered channels
-    pub channels: Vec<YellowDiscoveredChannelDto>,
-}
-
-/// Request to fund a Yellow channel.
-#[derive(Debug, Deserialize)]
-pub struct YellowFundChannelRequest {
-    /// Channel ID
-    pub channel_id: String,
-    /// Amount to add
-    pub amount: String,
-}
-
-/// Response for Yellow channel funding.
-#[derive(Debug, Serialize)]
-pub struct YellowFundChannelResponse {
-    /// Transaction hash
-    pub tx_hash: String,
-    /// New balance after funding
-    pub new_balance: String,
-}
-
-/// Request to close a Yellow channel.
-#[derive(Debug, Deserialize)]
-pub struct YellowCloseChannelRequest {
-    /// Channel ID
-    pub channel_id: String,
-}
-
-/// Response for Yellow channel closure.
-#[derive(Debug, Serialize)]
-pub struct YellowCloseChannelResponse {
-    /// Transaction hash (placeholder from backend when no L1 tx is submitted; real tx comes from Yellow Network when they settle)
-    pub tx_hash: String,
-    /// When true, tx_hash is not a real Sepolia tx; real settlement depends on Yellow Network processing the close.
-    #[serde(default)]
-    pub tx_hash_is_placeholder: bool,
-    /// Final balances
-    pub final_balances: Vec<YellowAllocationDto>,
-}
-
-/// Allocation DTO for Yellow channels.
-#[derive(Debug, Serialize)]
-pub struct YellowAllocationDto {
-    /// Destination address
-    pub destination: String,
-    /// Token address
-    pub token: String,
-    /// Amount
-    pub amount: String,
-}
-
-/// Response for Yellow channel status.
-#[derive(Debug, Serialize)]
-pub struct YellowChannelStatusResponse {
-    /// Channel ID
-    pub channel_id: String,
-    /// Status
-    pub status: String,
-    /// Balances
-    pub balances: Vec<YellowAllocationDto>,
-    /// Participants
-    pub participants: Vec<String>,
-    /// Created timestamp
-    pub created_at: u64,
-    /// State version
-    pub version: u64,
-}
-
-/// Request for off-chain transfer.
-#[derive(Debug, Deserialize)]
-pub struct YellowTransferRequest {
-    /// Channel ID
-    pub channel_id: String,
-    /// Destination address
-    pub destination: String,
-    /// Amount to transfer
-    pub amount: String,
-    /// Asset identifier
-    pub asset: String,
-}
-
-/// Response for off-chain transfer.
-#[derive(Debug, Serialize)]
-pub struct YellowTransferResponse {
-    /// New state version
-    pub new_state_version: u64,
-    /// Updated balances
-    pub balances: Vec<YellowAllocationDto>,
-}
-
-/// Response for Yellow config.
-#[derive(Debug, Serialize)]
-pub struct YellowConfigResponse {
-    /// WebSocket URL
-    pub ws_url: String,
-    /// Custody contract address
-    pub custody_address: String,
-    /// Adjudicator contract address
-    pub adjudicator_address: String,
-    /// Chain ID
-    pub chain_id: u64,
-    /// Supported tokens
-    pub supported_tokens: Vec<YellowTokenInfo>,
-}
-
-/// Token info for Yellow Network.
-#[derive(Debug, Serialize)]
-pub struct YellowTokenInfo {
-    /// Token symbol
-    pub symbol: String,
-    /// Token address
-    pub address: String,
-    /// Decimals
-    pub decimals: u8,
-}

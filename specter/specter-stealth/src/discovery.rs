@@ -240,8 +240,30 @@ pub fn scan_with_context_and_stats(
         match derive_stealth_keys(spending_pk, spending_sk, &shared_secret) {
             Ok(keys) => {
                 stats.discoveries += 1;
+                // Repopulate payment fields by decrypting the on-chain
+                // metadata blob with the per-announcement shared secret.
+                // The secret never leaves this crate. Decryption failure
+                // (tampered/foreign blob) is silently ignored — the
+                // announcement is still returned, just without enrichment.
+                let mut enriched = ann.clone();
+                if let Some(blob) = &ann.metadata_blob {
+                    if let Ok(pt) =
+                        specter_crypto::decrypt_announcement_metadata(blob, &shared_secret)
+                    {
+                        let meta = specter_core::types::AnnouncementMetadata::decode(&pt);
+                        if let Some(h) = meta.tx_hash {
+                            enriched.payment_tx_hash = Some(format!("0x{}", hex::encode(h)));
+                        }
+                        if let Some(a) = meta.amount {
+                            enriched.amount = Some(format!("0x{}", hex::encode(a)));
+                        }
+                        if meta.source_chain_id.is_some() {
+                            enriched.source_chain_id = meta.source_chain_id;
+                        }
+                    }
+                }
                 results.push(DiscoveryResult {
-                    announcement: ann.clone(),
+                    announcement: enriched,
                     keys,
                     index: idx,
                 });
@@ -335,9 +357,9 @@ mod tests {
 
         assert_eq!(stats.total_scanned, 10);
         assert_eq!(stats.discoveries, 3);
-        // Every announcement is a valid encapsulation, so the only path to a
-        // view-tag match is "addressed to us". All 3 of ours must match.
-        assert_eq!(stats.view_tag_matches, 3);
+        // view_tag_matches is at least our 3 — noise can cause false positives
+        // (1/256 per noise announcement) but every legitimate one must match.
+        assert!(stats.view_tag_matches >= 3);
         assert_eq!(results.len(), 3);
         assert!(stats.view_tag_matches >= stats.discoveries);
     }
@@ -374,5 +396,232 @@ mod tests {
         let discoveries =
             scan_announcements(&announcements, &viewing_sk, &spending_pk, &spending_sk);
         assert_eq!(discoveries.len(), 2);
+    }
+
+    #[test]
+    fn scan_empty_list_returns_empty() {
+        let (spending_pk, spending_sk, _vk, viewing_sk) = create_test_keys();
+        let discoveries =
+            scan_announcements(&[], &viewing_sk, &spending_pk, &spending_sk);
+        assert!(discoveries.is_empty());
+    }
+
+    #[test]
+    fn scan_with_context_and_stats_empty_list() {
+        let (spending_pk, spending_sk, _vk, viewing_sk) = create_test_keys();
+        let (results, stats) =
+            scan_with_context_and_stats(&[], &viewing_sk, &spending_pk, &spending_sk);
+        assert!(results.is_empty());
+        assert_eq!(stats.total_scanned, 0);
+        assert_eq!(stats.discoveries, 0);
+        assert_eq!(stats.errors, 0);
+        assert_eq!(stats.view_tag_matches, 0);
+    }
+
+    #[test]
+    fn scan_with_context_and_stats_invalid_viewing_sk() {
+        let (spending_pk, spending_sk, viewing_pk, _) = create_test_keys();
+        let ann = create_announcement_for(&viewing_pk);
+        let bad_viewing_sk = vec![0u8; 16]; // wrong size
+
+        let (results, stats) =
+            scan_with_context_and_stats(&[ann], &bad_viewing_sk, &spending_pk, &spending_sk);
+
+        assert!(results.is_empty());
+        assert_eq!(stats.total_scanned, 1);
+        assert_eq!(stats.errors, 1);
+    }
+
+    #[test]
+    fn scan_with_context_returns_same_count_as_scan_announcements() {
+        let (spending_pk, spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let mut anns = vec![
+            create_announcement_for(&viewing_pk),
+            create_announcement_for(generate_keypair().public.as_bytes()),
+            create_announcement_for(&viewing_pk),
+        ];
+        // add 5 more noise
+        for _ in 0..5 {
+            anns.push(create_announcement_for(generate_keypair().public.as_bytes()));
+        }
+
+        let flat = scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
+        let ctx = scan_with_context(&anns, &viewing_sk, &spending_pk, &spending_sk);
+        assert_eq!(flat.len(), ctx.len());
+        assert_eq!(flat.len(), 2);
+    }
+
+    #[test]
+    fn scan_result_not_for_us_is_not_discovered() {
+        let not_for_us = ScanResult::NotForUs;
+        assert!(!not_for_us.is_discovered());
+        assert!(not_for_us.into_keys().is_none());
+    }
+
+    #[test]
+    fn scan_stats_record_discovery_increments_all_counters() {
+        let (spending_pk, spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let ann = create_announcement_for(&viewing_pk);
+        let result = scan_announcement(&ann, &viewing_sk, &spending_pk, &spending_sk);
+        assert!(result.is_discovered());
+
+        let mut stats = ScanStats::new();
+        stats.record(&result);
+        assert_eq!(stats.total_scanned, 1);
+        assert_eq!(stats.view_tag_matches, 1);
+        assert_eq!(stats.discoveries, 1);
+        assert_eq!(stats.errors, 0);
+    }
+
+    #[test]
+    fn scan_stats_record_not_for_us_only_increments_total() {
+        let mut stats = ScanStats::new();
+        stats.record(&ScanResult::NotForUs);
+        assert_eq!(stats.total_scanned, 1);
+        assert_eq!(stats.view_tag_matches, 0);
+        assert_eq!(stats.discoveries, 0);
+        assert_eq!(stats.errors, 0);
+    }
+
+    #[test]
+    fn scan_stats_rate_is_zero_when_duration_zero() {
+        let stats = ScanStats { total_scanned: 100, duration_ms: 0, ..ScanStats::default() };
+        assert_eq!(stats.rate(), 0.0);
+    }
+
+    #[test]
+    fn scan_stats_rate_computed_correctly() {
+        let stats = ScanStats { total_scanned: 1000, duration_ms: 1000, ..ScanStats::default() };
+        // 1000 announcements in 1000ms = 1000/s
+        let rate = stats.rate();
+        assert!((rate - 1000.0).abs() < 0.01, "expected ~1000.0, got {}", rate);
+    }
+
+    #[test]
+    fn scan_stats_filter_efficiency_zero_when_no_scans() {
+        let stats = ScanStats::default();
+        assert_eq!(stats.filter_efficiency(), 0.0);
+    }
+
+    #[test]
+    fn scan_stats_filter_efficiency_100_when_no_matches() {
+        let stats = ScanStats {
+            total_scanned: 100,
+            view_tag_matches: 0,
+            ..ScanStats::default()
+        };
+        assert!((stats.filter_efficiency() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn scan_stats_filter_efficiency_reflects_fraction() {
+        let stats = ScanStats {
+            total_scanned: 256,
+            view_tag_matches: 1,
+            ..ScanStats::default()
+        };
+        let expected = (255.0 / 256.0) * 100.0;
+        assert!((stats.filter_efficiency() - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn discovery_result_index_is_correct() {
+        let (spending_pk, spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let noise = create_announcement_for(generate_keypair().public.as_bytes());
+        let ours = create_announcement_for(&viewing_pk);
+        let anns = vec![noise, ours];
+
+        let ctx = scan_with_context(&anns, &viewing_sk, &spending_pk, &spending_sk);
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0].index, 1, "our announcement was at index 1");
+    }
+
+    #[test]
+    fn verify_address_from_announcement_correct_key() {
+        let (spending_pk, _spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let ann = create_announcement_for(&viewing_pk);
+
+        let ciphertext = specter_crypto::KyberCiphertext::from_bytes(&ann.ephemeral_key).unwrap();
+        let vsk = specter_core::types::KyberSecretKey::from_bytes(&viewing_sk).unwrap();
+        let shared_secret = specter_crypto::decapsulate(&ciphertext, &vsk).unwrap();
+        let expected_addr =
+            specter_crypto::derive::derive_stealth_address(&spending_pk, &shared_secret).unwrap();
+
+        let ok = verify_address_from_announcement(&ann, &viewing_sk, &spending_pk, &expected_addr)
+            .unwrap();
+        assert!(ok, "correct key should verify address");
+    }
+
+    #[test]
+    fn verify_address_from_announcement_wrong_address() {
+        let (spending_pk, _spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let ann = create_announcement_for(&viewing_pk);
+
+        let wrong_addr = specter_core::types::EthAddress::zero();
+
+        let ok =
+            verify_address_from_announcement(&ann, &viewing_sk, &spending_pk, &wrong_addr)
+                .unwrap();
+        assert!(!ok, "wrong address should not verify");
+    }
+
+    #[test]
+    fn scan_announcements_returns_correct_indices() {
+        let (spending_pk, spending_sk, viewing_pk, viewing_sk) = create_test_keys();
+        let noise1 = create_announcement_for(generate_keypair().public.as_bytes());
+        let ours = create_announcement_for(&viewing_pk);
+        let noise2 = create_announcement_for(generate_keypair().public.as_bytes());
+        let anns = vec![noise1, ours, noise2];
+
+        let discoveries =
+            scan_announcements(&anns, &viewing_sk, &spending_pk, &spending_sk);
+        assert_eq!(discoveries.len(), 1);
+        assert_eq!(discoveries[0].0, 1, "ours is at index 1");
+    }
+
+    /// During scanning, the recipient must decrypt the on-chain `metadata_blob`
+    /// using the per-announcement ML-KEM shared secret and repopulate the
+    /// payment fields (`payment_tx_hash`, `amount`, `source_chain_id`) that
+    /// Phase 1 moved into the AEAD-encrypted blob.
+    #[test]
+    fn scan_decrypts_metadata_blob_into_payment_fields() {
+        use specter_core::types::AnnouncementMetadata;
+        use specter_crypto::encrypt_announcement_metadata;
+
+        let viewing = generate_keypair();
+        let spending = generate_keypair();
+        let pk = KyberPublicKey::from_bytes(viewing.public.as_bytes()).unwrap();
+        let (ciphertext, shared_secret) = encapsulate(&pk).unwrap();
+        let view_tag = compute_view_tag(&shared_secret);
+
+        // Build plaintext metadata, encrypt it under the shared secret.
+        let tx = [0xAAu8; 32];
+        let mut amount = [0u8; 32];
+        amount[31] = 1; // 1 wei
+        let plaintext = AnnouncementMetadata::new(view_tag)
+            .with_tx_hash(tx)
+            .with_amount(amount)
+            .with_source_chain_id(42161)
+            .encode();
+        // shared_secret is already [u8; 32]; pass it directly.
+        let blob = encrypt_announcement_metadata(&plaintext, &shared_secret).to_vec();
+
+        let mut ann = Announcement::new(ciphertext.into_bytes(), view_tag);
+        ann.metadata_blob = Some(blob);
+
+        let (results, _stats) = scan_with_context_and_stats(
+            &[ann],
+            viewing.secret.as_bytes(),
+            spending.public.as_bytes(),
+            spending.secret.as_bytes(),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].announcement.source_chain_id, Some(42161));
+        assert_eq!(
+            results[0].announcement.payment_tx_hash,
+            Some(format!("0x{}", hex::encode(tx)))
+        );
+        assert!(results[0].announcement.amount.is_some());
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "specter-chain"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Blockchain indexing and announcement posting for SPECTER protocol"
+
+[dependencies]
+alloy = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+specter-core = { path = "../specter-core" }
+hex = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

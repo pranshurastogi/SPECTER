@@ -1,30 +1,41 @@
-//! Turso (libSQL) schema definition and migration logic.
+//! Turso (libSQL) final schema. Single clean definition — no migration ladder
+//! (no backward compatibility; cutover uses a fresh/cleared database).
 
-/// Current schema version. Increment on breaking changes.
+/// Schema version marker stored in registry_metadata.
 pub const SCHEMA_VERSION: i32 = 1;
 
-/// DDL statements executed in order on startup.
-/// libSQL is SQLite-compatible so the SQL is identical to SQLite DDL.
+/// DDL executed on startup (CREATE IF NOT EXISTS — idempotent).
 pub const SCHEMA_STATEMENTS: &[&str] = &[
-    // ── announcements ──────────────────────────────────────────────────
+    // ── announcements ──────────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS announcements (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        view_tag      INTEGER NOT NULL,
-        timestamp     INTEGER NOT NULL,
-        ephemeral_key BLOB    NOT NULL,
-        channel_id    BLOB,
-        block_number  INTEGER,
-        tx_hash       TEXT UNIQUE,
-        amount        TEXT,
-        chain         TEXT,
-        created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        view_tag              INTEGER NOT NULL,
+        timestamp             INTEGER NOT NULL,
+        ephemeral_key         BLOB,
+        ephemeral_key_hash    BLOB,
+        metadata_blob         BLOB,
+        payment_tx_hash_hmac  BLOB,
+        on_chain              INTEGER NOT NULL DEFAULT 0,
+        block_number          INTEGER,
+        tx_hash               TEXT    UNIQUE,
+        chain                 TEXT,
+        stealth_address       TEXT,
+        record_source         TEXT    NOT NULL DEFAULT 'api',
+        created_at            INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_view_tag   ON announcements(view_tag)",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_timestamp  ON announcements(timestamp DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_channel_id ON announcements(channel_id)",
-    "CREATE INDEX IF NOT EXISTS idx_announcements_created_at ON announcements(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_view_tag      ON announcements(view_tag)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_timestamp     ON announcements(timestamp DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_block_number  ON announcements(block_number)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_on_chain      ON announcements(on_chain)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_stealth_addr  ON announcements(stealth_address)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_created_at    ON announcements(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_record_source ON announcements(record_source)",
+    "CREATE INDEX IF NOT EXISTS idx_announcements_ephem_hash    ON announcements(ephemeral_key_hash)",
+    // Double-announce dedup: one row per source-chain payment (keyed HMAC).
+    // Partial index → multiple NULL-hmac rows (no payment hash) are allowed.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_payment_hmac_unique ON announcements(payment_tx_hash_hmac) WHERE payment_tx_hash_hmac IS NOT NULL",
 
-    // ── scan_positions ─────────────────────────────────────────────────
+    // ── scan_positions ─────────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS scan_positions (
         id                    INTEGER PRIMARY KEY AUTOINCREMENT,
         wallet_id             TEXT    NOT NULL UNIQUE,
@@ -41,43 +52,38 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_scan_positions_updated_at ON scan_positions(updated_at DESC)",
 
-    // ── yellow_channels ────────────────────────────────────────────────
-    "CREATE TABLE IF NOT EXISTS yellow_channels (
-        id                INTEGER PRIMARY KEY AUTOINCREMENT,
-        channel_id        BLOB    NOT NULL UNIQUE,
-        status            TEXT    NOT NULL DEFAULT 'open',
-        created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        closed_at         INTEGER,
-        creator_wallet    TEXT,
-        chain             TEXT,
-        asset_address     TEXT,
-        asset_symbol      TEXT,
-        amount            TEXT    NOT NULL,
-        announcement_id   INTEGER,
-        funding_tx_hash   TEXT UNIQUE,
-        closing_tx_hash   TEXT UNIQUE,
-        error_reason      TEXT,
-        metadata          TEXT,
-        updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        FOREIGN KEY(announcement_id) REFERENCES announcements(id) ON DELETE SET NULL
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_yellow_channels_status     ON yellow_channels(status)",
-    "CREATE INDEX IF NOT EXISTS idx_yellow_channels_created_at ON yellow_channels(created_at DESC)",
-
-    // ── registry_metadata ──────────────────────────────────────────────
+    // ── registry_metadata ──────────────────────────────────────────────────
     "CREATE TABLE IF NOT EXISTS registry_metadata (
         key        TEXT    PRIMARY KEY,
         value      TEXT    NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
 
-    // ── announcement_deletions (compliance audit log) ──────────────────
-    "CREATE TABLE IF NOT EXISTS announcement_deletions (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        announcement_id  INTEGER NOT NULL,
-        reason           TEXT,
-        deleted_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        deleted_by       TEXT
+    // ── _telemetry (internal; hashed IP only, never raw) ───────────────────
+    "CREATE TABLE IF NOT EXISTS _telemetry (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        event    TEXT    NOT NULL,
+        ip_hash  BLOB,
+        ua       TEXT,
+        chain    TEXT,
+        chain_id INTEGER,
+        view_tag INTEGER,
+        status   TEXT    NOT NULL DEFAULT 'success',
+        err      TEXT,
+        ms       INTEGER,
+        ts       INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
-    "CREATE INDEX IF NOT EXISTS idx_announcement_deletions_aid ON announcement_deletions(announcement_id)",
+    "CREATE INDEX IF NOT EXISTS _idx_tel_ts  ON _telemetry(ts DESC)",
+    "CREATE INDEX IF NOT EXISTS _idx_tel_iph ON _telemetry(ip_hash)",
+    "CREATE INDEX IF NOT EXISTS _idx_tel_evt ON _telemetry(event)",
+
+    // ── pending_payments (durable in-flight stealth payments) ───────────────
+    "CREATE TABLE IF NOT EXISTS pending_payments (
+        payment_id            TEXT    PRIMARY KEY,
+        announcement          BLOB    NOT NULL,
+        shared_secret_wrapped BLOB    NOT NULL,
+        created_at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        expires_at            INTEGER NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_payments(expires_at)",
 ];

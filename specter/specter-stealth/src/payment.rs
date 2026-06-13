@@ -18,6 +18,11 @@ pub struct StealthPayment {
     pub announcement: Announcement,
     /// Metadata about the payment
     pub metadata: PaymentMetadata,
+    /// ML-KEM shared secret — used to encrypt on-chain metadata at publish time.
+    /// Never serialised (excluded from JSON responses and disk persistence).
+    /// Zeroed from memory after the announcement is submitted.
+    #[serde(skip)]
+    pub shared_secret: [u8; 32],
 }
 
 /// Metadata about a stealth payment.
@@ -50,6 +55,7 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
         stealth_sui_address,
         announcement,
         metadata: PaymentMetadata::default(),
+        shared_secret,
     })
 }
 
@@ -71,7 +77,7 @@ pub struct StealthPaymentBuilder {
     amount: Option<String>,
     token: Option<String>,
     memo: Option<String>,
-    channel_id: Option<[u8; 32]>,
+    source_chain_id: Option<u64>,
 }
 
 impl StealthPaymentBuilder {
@@ -110,9 +116,9 @@ impl StealthPaymentBuilder {
         self
     }
 
-    /// Sets an optional channel ID for the announcement.
-    pub fn channel_id(mut self, id: [u8; 32]) -> Self {
-        self.channel_id = Some(id);
+    /// Sets the source chain ID (EIP-155) for the announcement.
+    pub fn source_chain_id(mut self, id: u64) -> Self {
+        self.source_chain_id = Some(id);
         self
     }
 
@@ -130,11 +136,10 @@ impl StealthPaymentBuilder {
             derive_stealth_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
         let stealth_sui_address =
             derive_stealth_sui_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
-        let announcement = if let Some(channel_id) = self.channel_id {
-            Announcement::with_channel(ciphertext.into_bytes(), view_tag, channel_id)
-        } else {
-            Announcement::new(ciphertext.into_bytes(), view_tag)
-        };
+        let mut announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
+        if let Some(chain_id) = self.source_chain_id {
+            announcement.source_chain_id = Some(chain_id);
+        }
 
         let metadata = PaymentMetadata {
             recipient_ens: self.recipient_ens,
@@ -148,6 +153,7 @@ impl StealthPaymentBuilder {
             stealth_sui_address,
             announcement,
             metadata,
+            shared_secret,
         })
     }
 }
@@ -236,17 +242,16 @@ mod tests {
     }
 
     #[test]
-    fn test_payment_builder_with_channel() {
+    fn test_payment_builder_with_source_chain_id() {
         let meta = create_test_meta_address();
-        let channel_id = [0xAB; 32];
 
         let payment = StealthPaymentBuilder::new()
             .recipient(meta)
-            .channel_id(channel_id)
+            .source_chain_id(42161) // Arbitrum
             .build()
             .unwrap();
 
-        assert_eq!(payment.announcement.channel_id, Some(channel_id));
+        assert_eq!(payment.announcement.source_chain_id, Some(42161));
     }
 
     #[test]

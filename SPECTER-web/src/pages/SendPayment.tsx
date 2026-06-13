@@ -70,6 +70,7 @@ import {
   ApiError,
   type ResolveEnsResponse,
   type CreateStealthResponse,
+  type PublishAnnouncementResponse,
 } from "@/lib/api";
 import { verifyTx, type TxChain, type VerifiedTx } from "@/lib/blockchain/verifyTx";
 import { Input } from "@/components/ui/base/input";
@@ -117,7 +118,6 @@ import {
 } from "@/components/ui/specialized/chain-icons";
 import { formatCryptoAmount } from "@/lib/utils";
 import { Link } from "react-router-dom";
-import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { getRecentRecipients, addRecentRecipient } from "@/lib/recentRecipients";
 import {
   Tooltip,
@@ -144,9 +144,12 @@ import {
 import { analytics } from "@/lib/analytics";
 import {
   getAvailableSendChains,
+  getBackendChainName,
+  getChainDecimals,
   getExplorerTxUrl,
   getPublicClientForEvm,
   getSendChainConfig,
+  getSourceChainId,
   getViemChainForEvm,
   isEvmChain,
   type EvmTxChain,
@@ -163,8 +166,8 @@ import {
   ConnectModal,
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
-import { parseEther } from "viem";
-import { SendingLoader } from "@/components/ui/sending-loader";
+import { parseEther, parseUnits } from "viem";
+import { StageFlowLoader, type FlowStage } from "@/components/ui/specialized/stage-flow-loader";
 import { Switch } from "@/components/ui/base/switch";
 
 type SendStep = "input" | "generated" | "published";
@@ -175,7 +178,9 @@ type SendStep = "input" | "generated" | "published";
  *  - idle: nothing in flight
  *  - signing: wallet popup open, awaiting user signature
  *  - broadcasting: tx submitted, waiting for confirmation
- *  - publishing: tx confirmed, calling /registry/announcements
+ *  - verifying: tx confirmed, client-side verification against the stealth address
+ *  - publishing: verified, calling /registry/announcements (atomic server leg:
+ *    resolve pending → encrypt metadata → reserve Turso row → relay Monad → finalize)
  *  - sent_unpublished_failure: ON-CHAIN OK, REGISTRY FAILED — sticky
  *  - published: success
  */
@@ -183,9 +188,20 @@ type PublishPhase =
   | "idle"
   | "signing"
   | "broadcasting"
+  | "verifying"
   | "publishing"
   | "sent_unpublished_failure"
   | "published";
+
+/** Stage ids surfaced in the flow loader. */
+type FlowPhaseId = "signing" | "broadcasting" | "verifying" | "publishing";
+
+const ACTIVE_FLOW_PHASES: ReadonlyArray<PublishPhase> = [
+  "signing",
+  "broadcasting",
+  "verifying",
+  "publishing",
+];
 
 interface ConfirmDialogState {
   open: boolean;
@@ -277,6 +293,47 @@ function ReceiptConfetti() {
   );
 }
 
+/**
+ * Publish the announcement, preferring the server-held `payment_id` path
+ * (correct view tag + encrypted metadata). If the server reports the pending
+ * entry expired (24h TTL or restart in dev), automatically retry once with
+ * the announcement DTO fallback — the payment still becomes discoverable,
+ * but the metadata blob is published unencrypted (logged server-side).
+ */
+async function publishWithFallback(
+  stealth: CreateStealthResponse,
+  verified: VerifiedTx,
+  chainValue: TxChain,
+): Promise<{ res: PublishAnnouncementResponse; usedFallback: boolean }> {
+  const base = {
+    announcement: stealth.announcement,
+    // Dev-mode Monad tx fallback; ignored when the server relayer is active.
+    tx_hash: verified.txHash,
+    // Source-chain payment tx — what the server RPC-verifies and encrypts.
+    payment_tx_hash: verified.txHash,
+    source_chain_id: getSourceChainId(chainValue) ?? null,
+    // Base units (wei / MIST) — the server compares against tx.value.
+    amount: verified.amount,
+    chain: getBackendChainName(chainValue),
+  };
+
+  try {
+    const res = await api.publishAnnouncement({ payment_id: stealth.payment_id, ...base });
+    return { res, usedFallback: false };
+  } catch (err) {
+    const pendingExpired =
+      err instanceof ApiError &&
+      err.status === 400 &&
+      /unknown or expired payment_id/i.test(err.message);
+    if (!pendingExpired) throw err;
+    console.warn(
+      "[send] Server-side pending entry expired — publishing via announcement DTO fallback (metadata will not be encrypted).",
+    );
+    const res = await api.publishAnnouncement(base);
+    return { res, usedFallback: true };
+  }
+}
+
 function getFundingUrl(chain: TxChain): string {
   if (chain === "arbitrum") return "https://faucet.quicknode.com/arbitrum/sepolia";
   if (chain === "monad") return "https://faucet.monad.xyz";
@@ -304,6 +361,12 @@ export default function SendPayment() {
   // Hash of the wallet-broadcast on-chain transaction (needed for retry publish).
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null);
   const [pendingVerifiedTx, setPendingVerifiedTx] = useState<VerifiedTx | null>(null);
+  // Monad announce() tx hash returned by the publish endpoint (relayer mode).
+  const [monadTxHash, setMonadTxHash] = useState<string | null>(null);
+  // Flow loader state: which attempt shape is running + where it failed.
+  const [attemptOrigin, setAttemptOrigin] = useState<"manual" | "wallet" | "retry" | null>(null);
+  const [failedPhase, setFailedPhase] = useState<FlowPhaseId | null>(null);
+  const [flowError, setFlowError] = useState<string | null>(null);
 
   // Wallet send state
   const [sendMode, setSendMode] = useState<"manual" | "wallet">("wallet");
@@ -506,6 +569,10 @@ export default function SendPayment() {
     setPublishPhase("idle");
     setPendingTxHash(null);
     setPendingVerifiedTx(null);
+    setMonadTxHash(null);
+    setAttemptOrigin(null);
+    setFailedPhase(null);
+    setFlowError(null);
     setWalletBalance(null);
     setBalanceError(null);
     setIsBalanceLoading(false);
@@ -565,6 +632,10 @@ export default function SendPayment() {
       setAnnouncementId(null);
       setVerifyError(null);
       setSendError(null);
+      setMonadTxHash(null);
+      setAttemptOrigin(null);
+      setFailedPhase(null);
+      setFlowError(null);
 
       if (rec.status === "sent_unpublished" && rec.tx_hash) {
         // Funds already on-chain. Switch to manual tab and prefill the
@@ -754,6 +825,10 @@ export default function SendPayment() {
             setPublishPhase("idle");
             setPendingTxHash(null);
             setPendingVerifiedTx(null);
+            setMonadTxHash(null);
+            setAttemptOrigin(null);
+            setFailedPhase(null);
+            setFlowError(null);
             setTxHash("");
             setVerifiedTx(null);
           }
@@ -786,6 +861,13 @@ export default function SendPayment() {
       chainValue: TxChain;
       origin: "manual" | "wallet" | "retry";
       verified?: VerifiedTx;
+      /**
+       * True when the on-chain tx is already known to be confirmed (wallet
+       * receipt landed, or retry of a previously-sent payment). Any failure
+       * after this point MUST land in the sticky `sent_unpublished_failure`
+       * state — never a transient toast.
+       */
+      txConfirmed?: boolean;
     }): Promise<boolean> => {
       const { stealth, txHashValue, chainValue, origin } = args;
       const expectedRecipient =
@@ -795,53 +877,90 @@ export default function SendPayment() {
         return false;
       }
 
-      setPublishPhase("publishing");
+      setAttemptOrigin(origin);
+      setFailedPhase(null);
+      setFlowError(null);
       setVerifyError(null);
+      setSendError(null);
 
+      // Tracked locally (not via state) so the failure branch can't read a
+      // stale closure value — the old `pendingTxHash` check had exactly that
+      // bug and could drop a confirmed payment back to `idle`.
+      let confirmedOnChain = Boolean(args.txConfirmed || args.verified);
+
+      // ── Stage: verify ──────────────────────────────────────────────────
+      // Client-side verification gates the UI and produces the base-unit
+      // amount for the publish request. The server independently re-verifies
+      // against its own CHAIN_RPC_<CHAIN>.
+      setPublishPhase("verifying");
+      let verified: VerifiedTx;
       try {
-        const verified = args.verified ?? (await verifyTx(txHashValue, chainValue, expectedRecipient));
-        setVerifiedTx(verified);
-        setPendingVerifiedTx(verified);
-        setPendingTxHash(verified.txHash);
-
-        // ── critical section ──────────────────────────────────────────
-        // Record that on-chain submission succeeded BEFORE we attempt the
-        // publish API. If publish fails, the pending record still has
-        // tx_hash so the retry path is trivially correct.
-        try {
-          markSent(stealth.payment_id, {
-            tx_hash: verified.txHash,
-            chain: chainValue,
-            amount: verified.amountFormatted,
-          });
-        } catch {
-          /* never fatal */
+        verified = args.verified ?? (await verifyTx(txHashValue, chainValue, expectedRecipient));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to verify transaction";
+        setVerifyError(message);
+        setSendError(message);
+        setFlowError(message);
+        setFailedPhase("verifying");
+        if (confirmedOnChain) {
+          // Wallet receipt landed but our RPC read failed — conservative
+          // sticky failure: the funds may well be at the stealth address.
+          setPublishPhase("sent_unpublished_failure");
+          try {
+            markPublishFailed(stealth.payment_id, message);
+          } catch {
+            /* never fatal */
+          }
+        } else {
+          setPublishPhase("idle");
         }
+        toast.error(message);
+        refreshIncompletePending();
+        return false;
+      }
 
-        // Log a `sent_unpublished` row eagerly so the history reflects truth
-        // even if the page is hard-refreshed before publish completes.
-        logPayment({
-          recipient: activePending?.recipient ?? resolvedENS?.ens_name ?? "unknown",
-          chain: chainValue,
-          amount: verified.amountFormatted,
-          txHash: verified.txHash,
-          announcementId: null,
-          status: "sent_unpublished",
-          payment_id: stealth.payment_id,
-          stealth_address:
-            chainValue === "sui" ? stealth.stealth_sui_address : stealth.stealth_address,
-        });
+      confirmedOnChain = true;
+      setVerifiedTx(verified);
+      setPendingVerifiedTx(verified);
+      setPendingTxHash(verified.txHash);
 
-        const res = await api.publishAnnouncement({
-          payment_id: stealth.payment_id,
-          // Fallback if server-side pending entry expired (e.g. restart).
-          announcement: stealth.announcement,
+      // ── Stage: pre-publish checkpoint ──────────────────────────────────
+      // Upgrade the localStorage record to `sent_unpublished` BEFORE the
+      // publish API call so a failure cannot orphan the payment.
+      try {
+        markSent(stealth.payment_id, {
           tx_hash: verified.txHash,
-          amount: verified.amountFormatted,
           chain: chainValue,
+          amount: verified.amountFormatted,
         });
+      } catch {
+        /* never fatal */
+      }
+
+      // Log a `sent_unpublished` row eagerly so the history reflects truth
+      // even if the page is hard-refreshed before publish completes.
+      logPayment({
+        recipient: activePending?.recipient ?? resolvedENS?.ens_name ?? "unknown",
+        chain: chainValue,
+        amount: verified.amountFormatted,
+        txHash: verified.txHash,
+        announcementId: null,
+        status: "sent_unpublished",
+        payment_id: stealth.payment_id,
+        stealth_address:
+          chainValue === "sui" ? stealth.stealth_sui_address : stealth.stealth_address,
+      });
+
+      // ── Stage: publish ─────────────────────────────────────────────────
+      // Single atomic server leg: resolve pending → validate → RPC-verify →
+      // encrypt metadata → reserve Turso row (HMAC dedup) → relay to Monad →
+      // finalize row → telemetry.
+      setPublishPhase("publishing");
+      try {
+        const { res, usedFallback } = await publishWithFallback(stealth, verified, chainValue);
 
         setAnnouncementId(res.id);
+        setMonadTxHash(res.monad_tx_hash ?? null);
         upsertHistoryByTxHash(verified.txHash, {
           announcementId: res.id,
           status: "published",
@@ -858,27 +977,33 @@ export default function SendPayment() {
         analytics.sendPaymentPublished(chainValue, verified.amountFormatted, origin === "wallet" ? "wallet" : "manual");
         analytics.sendCompleted(chainValue, verified.amountFormatted, origin === "wallet" ? "wallet" : "manual");
         setPublishPhase("published");
+        setAttemptOrigin(null);
         const publishedChain = getSendChainConfig(chainValue);
         toast.success(
           `${origin === "wallet" ? "Sent" : "Verified"} ${formatCryptoAmount(verified.amountFormatted)} ${publishedChain.currencySymbol} – announcement published (#${res.id})`,
         );
+        if (usedFallback) {
+          toast.warning(
+            "Published via fallback announcement — the server-side pending entry had expired, so payment metadata was not encrypted.",
+          );
+        }
         refreshIncompletePending();
         return true;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to verify or publish";
-        setVerifyError(message);
+        let message = err instanceof Error ? err.message : "Failed to publish announcement";
+        if (err instanceof ApiError && err.status === 409) {
+          message =
+            "This payment was already announced (duplicate detected). If a previous publish attempt succeeded, the recipient can already discover it — check the registry before retrying.";
+        }
         setSendError(message);
-        // We only enter the sticky failure state if the tx was confirmed on-chain.
-        // If verifyTx itself failed, there are no orphan funds yet.
-        if (pendingTxHash || args.verified) {
-          setPublishPhase("sent_unpublished_failure");
-          try {
-            markPublishFailed(stealth.payment_id, message);
-          } catch {
-            /* never fatal */
-          }
-        } else {
-          setPublishPhase("idle");
+        setFlowError(message);
+        setFailedPhase("publishing");
+        // The on-chain tx is confirmed at this point — ALWAYS sticky.
+        setPublishPhase("sent_unpublished_failure");
+        try {
+          markPublishFailed(stealth.payment_id, message);
+        } catch {
+          /* never fatal */
         }
         toast.error(message);
         refreshIncompletePending();
@@ -888,7 +1013,6 @@ export default function SendPayment() {
     [
       activePending,
       logPayment,
-      pendingTxHash,
       refreshIncompletePending,
       resolvedENS,
       upsertHistoryByTxHash,
@@ -907,13 +1031,16 @@ export default function SendPayment() {
     }
     analytics.sendManualPublishClicked();
 
+    const isRetry = publishPhase === "sent_unpublished_failure";
     setIsPublishing(true);
     try {
       await attemptPublish({
         stealth: stealthResult,
         txHashValue: hash,
         chainValue: publishChain,
-        origin: publishPhase === "sent_unpublished_failure" ? "retry" : "manual",
+        origin: isRetry ? "retry" : "manual",
+        // A retry means the tx already landed; failures must stay sticky.
+        txConfirmed: isRetry,
       });
     } finally {
       setIsPublishing(false);
@@ -939,11 +1066,16 @@ export default function SendPayment() {
     setIsSending(true);
     setSendError(null);
     setVerifyError(null);
+    setAttemptOrigin("wallet");
+    setFailedPhase(null);
+    setFlowError(null);
     setPublishPhase("signing");
 
-    try {
-      let txHashResult: string;
+    // Local (non-state) flags so the catch block can't read stale closures.
+    let broadcasted = false;
+    let txHashResult: string | null = null;
 
+    try {
       if (isEvmChain(publishChain)) {
         if (!primaryWallet || !isEthereumWallet(primaryWallet)) {
           toast.error("Connect an EVM wallet first");
@@ -998,6 +1130,7 @@ export default function SendPayment() {
           chain: targetChain,
         } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
         analytics.sendTxSubmitted(evmChain);
+        broadcasted = true;
         setPublishPhase("broadcasting");
         setPendingTxHash(txHashResult);
         const evmPublicClient = getPublicClientForEvm(evmChain);
@@ -1010,36 +1143,51 @@ export default function SendPayment() {
           return;
         }
         const tx = new Transaction();
-        const amountMist = BigInt(Math.floor(Number(amt) * 1e9));
+        // Exact decimal → MIST conversion (no float rounding).
+        const amountMist = parseUnits(amt, getChainDecimals("sui"));
         const [coin] = tx.splitCoins(tx.gas, [amountMist]);
         tx.transferObjects([coin], stealthResult.stealth_sui_address);
         const result = await signAndExecuteSui({ transaction: tx });
         txHashResult = result.digest;
         analytics.sendTxSubmitted("sui");
+        broadcasted = true;
         setPublishPhase("broadcasting");
         setPendingTxHash(txHashResult);
         await suiClient.waitForTransaction({ digest: result.digest });
       }
 
-      // Tx confirmed → publish leg.
+      // Tx confirmed → verify + publish leg. Failures past this point are sticky.
       await attemptPublish({
         stealth: stealthResult,
-        txHashValue: txHashResult,
+        txHashValue: txHashResult!,
         chainValue: publishChain,
         origin: "wallet",
+        txConfirmed: true,
       });
     } catch (err) {
       const parsed = parseBlockchainError(err);
       const message = formatErrorMessage(parsed);
       setSendError(message);
-      
-      // If user rejected or signing failed → return to idle (no funds at risk)
-      if (publishPhase === "signing" || parsed.title === "Transaction cancelled") {
+      setFlowError(message);
+      if (!broadcasted || !txHashResult) {
+        // We never broadcast (signing rejected / wallet error) → idle again.
+        setFailedPhase("signing");
         setPublishPhase("idle");
       } else {
-        // Broadcast happened, on-chain confirmation failed → conservatively
-        // mark sticky failure so user can retry publish with the tx hash.
+        // Broadcast happened, confirmation read failed → conservatively mark
+        // sticky failure so the user can retry publish with the tx hash.
+        setFailedPhase("broadcasting");
         setPublishPhase("sent_unpublished_failure");
+        try {
+          markSent(stealthResult.payment_id, {
+            tx_hash: txHashResult,
+            chain: publishChain,
+            amount: walletAmount || undefined,
+          });
+          markPublishFailed(stealthResult.payment_id, message);
+        } catch {
+          /* never fatal */
+        }
       }
       toast.error(message);
     } finally {
@@ -1052,7 +1200,6 @@ export default function SendPayment() {
     publishChainConfig.label,
     primaryWallet,
     publishChain,
-    publishPhase,
     signAndExecuteSui,
     stealthResult,
     suiAccount,
@@ -1077,7 +1224,9 @@ export default function SendPayment() {
         txHashValue: tx,
         chainValue: publishChain,
         origin: "retry",
+        // Reuse the cached verification — never re-trigger the wallet on retry.
         verified: pendingVerifiedTx ?? undefined,
+        txConfirmed: true,
       });
     } finally {
       setIsPublishing(false);
@@ -1114,6 +1263,8 @@ export default function SendPayment() {
         return publishChain === "sui"
           ? "Waiting for Sui confirmation…"
           : `Waiting for ${publishChainConfig.shortLabel} confirmation…`;
+      case "verifying":
+        return "Verifying transaction…";
       case "publishing":
         return "Publishing announcement…";
       case "sent_unpublished_failure":
@@ -1124,6 +1275,7 @@ export default function SendPayment() {
   }, [publishChain, publishChainConfig.shortLabel, publishPhase]);
 
   const manualButtonLabel = useMemo(() => {
+    if (publishPhase === "verifying") return "Verifying transaction…";
     if (publishPhase === "publishing") return "Publishing announcement…";
     if (publishPhase === "sent_unpublished_failure") return "Retry Publish";
     return "Publish Payment";
@@ -1131,13 +1283,52 @@ export default function SendPayment() {
 
   const showStickyFailure = publishPhase === "sent_unpublished_failure";
   const isWalletBusy =
-    isSending ||
-    isPublishing ||
-    publishPhase === "publishing" ||
-    publishPhase === "broadcasting" ||
-    publishPhase === "signing";
-  const manualLoaderText =
-    publishPhase === "publishing" ? "Publishing announcement..." : "Verifying and publishing...";
+    isSending || isPublishing || ACTIVE_FLOW_PHASES.includes(publishPhase);
+
+  /* ── Stage flow loader: stages + active index derived from phase ───────── */
+  const flowStages = useMemo<FlowStage[]>(() => {
+    const verifyStage: FlowStage = {
+      id: "verifying",
+      label: "Verifying transaction",
+      description: `Confirming funds landed at the stealth address on ${publishChainConfig.label}`,
+    };
+    const publishStage: FlowStage = {
+      id: "publishing",
+      label: "Publishing announcement",
+      description: "Encrypting metadata · relaying to Monad · finalizing registry",
+    };
+    if (attemptOrigin === "wallet") {
+      return [
+        {
+          id: "signing",
+          label: "Awaiting wallet signature",
+          description: "Approve the transaction in your wallet",
+        },
+        {
+          id: "broadcasting",
+          label: `Broadcasting on ${publishChainConfig.label}`,
+          description: "Waiting for on-chain confirmation",
+        },
+        verifyStage,
+        publishStage,
+      ];
+    }
+    return [verifyStage, publishStage];
+  }, [attemptOrigin, publishChainConfig.label]);
+
+  const flowActiveIndex = useMemo(() => {
+    const phase: FlowPhaseId | null =
+      failedPhase ??
+      (ACTIVE_FLOW_PHASES.includes(publishPhase) ? (publishPhase as FlowPhaseId) : null);
+    if (phase === null) return publishPhase === "published" ? flowStages.length : -1;
+    const idx = flowStages.findIndex((s) => s.id === phase);
+    return idx === -1 ? flowStages.length : idx;
+  }, [failedPhase, flowStages, publishPhase]);
+
+  const showFlowLoader =
+    attemptOrigin !== null &&
+    publishPhase !== "published" &&
+    (ACTIVE_FLOW_PHASES.includes(publishPhase) || failedPhase !== null);
 
   const recoveryJsonForActive = useMemo(() => {
     if (!activePending) return null;
@@ -1357,12 +1548,21 @@ export default function SendPayment() {
                       className="space-y-6"
                     >
                       {isResolving && (
-                        <div className="flex flex-col items-center gap-2">
-                          <CoreSpinLoader />
-                          {resolveStatus && (
-                            <p className="text-xs text-white/50">{resolveStatus}</p>
-                          )}
-                        </div>
+                        <StageFlowLoader
+                          stages={[
+                            {
+                              id: "resolve",
+                              label: "Resolving recipient",
+                              description: "Looking up the SPECTER meta-address (ENS / SuiNS / IPFS)",
+                            },
+                            {
+                              id: "stealth",
+                              label: "Generating stealth address",
+                              description: "Server-side ML-KEM-768 encapsulation — one-time address, unlinkable on-chain",
+                            },
+                          ]}
+                          activeIndex={resolveStatus.startsWith("Generating") ? 1 : 0}
+                        />
                       )}
                     </motion.div>
                   )}
@@ -1476,9 +1676,14 @@ export default function SendPayment() {
                                   tx: {pendingTxHash}
                                 </p>
                               )}
-                              {sendError && (
+                              {!showFlowLoader && (sendError ?? activePending?.last_publish_error) && (
                                 <p className="text-[11px] text-red-300/80 mt-1.5">
-                                  {sendError}
+                                  {sendError ?? activePending?.last_publish_error}
+                                </p>
+                              )}
+                              {activePending && activePending.publish_attempts > 0 && (
+                                <p className="text-[10px] text-white/35 mt-1">
+                                  {activePending.publish_attempts} publish attempt{activePending.publish_attempts !== 1 ? "s" : ""} so far
                                 </p>
                               )}
                               <div className="mt-3 flex flex-wrap gap-2">
@@ -1514,6 +1719,26 @@ export default function SendPayment() {
                             </div>
                           </div>
                         </div>
+                      )}
+
+                      {/* Live stage loader — exactly which leg of the flow is running */}
+                      {announcementId === null && showFlowLoader && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="mb-4"
+                        >
+                          <StageFlowLoader
+                            stages={flowStages}
+                            activeIndex={flowActiveIndex}
+                            error={flowError}
+                            hint={
+                              publishPhase === "publishing"
+                                ? "Keep this tab open — publish finishes in one atomic server call."
+                                : undefined
+                            }
+                          />
+                        </motion.div>
                       )}
 
                       {announcementId === null ? (
@@ -1633,12 +1858,17 @@ export default function SendPayment() {
                                   onChange={(e) => {
                                     setTxHash(e.target.value);
                                     setVerifyError(null);
+                                    // Editing the hash starts a fresh attempt — clear
+                                    // the failed-stage marker (but never the sticky
+                                    // sent_unpublished_failure phase itself).
+                                    setFailedPhase(null);
+                                    setFlowError(null);
                                   }}
                                   className="mt-1 font-mono text-sm"
                                 />
                               </div>
 
-                              {verifyError && publishPhase !== "sent_unpublished_failure" && (
+                              {verifyError && publishPhase !== "sent_unpublished_failure" && !showFlowLoader && (
                                 <div className="flex items-center gap-2 text-sm text-destructive">
                                   <AlertCircle className="h-4 w-4 shrink-0" />
                                   {verifyError}
@@ -1651,14 +1881,15 @@ export default function SendPayment() {
                                 onClick={handleVerifyAndPublish}
                                 disabled={isPublishing || !txHash.trim()}
                               >
-                                {isPublishing ? "Processing..." : manualButtonLabel}
+                                {isPublishing ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    {manualButtonLabel}
+                                  </>
+                                ) : (
+                                  manualButtonLabel
+                                )}
                               </Button>
-                              {isPublishing && (
-                                <SendingLoader
-                                  text={manualLoaderText}
-                                  className="mx-auto max-w-sm"
-                                />
-                              )}
 
                               <p className="text-xs text-muted-foreground text-center">
                                 Publishing is required for the recipient to discover this payment.
@@ -1811,14 +2042,15 @@ export default function SendPayment() {
                                       insufficientFunds
                                     }
                                   >
-                                    {isWalletBusy ? "Processing..." : walletButtonLabel}
+                                    {isWalletBusy ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        {walletButtonLabel}
+                                      </>
+                                    ) : (
+                                      walletButtonLabel
+                                    )}
                                   </Button>
-                                  {isWalletBusy && (
-                                    <SendingLoader
-                                      text={walletButtonLabel}
-                                      className="mx-auto max-w-sm"
-                                    />
-                                  )}
                                 </div>
                               ) : (
                                 <div className="space-y-3">
@@ -1869,14 +2101,15 @@ export default function SendPayment() {
                                       insufficientFunds
                                     }
                                   >
-                                    {isWalletBusy ? "Processing..." : walletButtonLabel}
+                                    {isWalletBusy ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        {walletButtonLabel}
+                                      </>
+                                    ) : (
+                                      walletButtonLabel
+                                    )}
                                   </Button>
-                                  {isWalletBusy && (
-                                    <SendingLoader
-                                      text={walletButtonLabel}
-                                      className="mx-auto max-w-sm"
-                                    />
-                                  )}
                                 </div>
                               )}
 
@@ -1931,6 +2164,27 @@ export default function SendPayment() {
                               <div className="text-white/70">
                                 Tx: <span className="font-mono">{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(0, 10)}...{(verifiedTx?.txHash ?? pendingTxHash ?? "").slice(-6)}</span>
                               </div>
+                              {monadTxHash && (
+                                <div className="text-white/70 md:col-span-2 flex items-center gap-1.5">
+                                  <span>
+                                    Monad announce:{" "}
+                                    <span className="font-mono">
+                                      {monadTxHash.slice(0, 10)}...{monadTxHash.slice(-6)}
+                                    </span>
+                                  </span>
+                                  {getExplorerTxUrl("monad", monadTxHash) && (
+                                    <a
+                                      href={getExplorerTxUrl("monad", monadTxHash)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-primary/60 hover:text-primary transition-colors"
+                                      aria-label="View announce transaction on Monad explorer"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="flex flex-col gap-3 mt-6 w-full max-w-xs mx-auto">
@@ -1944,6 +2198,7 @@ export default function SendPayment() {
                                 payment_id: stealthResult.payment_id,
                                 recipient: resolvedENS?.ens_name,
                                 tx_hash: verifiedTx?.txHash ?? pendingTxHash ?? undefined,
+                                monad_announce_tx_hash: monadTxHash ?? undefined,
                               }}
                               filename="specter-payment-details.json"
                               label="Download"

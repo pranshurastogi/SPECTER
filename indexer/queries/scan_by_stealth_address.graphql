@@ -1,0 +1,29 @@
+# Stealth address lookup — find all announcements targeting a specific address.
+#
+# Use case: given a derived stealth address (after successful ML-KEM decapsulation),
+# confirm the payment and retrieve the source chain / amount.
+#
+# Note: stealthAddress must be lowercase (the indexer stores addresses lowercased).
+#
+# Variables:
+#   $stealthAddress — lowercase checksummed stealth address
+
+query ScanByStealthAddress($stealthAddress: String!) {
+  AnnouncementEvent(
+    where: { stealthAddress: { _eq: $stealthAddress } }
+    order_by: { blockNumber: desc }
+  ) {
+    id
+    stealthAddress
+    caller
+    ephemeralPubKey
+    viewTag
+    txHash
+    sourceChainId
+    amount
+    blockNumber
+    blockTimestamp
+    transactionHash
+    logIndex
+  }
+}

@@ -9,6 +9,7 @@ description = "Announcement registry storage for SPECTER"
 [features]
 default = []
 turso = ["libsql", "lru", "hex"]
+test-utils = ["turso", "libsql/core"]  # exposes new_test() and local SQLite setup
 
 [dependencies]
 specter-core = { path = "../specter-core" }
@@ -44,3 +45,11 @@ hex = { workspace = true }
 tempfile = { workspace = true }
 # "core" adds local in-memory SQLite for tests (no network required)
 libsql = { workspace = true, features = ["core"] }
+# Integration tests use announcement_from_event from specter-chain
+specter-chain = { path = "../specter-chain" }
+# Integration tests use Address type from alloy
+alloy = { workspace = true }
+
+[[test]]
+name = "integration_full_flow"
+required-features = ["test-utils"]
