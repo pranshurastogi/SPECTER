@@ -69,6 +69,34 @@ export function parseBlockchainError(error: unknown): ParsedError {
     };
   }
 
+  // JSON-RPC protocol version error (Dynamic Labs / WalletConnect provider quirk)
+  if (
+    err?.message?.includes('Version of JSON-RPC protocol is not supported') ||
+    err?.message?.includes('JSON-RPC protocol') ||
+    (err?.code === -32600 && err?.message)
+  ) {
+    return {
+      title: 'Wallet provider error',
+      message: 'Your wallet returned a JSON-RPC compatibility error. Try switching networks manually in your wallet and retry, or reconnect your wallet.',
+      isUserAction: true,
+    };
+  }
+
+  // Gas fee cap error (stale estimate, common on Arbitrum Sepolia)
+  if (
+    err?.message?.includes('fee cap') ||
+    err?.message?.includes('maxFeePerGas') ||
+    err?.message?.includes('block base fee') ||
+    err?.message?.includes('FeeTooLow') ||
+    err?.message?.includes('gas price too low')
+  ) {
+    return {
+      title: 'Gas fee too low',
+      message: 'The gas fee estimate was lower than the current network base fee. Please retry — the wallet will re-estimate with current fees.',
+      isUserAction: true,
+    };
+  }
+
   // RPC/Network errors
   if (
     err?.message?.includes('could not detect network') ||
