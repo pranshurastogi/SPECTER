@@ -602,6 +602,7 @@ export default function GenerateKeys() {
         value: textRecordValue,
         suiClient,
         network: suiNetwork,
+        senderAddress: suiAddress!,
         signAndExecute: (args) => signAndExecute({ transaction: args.transaction }),
       });
 
