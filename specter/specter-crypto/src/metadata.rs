@@ -231,7 +231,10 @@ mod tests {
         let mut enc = encrypt_announcement_metadata(&pt, &test_secret());
         enc[10] ^= 0xFF; // flip bits in ciphertext
         let result = decrypt_announcement_metadata(&enc, &test_secret());
-        assert!(result.is_err(), "tampered ciphertext must fail authentication");
+        assert!(
+            result.is_err(),
+            "tampered ciphertext must fail authentication"
+        );
     }
 
     #[test]

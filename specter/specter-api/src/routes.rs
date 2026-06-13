@@ -21,8 +21,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/suins/resolve/:name", get(handlers::resolve_suins))
         .route("/api/v1/ipfs/upload", post(handlers::upload_ipfs))
         .route("/api/v1/ipfs/:cid", get(handlers::ipfs_get))
-        .route("/api/v1/registry/announcements", get(handlers::list_announcements))
-        .route("/api/v1/registry/announcements", post(handlers::publish_announcement))
+        .route(
+            "/api/v1/registry/announcements",
+            get(handlers::list_announcements),
+        )
+        .route(
+            "/api/v1/registry/announcements",
+            post(handlers::publish_announcement),
+        )
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
         .with_state(state)
 }

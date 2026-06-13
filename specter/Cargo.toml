@@ -47,7 +47,6 @@ zeroize = { version = "1.7", features = ["derive"] }  # Secure memory clearing
 # ETHEREUM & WEB3
 # ═══════════════════════════════════════════════════════════════════════════════
 alloy = { version = "0.3", features = ["full"] }  # Modern Ethereum library
-ethers = { version = "2.0", features = ["abigen", "ws"] }  # Fallback for ENS
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SERIALIZATION

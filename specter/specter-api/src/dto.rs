@@ -377,4 +377,3 @@ pub struct HealthResponse {
     /// True when the poller has processed at least one block.
     pub poller_ok: bool,
 }
-

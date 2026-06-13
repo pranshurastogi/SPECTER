@@ -326,7 +326,10 @@ impl Scanner {
                         announcement.tx_hash.as_deref(),
                         announcement.ephemeral_key_hash.as_deref(),
                     ) else {
-                        debug!(view_tag, "skipping hash-only announcement (no resolver / missing tx or hash)");
+                        debug!(
+                            view_tag,
+                            "skipping hash-only announcement (no resolver / missing tx or hash)"
+                        );
                         continue;
                     };
                     match resolver.resolve(tx, hash).await {
@@ -430,7 +433,10 @@ impl Scanner {
                         announcement.tx_hash.as_deref(),
                         announcement.ephemeral_key_hash.as_deref(),
                     ) else {
-                        debug!(view_tag, "skipping hash-only announcement (no resolver / missing tx or hash)");
+                        debug!(
+                            view_tag,
+                            "skipping hash-only announcement (no resolver / missing tx or hash)"
+                        );
                         continue;
                     };
                     match resolver.resolve(tx, hash).await {
@@ -547,7 +553,11 @@ mod tests {
     }
     #[async_trait]
     impl EphemeralKeyResolver for StubResolver {
-        async fn resolve(&self, _tx: &str, _expected: &[u8]) -> specter_core::error::Result<Vec<u8>> {
+        async fn resolve(
+            &self,
+            _tx: &str,
+            _expected: &[u8],
+        ) -> specter_core::error::Result<Vec<u8>> {
             Ok(self.ciphertext.clone())
         }
     }
@@ -770,7 +780,9 @@ mod tests {
         registry.publish(ann).await.unwrap();
 
         // With a resolver that returns the real ciphertext, the payment is discovered.
-        let config = ScannerConfig::default().resolver(Arc::new(StubResolver { ciphertext: ct_bytes }));
+        let config = ScannerConfig::default().resolver(Arc::new(StubResolver {
+            ciphertext: ct_bytes,
+        }));
         let discoveries = scanner.scan_with_config(&registry, config).await.unwrap();
         assert_eq!(discoveries.len(), 1);
     }

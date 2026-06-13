@@ -44,15 +44,15 @@ pub mod metadata;
 pub mod view_tag;
 
 // Re-export main functions at crate root
+pub use db_keys::{DbKeys, WRAPPED_SECRET_SIZE};
 pub use derive::{
     derive_eth_address, derive_eth_address_from_seed, derive_stealth_keys,
     derive_stealth_sui_address, derive_sui_address_from_seed,
 };
-pub use db_keys::{DbKeys, WRAPPED_SECRET_SIZE};
 pub use hash::{shake256, shake256_xof};
 pub use kyber::{decapsulate, encapsulate, generate_keypair, KyberCiphertext};
-pub use view_tag::compute_view_tag;
 pub use metadata::{
-    decrypt_announcement_metadata, encrypt_announcement_metadata,
-    ENCRYPTED_METADATA_SIZE, PLAINTEXT_METADATA_SIZE,
+    decrypt_announcement_metadata, encrypt_announcement_metadata, ENCRYPTED_METADATA_SIZE,
+    PLAINTEXT_METADATA_SIZE,
 };
+pub use view_tag::compute_view_tag;

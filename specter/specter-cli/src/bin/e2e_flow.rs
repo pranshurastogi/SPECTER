@@ -53,18 +53,31 @@ const DEFAULT_AMOUNT_WEI: u64 = 1_000; // 1000 wei — negligible cost for test
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn step(n: u8, total: u8, msg: &str) {
-    println!("\n{} {}", format!("[{n}/{total}]").cyan().bold(), msg.bold());
+    println!(
+        "\n{} {}",
+        format!("[{n}/{total}]").cyan().bold(),
+        msg.bold()
+    );
 }
-fn ok(msg: &str)     { println!("  {} {}", "✓".green().bold(), msg); }
-fn fail_msg(msg: &str) { println!("  {} {}", "✗".red().bold(), msg); }
-fn info(msg: &str)   { println!("  {} {}", "→".blue(), msg); }
+fn ok(msg: &str) {
+    println!("  {} {}", "✓".green().bold(), msg);
+}
+fn fail_msg(msg: &str) {
+    println!("  {} {}", "✗".red().bold(), msg);
+}
+fn info(msg: &str) {
+    println!("  {} {}", "→".blue(), msg);
+}
 fn detail(k: &str, v: &str) {
     println!("  {:<24} {}", format!("{k}:").dimmed(), v.cyan());
 }
 
 fn redact(s: &str) -> String {
-    if s.len() <= 10 { "****".into() }
-    else { format!("{}...{}", &s[..6], &s[s.len()-4..]) }
+    if s.len() <= 10 {
+        "****".into()
+    } else {
+        format!("{}...{}", &s[..6], &s[s.len() - 4..])
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,13 +97,25 @@ async fn main() -> Result<()> {
         eprintln!("Note: {e2e_file} not found — ensure PRIVATE_KEY is in .env");
     }
 
-    println!("{}", "\n╔══════════════════════════════════════════════════════╗".cyan());
-    println!("{}", "║       SPECTER E2E Announcement Flow Test            ║".cyan());
-    println!("{}", "╚══════════════════════════════════════════════════════╝\n".cyan());
+    println!(
+        "{}",
+        "\n╔══════════════════════════════════════════════════════╗".cyan()
+    );
+    println!(
+        "{}",
+        "║       SPECTER E2E Announcement Flow Test            ║".cyan()
+    );
+    println!(
+        "{}",
+        "╚══════════════════════════════════════════════════════╝\n".cyan()
+    );
 
     let skip_chain = std::env::var("E2E_SKIP_CHAIN").unwrap_or_default() == "1";
     if skip_chain {
-        println!("  {} E2E_SKIP_CHAIN=1 — on-chain steps will be simulated\n", "⚡".yellow());
+        println!(
+            "  {} E2E_SKIP_CHAIN=1 — on-chain steps will be simulated\n",
+            "⚡".yellow()
+        );
     }
 
     // ── [1/9] Load configuration ─────────────────────────────────────────────
@@ -101,17 +126,20 @@ async fn main() -> Result<()> {
     let pk_hex = pk_hex.trim().trim_start_matches("0x");
 
     if pk_hex.len() != 64 {
-        bail!("PRIVATE_KEY must be 64 hex characters (got {})", pk_hex.len());
+        bail!(
+            "PRIVATE_KEY must be 64 hex characters (got {})",
+            pk_hex.len()
+        );
     }
 
     let rpc_url = std::env::var("MONAD_RPC_URL")
         .or_else(|_| std::env::var("MONAD_TESTNET_RPC_URL"))
         .unwrap_or_else(|_| MONAD_RPC_DEFAULT.into());
 
-    let announcer_str = std::env::var("SPECTER_ANNOUNCER_ADDRESS")
-        .unwrap_or_else(|_| ANNOUNCER_DEFAULT.into());
+    let announcer_str =
+        std::env::var("SPECTER_ANNOUNCER_ADDRESS").unwrap_or_else(|_| ANNOUNCER_DEFAULT.into());
 
-    let turso_url   = std::env::var("TURSO_DATABASE_URL").context("TURSO_DATABASE_URL not set")?;
+    let turso_url = std::env::var("TURSO_DATABASE_URL").context("TURSO_DATABASE_URL not set")?;
     let turso_token = std::env::var("TURSO_AUTH_TOKEN").context("TURSO_AUTH_TOKEN not set")?;
 
     let amount_wei: u64 = std::env::var("E2E_AMOUNT_WEI")
@@ -122,15 +150,19 @@ async fn main() -> Result<()> {
     let signer: PrivateKeySigner = pk_hex.parse().context("Invalid PRIVATE_KEY")?;
     let sender_addr = signer.address();
 
-    detail("Sender address",     &format!("{sender_addr:?}"));
-    detail("RPC",                &rpc_url);
-    detail("Announcer",          &announcer_str);
-    detail("Amount",             &format!("{amount_wei} wei"));
-    detail("Turso DB",           &redact(&turso_url));
+    detail("Sender address", &format!("{sender_addr:?}"));
+    detail("RPC", &rpc_url);
+    detail("Announcer", &announcer_str);
+    detail("Amount", &format!("{amount_wei} wei"));
+    detail("Turso DB", &redact(&turso_url));
     ok("Configuration loaded");
 
     // ── [2/9] Generate recipient SPECTER keys ─────────────────────────────────
-    step(2, 9, "Generating ephemeral recipient SPECTER keys (ML-KEM-768)");
+    step(
+        2,
+        9,
+        "Generating ephemeral recipient SPECTER keys (ML-KEM-768)",
+    );
 
     // Raw ML-KEM keypairs (spending + viewing) so the canonical recipient scan in
     // step 9 can run with the recipient's secret keys — exactly as a wallet/SDK does.
@@ -140,9 +172,10 @@ async fn main() -> Result<()> {
 
     detail(
         "Viewing key (pub)",
-        &format!("{}...{} ({} bytes)",
+        &format!(
+            "{}...{} ({} bytes)",
             hex::encode(&meta.viewing_pk.as_bytes()[..4]),
-            hex::encode(&meta.viewing_pk.as_bytes()[meta.viewing_pk.as_bytes().len()-4..]),
+            hex::encode(&meta.viewing_pk.as_bytes()[meta.viewing_pk.as_bytes().len() - 4..]),
             meta.viewing_pk.as_bytes().len()
         ),
     );
@@ -158,25 +191,29 @@ async fn main() -> Result<()> {
     let view_tag = compute_view_tag(&shared_secret);
 
     // derive_stealth_address(spending_pk_bytes, shared_secret) → EthAddress
-    let stealth_eth =
-        derive_stealth_address(meta.spending_pk.as_bytes(), &shared_secret)
-            .context("Stealth address derivation failed")?;
+    let stealth_eth = derive_stealth_address(meta.spending_pk.as_bytes(), &shared_secret)
+        .context("Stealth address derivation failed")?;
 
     let stealth_addr_hex = stealth_eth.to_checksum_string();
 
     // Save ephemeral key bytes before consuming ciphertext
     let ephemeral_key_vec: Vec<u8> = ciphertext.into_bytes();
-    let ephemeral_key_arr: [u8; 1088] = ephemeral_key_vec
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("ML-KEM ciphertext must be 1088 bytes (got {})", ephemeral_key_vec.len()))?;
+    let ephemeral_key_arr: [u8; 1088] = ephemeral_key_vec.as_slice().try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "ML-KEM ciphertext must be 1088 bytes (got {})",
+            ephemeral_key_vec.len()
+        )
+    })?;
 
     // Convert SPECTER EthAddress → alloy Address for on-chain calls
     let stealth_evm_addr: Address = Address::from_slice(stealth_eth.as_bytes());
 
-    detail("View tag",         &format!("0x{view_tag:02x}"));
-    detail("Stealth address",  &stealth_addr_hex);
-    detail("Ephemeral key",    &format!("{} bytes (ML-KEM-1024 ciphertext)", ephemeral_key_vec.len()));
+    detail("View tag", &format!("0x{view_tag:02x}"));
+    detail("Stealth address", &stealth_addr_hex);
+    detail(
+        "Ephemeral key",
+        &format!("{} bytes (ML-KEM-1024 ciphertext)", ephemeral_key_vec.len()),
+    );
     ok("Stealth address derived");
 
     // ── [4/9] Send micro-payment on Monad testnet ─────────────────────────────
@@ -198,7 +235,10 @@ async fn main() -> Result<()> {
             .context("eth_getBalance failed — check RPC and network")?;
 
         let balance_mon = balance.to::<u128>() as f64 / 1e18;
-        info(&format!("Sender balance: {} wei ({:.8} MON)", balance, balance_mon));
+        info(&format!(
+            "Sender balance: {} wei ({:.8} MON)",
+            balance, balance_mon
+        ));
 
         // Minimum viable balance: 0.001 MON for gas + amount
         if balance < U256::from(1_000_000_000_000u64) {
@@ -216,18 +256,22 @@ async fn main() -> Result<()> {
         info(&format!("Sending {amount_wei} wei → {stealth_addr_hex}..."));
         let t = Instant::now();
 
-        let pending = provider.send_transaction(tx).await
+        let pending = provider
+            .send_transaction(tx)
+            .await
             .context("Failed to broadcast payment tx")?;
 
-        let receipt = pending.get_receipt().await
+        let receipt = pending
+            .get_receipt()
+            .await
             .context("Failed to get payment tx receipt")?;
 
         let tx_hash = receipt.transaction_hash;
-        let block   = receipt.block_number.unwrap_or(0);
+        let block = receipt.block_number.unwrap_or(0);
 
-        detail("Payment tx hash",  &format!("{tx_hash:?}"));
-        detail("Block number",     &block.to_string());
-        detail("Confirmation",     &format!("{} ms", t.elapsed().as_millis()));
+        detail("Payment tx hash", &format!("{tx_hash:?}"));
+        detail("Block number", &block.to_string());
+        detail("Confirmation", &format!("{} ms", t.elapsed().as_millis()));
         ok("Micro-payment confirmed");
 
         (tx_hash, block)
@@ -249,8 +293,7 @@ async fn main() -> Result<()> {
         .with_source_chain_id(MONAD_CHAIN_ID) // funds came FROM Monad
         .encode();
 
-    let encrypted_metadata =
-        encrypt_announcement_metadata(&plaintext_metadata, &shared_secret);
+    let encrypted_metadata = encrypt_announcement_metadata(&plaintext_metadata, &shared_secret);
 
     assert_eq!(
         encrypted_metadata.len(),
@@ -268,19 +311,50 @@ async fn main() -> Result<()> {
     let payment_tx_hex = format!("{send_tx_hash:?}").to_lowercase();
     let payment_hmac = db_keys.payment_hmac(&payment_tx_hex);
 
-    detail("Byte [0]     view_tag",    &format!("0x{view_tag:02x}  (SHAKE-256, plaintext)"));
-    detail("Metadata size",           &format!("{} bytes (AES-256-GCM)", encrypted_metadata.len()));
-    detail("ephemeralKeyHash",        &format!("0x{}...  (keccak256 of ciphertext)", hex::encode(&ephemeral_key_hash[..4])));
-    detail("payment_tx_hash_hmac",    &format!("0x{}...  (SHAKE-256 keyed MAC)", hex::encode(&payment_hmac[..4])));
-    detail("Plaintext payment tx",    &format!("0x{}...  (encrypted into blob)", hex::encode(&tx_hash_bytes[..4])));
-    detail("Plaintext amount",        &format!("{amount_wei} wei  (encrypted into blob)"));
-    detail("Plaintext chain_id",      &format!("{MONAD_CHAIN_ID}  (encrypted into blob)"));
+    detail(
+        "Byte [0]     view_tag",
+        &format!("0x{view_tag:02x}  (SHAKE-256, plaintext)"),
+    );
+    detail(
+        "Metadata size",
+        &format!("{} bytes (AES-256-GCM)", encrypted_metadata.len()),
+    );
+    detail(
+        "ephemeralKeyHash",
+        &format!(
+            "0x{}...  (keccak256 of ciphertext)",
+            hex::encode(&ephemeral_key_hash[..4])
+        ),
+    );
+    detail(
+        "payment_tx_hash_hmac",
+        &format!(
+            "0x{}...  (SHAKE-256 keyed MAC)",
+            hex::encode(&payment_hmac[..4])
+        ),
+    );
+    detail(
+        "Plaintext payment tx",
+        &format!(
+            "0x{}...  (encrypted into blob)",
+            hex::encode(&tx_hash_bytes[..4])
+        ),
+    );
+    detail(
+        "Plaintext amount",
+        &format!("{amount_wei} wei  (encrypted into blob)"),
+    );
+    detail(
+        "Plaintext chain_id",
+        &format!("{MONAD_CHAIN_ID}  (encrypted into blob)"),
+    );
     ok("Encrypted metadata + dedup MAC ready");
 
     // ── [6/9] Publish to SPECTERAnnouncer on Monad ───────────────────────────
     step(6, 9, "Publishing announcement to SPECTERAnnouncer contract");
 
-    let announcer_addr: Address = announcer_str.parse()
+    let announcer_addr: Address = announcer_str
+        .parse()
         .context("Invalid SPECTER_ANNOUNCER_ADDRESS")?;
 
     let announce_tx_hash = if skip_chain {
@@ -304,14 +378,18 @@ async fn main() -> Result<()> {
         .await
         .context("SPECTERAnnouncer.announce() failed")?;
 
-        detail("Announce tx hash",  &format!("{hash:?}"));
-        detail("Confirmation",      &format!("{} ms", t.elapsed().as_millis()));
+        detail("Announce tx hash", &format!("{hash:?}"));
+        detail("Confirmation", &format!("{} ms", t.elapsed().as_millis()));
         ok("Announcement published on-chain");
         hash
     };
 
     // ── [7/9] Resolve ciphertext from announce() calldata ─────────────────────
-    step(7, 9, "Resolving ciphertext from calldata + verifying keccak256 hash");
+    step(
+        7,
+        9,
+        "Resolving ciphertext from calldata + verifying keccak256 hash",
+    );
 
     let resolved_ephemeral = if skip_chain {
         info("Simulated (E2E_SKIP_CHAIN=1) — using local ciphertext");
@@ -325,8 +403,8 @@ async fn main() -> Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!("calldata resolve failed: {e}"))?;
 
-        detail("Calldata fetch",     &format!("{} ms", t.elapsed().as_millis()));
-        detail("Ciphertext bytes",   &format!("{}", resolved.len()));
+        detail("Calldata fetch", &format!("{} ms", t.elapsed().as_millis()));
+        detail("Ciphertext bytes", &format!("{}", resolved.len()));
         ok("keccak256(ciphertext) matches event ephemeralKeyHash");
         resolved
     };
@@ -360,18 +438,33 @@ async fn main() -> Result<()> {
         .await
         .context("Turso insert failed")?;
 
-    detail("Announcement ID",  &ann_id.to_string());
-    detail("View tag stored",  &format!("0x{:02x}", announcement.view_tag));
-    detail("ephemeral_key_hash", &format!("0x{}...", hex::encode(&ephemeral_key_hash[..4])));
-    detail("metadata_blob",    &format!("{} bytes", encrypted_metadata.len()));
-    detail("on_chain flag",    "1");
+    detail("Announcement ID", &ann_id.to_string());
+    detail(
+        "View tag stored",
+        &format!("0x{:02x}", announcement.view_tag),
+    );
+    detail(
+        "ephemeral_key_hash",
+        &format!("0x{}...", hex::encode(&ephemeral_key_hash[..4])),
+    );
+    detail(
+        "metadata_blob",
+        &format!("{} bytes", encrypted_metadata.len()),
+    );
+    detail("on_chain flag", "1");
     ok("Stored in Turso");
 
     // ── [9/9] Scan, verify fields, and recover stealth address ──────────────
-    step(9, 9, "Scanning by view_tag — verifying end-to-end + recipient discovery");
+    step(
+        9,
+        9,
+        "Scanning by view_tag — verifying end-to-end + recipient discovery",
+    );
 
     let t = Instant::now();
-    let results = registry.get_by_view_tag(view_tag).await
+    let results = registry
+        .get_by_view_tag(view_tag)
+        .await
         .context("get_by_view_tag failed")?;
     let scan_ms = t.elapsed().as_millis();
 
@@ -380,7 +473,9 @@ async fn main() -> Result<()> {
         results.len()
     ));
 
-    let found = results.iter().find(|a| a.id == ann_id)
+    let found = results
+        .iter()
+        .find(|a| a.id == ann_id)
         .context("Our announcement was not found in scan results")?;
 
     let mut errs = 0usize;
@@ -398,22 +493,40 @@ async fn main() -> Result<()> {
         }};
     }
 
-    verify!("view_tag",        format!("0x{view_tag:02x}"),    format!("0x{:02x}", found.view_tag));
-    verify!("chain",           "monad-testnet",               found.chain.as_deref().unwrap_or("(none)"));
+    verify!(
+        "view_tag",
+        format!("0x{view_tag:02x}"),
+        format!("0x{:02x}", found.view_tag)
+    );
+    verify!(
+        "chain",
+        "monad-testnet",
+        found.chain.as_deref().unwrap_or("(none)")
+    );
 
     if found.stealth_address.is_some() {
-        ok(&format!("stealth_address:    {}", found.stealth_address.as_deref().unwrap_or("")));
+        ok(&format!(
+            "stealth_address:    {}",
+            found.stealth_address.as_deref().unwrap_or("")
+        ));
     } else {
         fail_msg("stealth_address: missing");
         errs += 1;
     }
     if found.tx_hash.is_some() {
-        ok(&format!("tx_hash (announce): {}", found.tx_hash.as_deref().unwrap_or("")));
+        ok(&format!(
+            "tx_hash (announce): {}",
+            found.tx_hash.as_deref().unwrap_or("")
+        ));
     } else {
         fail_msg("tx_hash (announce tx): missing");
         errs += 1;
     }
-    if found.ephemeral_key_hash.as_ref().is_some_and(|h| h.len() == 32) {
+    if found
+        .ephemeral_key_hash
+        .as_ref()
+        .is_some_and(|h| h.len() == 32)
+    {
         ok(&format!(
             "ephemeral_key_hash: 0x{}...",
             hex::encode(&found.ephemeral_key_hash.as_ref().unwrap()[..4])
@@ -422,7 +535,11 @@ async fn main() -> Result<()> {
         fail_msg("ephemeral_key_hash: missing or wrong length");
         errs += 1;
     }
-    if found.metadata_blob.as_ref().is_some_and(|b| b.len() == ENCRYPTED_METADATA_SIZE) {
+    if found
+        .metadata_blob
+        .as_ref()
+        .is_some_and(|b| b.len() == ENCRYPTED_METADATA_SIZE)
+    {
         ok(&format!(
             "metadata_blob:      {} bytes (encrypted)",
             found.metadata_blob.as_ref().unwrap().len()
@@ -491,7 +608,9 @@ async fn main() -> Result<()> {
             }
             let recovered = d.keys.address.to_checksum_string();
             if recovered.eq_ignore_ascii_case(&stealth_addr_hex) {
-                ok(&format!("canonical scan:     stealth address recovered {recovered}"));
+                ok(&format!(
+                    "canonical scan:     stealth address recovered {recovered}"
+                ));
             } else {
                 fail_msg(&format!(
                     "canonical scan: expected {stealth_addr_hex}, got {recovered}"
@@ -513,7 +632,9 @@ async fn main() -> Result<()> {
         println!(
             "\n  {} {}",
             "✅".green(),
-            format!("PASSED in {:.1}s", elapsed.as_secs_f64()).green().bold()
+            format!("PASSED in {:.1}s", elapsed.as_secs_f64())
+                .green()
+                .bold()
         );
         println!("\n  {}", "Summary".bold());
         println!("  ├─ Sender:          {sender_addr:?}");

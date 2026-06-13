@@ -12,7 +12,9 @@ fn make_valid_ephemeral_key() -> Vec<u8> {
 }
 
 fn make_test_address() -> alloy::primitives::Address {
-    "0x0000000000000000000000000000000000000001".parse().unwrap()
+    "0x0000000000000000000000000000000000000001"
+        .parse()
+        .unwrap()
 }
 
 /// Full pipeline: metadata with all fields → encode → announcement_from_event → verify
@@ -100,7 +102,9 @@ fn test_full_roundtrip_builder_to_announcement() {
     let result = announcement_from_event(
         make_valid_ephemeral_key(),
         encoded.to_vec(),
-        "0x1234567890abcdef1234567890abcdef12345678".parse().unwrap(),
+        "0x1234567890abcdef1234567890abcdef12345678"
+            .parse()
+            .unwrap(),
         12_345_678,
     );
 
@@ -178,7 +182,7 @@ fn test_metadata_partial_zero_fields_to_announcement() {
     metadata_bytes[0] = 0x42;
     metadata_bytes[32] = 0x01; // Last byte of tx_hash non-zero
     metadata_bytes[64] = 0x02; // Last byte of amount non-zero
-    // source_chain_id: set to 1 (Ethereum mainnet)
+                               // source_chain_id: set to 1 (Ethereum mainnet)
     metadata_bytes[65..73].copy_from_slice(&1u64.to_be_bytes());
 
     let result = announcement_from_event(
@@ -236,7 +240,9 @@ fn test_announcement_field_format_consistency() {
     let result = announcement_from_event(
         make_valid_ephemeral_key(),
         metadata.encode().to_vec(),
-        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".parse().unwrap(),
+        "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            .parse()
+            .unwrap(),
         9_999_999,
     );
 

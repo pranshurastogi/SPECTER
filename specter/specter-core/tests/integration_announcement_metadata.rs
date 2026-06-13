@@ -33,7 +33,10 @@ fn test_announcement_with_metadata_roundtrip() {
     assert_eq!(decoded.amount, metadata.amount);
     assert_eq!(decoded.source_chain_id, Some(42161));
 
-    assert_eq!(announcement.stealth_address, Some("0xabcd1234567890ab".to_string()));
+    assert_eq!(
+        announcement.stealth_address,
+        Some("0xabcd1234567890ab".to_string())
+    );
 }
 
 /// view_tag must be consistent between Announcement and AnnouncementMetadata
@@ -101,7 +104,10 @@ fn test_full_announcement_with_all_metadata_fields() {
     assert_eq!(decoded.amount, Some([0x01; 32]));
     assert_eq!(decoded.source_chain_id, Some(42161));
 
-    assert_eq!(announcement.stealth_address, Some("0x0123456789abcdef".to_string()));
+    assert_eq!(
+        announcement.stealth_address,
+        Some("0x0123456789abcdef".to_string())
+    );
     assert_eq!(announcement.source_chain_id, Some(42161));
     assert_eq!(announcement.chain, Some("monad-testnet".to_string()));
 }
@@ -157,7 +163,10 @@ fn test_announcement_json_with_metadata() {
     assert!(ann_json.contains("source_chain_id"));
 
     let decoded_ann: Announcement = serde_json::from_str(&ann_json).unwrap();
-    assert_eq!(decoded_ann.stealth_address, Some("0xstealthaddress".to_string()));
+    assert_eq!(
+        decoded_ann.stealth_address,
+        Some("0xstealthaddress".to_string())
+    );
     assert_eq!(decoded_ann.source_chain_id, Some(42161));
 
     // Metadata: source_chain_id serializes/deserializes correctly
@@ -225,8 +234,7 @@ fn test_batch_announcements_with_consistent_metadata() {
             .build()
             .unwrap();
 
-        let metadata = AnnouncementMetadata::new(view_tag)
-            .with_source_chain_id(chain_id);
+        let metadata = AnnouncementMetadata::new(view_tag).with_source_chain_id(chain_id);
 
         let encoded = metadata.encode();
         let decoded = AnnouncementMetadata::decode(&encoded);

@@ -1,5 +1,5 @@
 use alloy::network::TransactionResponse;
-use alloy::primitives::{Address, B256, TxHash, U256};
+use alloy::primitives::{Address, TxHash, B256, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -59,9 +59,9 @@ pub async fn verify_payment_tx(
     expected_amount: U256,
     expected_token: Option<Address>,
 ) -> Result<(), ApiError> {
-    let url: url::Url = rpc_url
-        .parse()
-        .map_err(|_| ApiError::internal("Invalid source chain RPC URL — check CHAIN_RPC_* env vars"))?;
+    let url: url::Url = rpc_url.parse().map_err(|_| {
+        ApiError::internal("Invalid source chain RPC URL — check CHAIN_RPC_* env vars")
+    })?;
 
     let tx_hash: TxHash = tx_hash_str
         .trim()
@@ -125,8 +125,7 @@ pub async fn verify_payment_tx(
 
     // 1. Native transfer: tx.to == stealth && value >= amount.
     //    Only treated as native when no specific ERC-20 token was requested.
-    if expected_token.is_none()
-        && native_payment_ok(stealth, tx.to(), tx.value(), expected_amount)
+    if expected_token.is_none() && native_payment_ok(stealth, tx.to(), tx.value(), expected_amount)
     {
         return Ok(());
     }
@@ -200,27 +199,87 @@ mod match_tests {
 
     #[test]
     fn native_match_requires_recipient_and_amount() {
-        assert!(native_payment_ok(STEALTH, Some(STEALTH), U256::from(1000u64), U256::from(1000u64)));
-        assert!(native_payment_ok(STEALTH, Some(STEALTH), U256::from(1500u64), U256::from(1000u64))); // overpay ok
-        assert!(!native_payment_ok(STEALTH, Some(OTHER), U256::from(1000u64), U256::from(1000u64)));   // wrong recipient
-        assert!(!native_payment_ok(STEALTH, Some(STEALTH), U256::from(999u64), U256::from(1000u64)));  // underpay
-        assert!(!native_payment_ok(STEALTH, None, U256::from(1000u64), U256::from(1000u64)));          // contract creation
+        assert!(native_payment_ok(
+            STEALTH,
+            Some(STEALTH),
+            U256::from(1000u64),
+            U256::from(1000u64)
+        ));
+        assert!(native_payment_ok(
+            STEALTH,
+            Some(STEALTH),
+            U256::from(1500u64),
+            U256::from(1000u64)
+        )); // overpay ok
+        assert!(!native_payment_ok(
+            STEALTH,
+            Some(OTHER),
+            U256::from(1000u64),
+            U256::from(1000u64)
+        )); // wrong recipient
+        assert!(!native_payment_ok(
+            STEALTH,
+            Some(STEALTH),
+            U256::from(999u64),
+            U256::from(1000u64)
+        )); // underpay
+        assert!(!native_payment_ok(
+            STEALTH,
+            None,
+            U256::from(1000u64),
+            U256::from(1000u64)
+        )); // contract creation
     }
 
     #[test]
     fn erc20_log_match_checks_recipient_amount_and_optional_token() {
         let token = STEALTH; // any addr
-        // topics: [Transfer, from(padded), to(padded)]; data = amount (32B big-endian)
+                             // topics: [Transfer, from(padded), to(padded)]; data = amount (32B big-endian)
         let to_topic = B256::left_padding_from(STEALTH.as_slice());
         let amount_data = U256::from(1000u64).to_be_bytes::<32>();
-        assert!(erc20_transfer_ok(STEALTH, None, U256::from(1000u64), token, &to_topic, &amount_data));
-        assert!(erc20_transfer_ok(STEALTH, Some(token), U256::from(1000u64), token, &to_topic, &amount_data));
+        assert!(erc20_transfer_ok(
+            STEALTH,
+            None,
+            U256::from(1000u64),
+            token,
+            &to_topic,
+            &amount_data
+        ));
+        assert!(erc20_transfer_ok(
+            STEALTH,
+            Some(token),
+            U256::from(1000u64),
+            token,
+            &to_topic,
+            &amount_data
+        ));
         // wrong token filter
-        assert!(!erc20_transfer_ok(STEALTH, Some(OTHER), U256::from(1000u64), token, &to_topic, &amount_data));
+        assert!(!erc20_transfer_ok(
+            STEALTH,
+            Some(OTHER),
+            U256::from(1000u64),
+            token,
+            &to_topic,
+            &amount_data
+        ));
         // underpay
-        assert!(!erc20_transfer_ok(STEALTH, None, U256::from(2000u64), token, &to_topic, &amount_data));
+        assert!(!erc20_transfer_ok(
+            STEALTH,
+            None,
+            U256::from(2000u64),
+            token,
+            &to_topic,
+            &amount_data
+        ));
         // wrong recipient
         let other_topic = B256::left_padding_from(OTHER.as_slice());
-        assert!(!erc20_transfer_ok(STEALTH, None, U256::from(1000u64), token, &other_topic, &amount_data));
+        assert!(!erc20_transfer_ok(
+            STEALTH,
+            None,
+            U256::from(1000u64),
+            token,
+            &other_topic,
+            &amount_data
+        ));
     }
 }

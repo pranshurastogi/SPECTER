@@ -11,8 +11,8 @@
 
 use specter_chain::announcement_from_event;
 use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
-use specter_core::types::AnnouncementMetadata;
 use specter_core::traits::AnnouncementRegistry;
+use specter_core::types::AnnouncementMetadata;
 use specter_registry::turso::TursoRegistry;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -23,7 +23,9 @@ fn make_ephemeral_key() -> Vec<u8> {
 }
 
 fn make_stealth_addr() -> alloy::primitives::Address {
-    "0x1111111111111111111111111111111111111111".parse().unwrap()
+    "0x1111111111111111111111111111111111111111"
+        .parse()
+        .unwrap()
 }
 
 /// Simulate what the sender encodes into the on-chain metadata bytes.
@@ -71,8 +73,14 @@ async fn test_full_announcement_to_scan_flow() {
     assert_eq!(announcement.source_chain_id, Some(source_chain_id));
     // The source-chain payment tx hash is decoded from metadata into payment_tx_hash.
     // (tx_hash = the Monad announce tx, set later by the Envio handler / e2e flow.)
-    assert!(announcement.payment_tx_hash.is_some(), "payment_tx_hash should be decoded from metadata");
-    assert!(announcement.amount.is_some(), "amount should be decoded from metadata");
+    assert!(
+        announcement.payment_tx_hash.is_some(),
+        "payment_tx_hash should be decoded from metadata"
+    );
+    assert!(
+        announcement.amount.is_some(),
+        "amount should be decoded from metadata"
+    );
     assert_eq!(announcement.block_number, Some(monad_block));
     assert_eq!(announcement.chain, Some("monad-testnet".to_string()));
     assert!(announcement.stealth_address.is_some());
@@ -115,7 +123,10 @@ async fn test_full_announcement_to_scan_flow() {
         .get_by_view_tag(0xFF)
         .await
         .expect("get_by_view_tag(0xFF) should succeed");
-    assert!(no_matches.is_empty(), "wrong view_tag should return no results");
+    assert!(
+        no_matches.is_empty(),
+        "wrong view_tag should return no results"
+    );
 }
 
 /// Multiple senders, same recipient view_tag → recipient finds exactly their own.
@@ -127,8 +138,8 @@ async fn test_multichain_sender_single_recipient_scan() {
     let chains = [
         (42161u64, 36_100_001u64, 0xAAu8), // Arbitrum, different view_tag
         (10143u64, 36_100_002u64, recipient_tag), // Monad, recipient's tag
-        (1u64,    36_100_003u64, 0xBBu8), // Ethereum, different view_tag
-        (137u64,  36_100_004u64, recipient_tag), // Polygon, also recipient's tag
+        (1u64, 36_100_003u64, 0xBBu8),     // Ethereum, different view_tag
+        (137u64, 36_100_004u64, recipient_tag), // Polygon, also recipient's tag
     ];
 
     for (i, (chain_id, block, view_tag)) in chains.iter().enumerate() {
@@ -150,9 +161,13 @@ async fn test_multichain_sender_single_recipient_scan() {
     // Recipient scans with their view_tag — finds the 2 addressed to them (Monad + Polygon).
     let recipient_matches = registry.get_by_view_tag(recipient_tag).await.unwrap();
     assert_eq!(recipient_matches.len(), 2);
-    assert!(recipient_matches.iter().all(|a| a.view_tag == recipient_tag));
+    assert!(recipient_matches
+        .iter()
+        .all(|a| a.view_tag == recipient_tag));
     // The source chain is no longer a stored column (it lives in the encrypted blob).
-    assert!(recipient_matches.iter().all(|a| a.source_chain_id.is_none()));
+    assert!(recipient_matches
+        .iter()
+        .all(|a| a.source_chain_id.is_none()));
 }
 
 /// On-chain deduplication: replaying the same Monad event does not double-store
@@ -175,8 +190,15 @@ async fn test_envio_replay_deduplication() {
     let id2 = registry.insert_onchain_announcement(&ann).await.unwrap();
 
     // Second insert returns same id — idempotent
-    assert_eq!(id1, id2, "replay should return same id, not create a duplicate");
-    assert_eq!(registry.count().await.unwrap(), 1, "only one row should exist");
+    assert_eq!(
+        id1, id2,
+        "replay should return same id, not create a duplicate"
+    );
+    assert_eq!(
+        registry.count().await.unwrap(),
+        1,
+        "only one row should exist"
+    );
 }
 
 /// Metadata encoding is correct: view_tag byte is first, chain ID at [65..73]
@@ -191,7 +213,10 @@ async fn test_metadata_byte_layout_correctness() {
 
     // Bytes [65..73] = chain_id big-endian
     let encoded_chain = u64::from_be_bytes(metadata[65..73].try_into().unwrap());
-    assert_eq!(encoded_chain, chain_id, "bytes [65..73] must be source_chain_id big-endian");
+    assert_eq!(
+        encoded_chain, chain_id,
+        "bytes [65..73] must be source_chain_id big-endian"
+    );
 
     // Bytes [73..77] = reserved zeros
     assert!(
@@ -206,7 +231,10 @@ async fn test_time_range_scan() {
     let registry: TursoRegistry = TursoRegistry::new_test().await;
 
     // Publish 3 announcements with different timestamps
-    for (nonce, (ts, chain)) in [(1000u64, 1u64), (2000, 42161), (3000, 137)].iter().enumerate() {
+    for (nonce, (ts, chain)) in [(1000u64, 1u64), (2000, 42161), (3000, 137)]
+        .iter()
+        .enumerate()
+    {
         let metadata = build_metadata(0xAA, *chain, nonce as u8 + 10);
         let mut ann = announcement_from_event(
             make_ephemeral_key(),
@@ -221,6 +249,10 @@ async fn test_time_range_scan() {
 
     // Scan only the middle window
     let range = registry.get_by_time_range(1500, 2500).await.unwrap();
-    assert_eq!(range.len(), 1, "only the 2000-timestamp announcement should match");
+    assert_eq!(
+        range.len(),
+        1,
+        "only the 2000-timestamp announcement should match"
+    );
     assert_eq!(range[0].timestamp, 2000);
 }
