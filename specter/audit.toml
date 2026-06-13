@@ -1,0 +1,16 @@
+# cargo-audit configuration
+# Advisories listed here are from transitive dependencies we do not control directly
+# (primarily `ethers` v2, which pulls in ring 0.16 and rustls-webpki 0.101/0.102).
+# They should be revisited when ethers is upgraded or replaced with alloy.
+
+[advisories]
+ignore = [
+    # ring 0.16.x (ethers transitive dep) — AES panic with overflow checks
+    "RUSTSEC-2025-0009",
+
+    # rustls-webpki 0.101.x / 0.102.x (ethers transitive dep)
+    "RUSTSEC-2026-0049",  # CRL Distribution Point matching
+    "RUSTSEC-2026-0098",  # URI name constraints accepted incorrectly
+    "RUSTSEC-2026-0099",  # Wildcard name constraints accepted incorrectly
+    "RUSTSEC-2026-0104",  # Reachable panic in CRL parsing
+]

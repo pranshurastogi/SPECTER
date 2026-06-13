@@ -13,9 +13,6 @@ specter-stealth = { path = "../specter-stealth" }
 specter-registry = { path = "../specter-registry" }
 specter-ens = { path = "../specter-ens" }
 
-# Ethereum
-ethers = { workspace = true }
-
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
