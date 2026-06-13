@@ -1,0 +1,31 @@
+{
+  "name": "specter-indexer",
+  "version": "1.0.0",
+  "description": "SPECTER on-chain announcement indexer — Envio HyperIndex for SPECTERAnnouncer on Monad testnet with Turso dual-write",
+  "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "setup": "cp -n .env.example .env 2>/dev/null || true && npm install && npm run codegen",
+    "dev": "envio dev",
+    "start": "envio start",
+    "codegen": "envio codegen",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "envio": "^2.0.0",
+    "viem": "^2.52.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

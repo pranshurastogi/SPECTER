@@ -29,7 +29,7 @@ export function trackPageView(pagePath: string, pageTitle: string) {
 // ── Generic escape hatch ─────────────────────────────────────────────────────
 
 type EventParams = Record<string, string | number | boolean | undefined>;
-type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui";
+type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui" | "unknown";
 
 export function trackEvent(eventName: string, params?: EventParams) {
   gtag("event", eventName, { send_to: GA_ID, ...params });

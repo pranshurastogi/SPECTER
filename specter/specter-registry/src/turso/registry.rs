@@ -18,11 +18,23 @@ use specter_core::types::{Announcement, AnnouncementStats};
 
 use super::schema;
 
-// ── helper converters ──────────────────────────────────────────────────────
+// ── migration helpers ──────────────────────────────────────────────────────
 
-fn opt_blob(v: Option<Vec<u8>>) -> Value {
-    v.map(Value::Blob).unwrap_or(Value::Null)
+/// Returns true for errors that mean "this DDL statement is already applied
+/// or depends on something not yet migrated" — safe to skip in both the
+/// SCHEMA_STATEMENTS pass and the migration loop.
+fn is_safe_migration_err(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("duplicate column")      // ALTER TABLE ADD COLUMN already done
+        || m.contains("already exists") // CREATE TABLE / INDEX IF NOT EXISTS race
+        || m.contains("no such column") // index on a column not yet added by ALTER TABLE
+        || m.contains("no such table")  // DROP TABLE IF EXISTS on already-gone table
+        || m.contains("no such index")  // DROP INDEX IF EXISTS on already-gone index
+        || m.contains("unique constraint") // idempotent INSERT OR REPLACE collision
+        || m.contains("no rows")        // DELETE on empty table
 }
+
+// ── helper converters ──────────────────────────────────────────────────────
 
 fn opt_int(v: Option<i64>) -> Value {
     v.map(Value::Integer).unwrap_or(Value::Null)
@@ -30,13 +42,6 @@ fn opt_int(v: Option<i64>) -> Value {
 
 fn opt_text(v: Option<String>) -> Value {
     v.map(Value::Text).unwrap_or(Value::Null)
-}
-
-fn get_opt_blob(row: &libsql::Row, idx: i32) -> Option<Vec<u8>> {
-    match row.get_value(idx) {
-        Ok(Value::Blob(b)) => Some(b),
-        _ => None,
-    }
 }
 
 fn get_opt_int(row: &libsql::Row, idx: i32) -> Option<i64> {
@@ -49,6 +54,13 @@ fn get_opt_int(row: &libsql::Row, idx: i32) -> Option<i64> {
 fn get_opt_text(row: &libsql::Row, idx: i32) -> Option<String> {
     match row.get_value(idx) {
         Ok(Value::Text(s)) => Some(s),
+        _ => None,
+    }
+}
+
+fn get_opt_blob(row: &libsql::Row, idx: i32) -> Option<Vec<u8>> {
+    match row.get_value(idx) {
+        Ok(Value::Blob(b)) => Some(b),
         _ => None,
     }
 }
@@ -110,10 +122,17 @@ impl TursoRegistry {
     async fn init_schema(&self) -> Result<()> {
         let conn = self.conn()?;
 
-        for statement in schema::SCHEMA_STATEMENTS {
-            conn.execute(statement, ()).await.map_err(|e| {
-                SpecterError::RegistryError(format!("Schema init: {e}\nSQL: {statement}"))
-            })?;
+        // Run the (single, final) schema DDL. CREATE IF NOT EXISTS is idempotent;
+        // tolerate the safe "already exists" races via is_safe_migration_err.
+        for stmt in schema::SCHEMA_STATEMENTS {
+            if let Err(e) = conn.execute(stmt, ()).await {
+                if is_safe_migration_err(&e.to_string()) {
+                    continue;
+                }
+                return Err(SpecterError::RegistryError(format!(
+                    "Schema init: {e}\nSQL: {stmt}"
+                )));
+            }
         }
 
         // Seed metadata on first run
@@ -138,7 +157,7 @@ impl TursoRegistry {
             conn.execute(
                 "INSERT OR IGNORE INTO registry_metadata (key, value) VALUES (?1, ?2)",
                 params![
-                    schema::SCHEMA_VERSION.to_string(),
+                    "schema_version".to_string(),
                     schema::SCHEMA_VERSION.to_string()
                 ],
             )
@@ -192,8 +211,9 @@ impl TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, \
+                        block_number, tx_hash, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements ORDER BY id",
                 (),
             )
@@ -236,13 +256,6 @@ impl TursoRegistry {
             None => (None, None),
         };
 
-        let yellow_count = query_i64(
-            &conn,
-            "SELECT COUNT(*) FROM announcements WHERE channel_id IS NOT NULL",
-            (),
-        )
-        .await?;
-
         let mut dist_rows = conn
             .query(
                 "SELECT view_tag, COUNT(*) FROM announcements GROUP BY view_tag",
@@ -269,8 +282,62 @@ impl TursoRegistry {
             view_tag_distribution: distribution,
             earliest_timestamp: earliest.map(|t| t as u64),
             latest_timestamp: latest.map(|t| t as u64),
-            yellow_channel_count: yellow_count as u64,
         })
+    }
+
+    /// Returns a value from the registry_metadata table by key.
+    pub async fn get_metadata(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT value FROM registry_metadata WHERE key = ?1 LIMIT 1",
+                params![key.to_string()],
+            )
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("get_metadata: {e}")))?;
+
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("get_metadata row: {e}")))?
+            .and_then(|r| r.get_value(0).ok())
+            .and_then(|v| if let Value::Text(s) = v { Some(s) } else { None }))
+    }
+
+    /// Writes an internal telemetry event (fire-and-forget; errors are swallowed).
+    // Each parameter maps to a distinct `_telemetry` column; grouping them into a
+    // struct would not improve clarity at the single call site.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_telemetry(
+        &self,
+        event: &str,
+        ip_hash: Option<&[u8]>,
+        ua: Option<&str>,
+        chain: Option<&str>,
+        chain_id: Option<u64>,
+        view_tag: Option<u8>,
+        status: &str,
+        err: Option<&str>,
+        ms: u64,
+    ) {
+        let Ok(conn) = self.conn() else { return };
+        let _ = conn
+            .execute(
+                "INSERT INTO _telemetry (event, ip_hash, ua, chain, chain_id, view_tag, status, err, ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                vec![
+                    Value::Text(event.to_string()),
+                    ip_hash.map(|h| Value::Blob(h.to_vec())).unwrap_or(Value::Null),
+                    ua.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    chain.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    chain_id.map(|c| Value::Integer(c as i64)).unwrap_or(Value::Null),
+                    view_tag.map(|v| Value::Integer(v as i64)).unwrap_or(Value::Null),
+                    Value::Text(status.to_string()),
+                    err.map(|s| Value::Text(s.to_string())).unwrap_or(Value::Null),
+                    Value::Integer(ms as i64),
+                ],
+            )
+            .await;
     }
 
     /// Bulk import (migration helper). Skips rows that violate constraints.
@@ -290,27 +357,105 @@ impl TursoRegistry {
     // ── internal ─────────────────────────────────────────────────────────
 
     async fn insert_announcement(&self, ann: &Announcement) -> Result<u64> {
+        self.insert_announcement_inner(ann, false, "api").await
+    }
+
+    /// Inserts an announcement sourced from the on-chain event poller.
+    /// Sets `on_chain = 1`, `record_source = 'indexer'`.
+    /// Idempotent: returns the existing id if the tx_hash already exists.
+    pub async fn insert_onchain_announcement(&self, ann: &Announcement) -> Result<u64> {
+        if let (Some(bn), Some(bti)) = (ann.block_number, ann.tx_hash.as_ref()) {
+            let conn = self.conn()?;
+            let mut rows = conn
+                .query(
+                    "SELECT id FROM announcements WHERE block_number = ?1 AND tx_hash = ?2 LIMIT 1",
+                    params![bn as i64, bti.clone()],
+                )
+                .await
+                .map_err(|e| SpecterError::RegistryError(format!("onchain dedup check: {e}")))?;
+
+            if let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| SpecterError::RegistryError(format!("onchain dedup row: {e}")))?
+            {
+                let existing_id: i64 = row
+                    .get(0)
+                    .map_err(|e| SpecterError::RegistryError(format!("onchain dedup id: {e}")))?;
+                return Ok(existing_id as u64);
+            }
+        }
+
+        self.insert_announcement_inner(ann, true, "indexer").await
+    }
+
+    async fn insert_announcement_inner(
+        &self,
+        ann: &Announcement,
+        on_chain: bool,
+        record_source: &str,
+    ) -> Result<u64> {
         let conn = self.conn()?;
 
         conn.execute(
             "INSERT INTO announcements \
-             (view_tag, timestamp, ephemeral_key, channel_id, block_number, tx_hash, amount, chain) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (view_tag, timestamp, ephemeral_key, ephemeral_key_hash, metadata_blob, \
+              payment_tx_hash_hmac, on_chain, block_number, tx_hash, chain, \
+              stealth_address, record_source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             vec![
                 Value::Integer(ann.view_tag as i64),
                 Value::Integer(ann.timestamp as i64),
-                Value::Blob(ann.ephemeral_key.clone()),
-                opt_blob(ann.channel_id.map(|c| c.to_vec())),
+                Value::Blob(ann.ephemeral_key.clone()), // full ciphertext, or empty Vec for hash-only rows
+                ann.ephemeral_key_hash.clone().map(Value::Blob).unwrap_or(Value::Null),
+                ann.metadata_blob.clone().map(Value::Blob).unwrap_or(Value::Null),
+                ann.payment_tx_hash_hmac.clone().map(Value::Blob).unwrap_or(Value::Null),
+                Value::Integer(if on_chain { 1 } else { 0 }),
                 opt_int(ann.block_number.map(|b| b as i64)),
                 opt_text(ann.tx_hash.clone()),
-                opt_text(ann.amount.clone()),
                 opt_text(ann.chain.clone()),
+                opt_text(ann.stealth_address.clone()),
+                Value::Text(record_source.to_string()),
             ],
         )
         .await
         .map_err(|e| SpecterError::RegistryError(format!("insert: {e}")))?;
 
         Ok(conn.last_insert_rowid() as u64)
+    }
+
+    /// Reserves a dedup slot: inserts the (encrypted) announcement with
+    /// `on_chain = 0` and `tx_hash = NULL`. A duplicate `payment_tx_hash_hmac`
+    /// hits the UNIQUE index → `SpecterError::DuplicatePayment`.
+    pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
+        match self.insert_announcement_inner(ann, false, "api").await {
+            Ok(id) => {
+                self.cache.write().await.pop(&ann.view_tag);
+                Ok(id)
+            }
+            Err(SpecterError::RegistryError(m)) if m.to_lowercase().contains("unique constraint") => {
+                Err(SpecterError::DuplicatePayment)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Finalizes a reserved announcement after the relay tx is broadcast.
+    pub async fn finalize_announcement(
+        &self,
+        id: u64,
+        view_tag: u8,
+        monad_tx_hash: &str,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "UPDATE announcements SET tx_hash = ?1, on_chain = 1 WHERE id = ?2",
+            params![monad_tx_hash.to_string(), id as i64],
+        )
+        .await
+        .map_err(|e| SpecterError::RegistryError(format!("finalize: {e}")))?;
+        self.cache.write().await.pop(&view_tag);
+        Ok(())
     }
 
     fn normalize_tx_hash(hash: &str) -> String {
@@ -323,8 +468,9 @@ impl TursoRegistry {
     // `db.connect()` call would get a blank DB. We use a unique temp file so
     // all connections share the same persistent schema.
 
-    /// Creates an isolated on-disk SQLite instance for unit tests.
-    #[cfg(test)]
+    /// Creates an isolated on-disk SQLite instance for tests.
+    /// Available via the `test-utils` feature (for integration tests) or within unit tests.
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn new_test() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -411,8 +557,9 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, \
+                        block_number, tx_hash, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE view_tag = ?1 ORDER BY timestamp DESC",
                 params![view_tag as i64],
             )
@@ -434,8 +581,9 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, \
+                        block_number, tx_hash, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE timestamp BETWEEN ?1 AND ?2 ORDER BY timestamp",
                 params![start as i64, end as i64],
             )
@@ -449,8 +597,9 @@ impl AnnouncementRegistry for TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id, view_tag, timestamp, ephemeral_key, channel_id, \
-                        block_number, tx_hash, amount, chain \
+                "SELECT id, view_tag, timestamp, ephemeral_key, \
+                        block_number, tx_hash, chain, stealth_address, \
+                        ephemeral_key_hash, metadata_blob \
                  FROM announcements WHERE id = ?1 LIMIT 1",
                 params![id as i64],
             )
@@ -495,8 +644,8 @@ impl AnnouncementRegistry for TursoRegistry {
 /// Map a libsql Row to an Announcement.
 ///
 /// Column order must match every SELECT that fetches announcements:
-///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=channel_id
-///   5=block_number  6=tx_hash  7=amount  8=chain
+///   0=id  1=view_tag  2=timestamp  3=ephemeral_key  4=block_number
+///   5=tx_hash  6=chain  7=stealth_address  8=ephemeral_key_hash  9=metadata_blob
 fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
     let id: i64 = row
         .get(0)
@@ -511,26 +660,23 @@ fn row_to_announcement(row: &libsql::Row) -> Result<Announcement> {
         .get(3)
         .map_err(|e| SpecterError::RegistryError(format!("row[ephemeral_key]: {e}")))?;
 
-    let channel_id = get_opt_blob(row, 4).and_then(|b| {
-        if b.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&b);
-            Some(arr)
-        } else {
-            None
-        }
-    });
-
     Ok(Announcement {
         id: id as u64,
         view_tag: view_tag as u8,
         timestamp: timestamp as u64,
         ephemeral_key,
-        channel_id,
-        block_number: get_opt_int(row, 5).map(|b| b as u64),
-        tx_hash: get_opt_text(row, 6),
-        amount: get_opt_text(row, 7),
-        chain: get_opt_text(row, 8),
+        block_number: get_opt_int(row, 4).map(|b| b as u64),
+        tx_hash: get_opt_text(row, 5),
+        chain: get_opt_text(row, 6),
+        stealth_address: get_opt_text(row, 7),
+        ephemeral_key_hash: get_opt_blob(row, 8),
+        metadata_blob: get_opt_blob(row, 9),
+        // Populated in-memory at scan time by decrypting metadata_blob; never stored as columns.
+        source_chain_id: None,
+        payment_tx_hash: None,
+        amount: None,
+        // Write-only dedup key — never read back from the DB; only the UNIQUE index uses it.
+        payment_tx_hash_hmac: None,
     })
 }
 
@@ -644,6 +790,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn telemetry_stores_ip_hash_not_raw_ip() {
+        let reg = setup().await;
+        let hash = [0xABu8; 32];
+        reg.write_telemetry(
+            "announce",
+            Some(&hash[..]),
+            None,
+            None,
+            None,
+            None,
+            "success",
+            None,
+            7,
+        )
+        .await;
+
+        // The schema has no raw `ip` column at all — telemetry stores only the
+        // daily-salted hash. Assert the hash round-trips.
+        let conn = reg.conn().unwrap();
+        let mut rows = conn
+            .query("SELECT ip_hash FROM _telemetry LIMIT 1", ())
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().expect("telemetry row present");
+
+        let stored_hash = match row.get_value(0).unwrap() {
+            Value::Blob(b) => b,
+            other => panic!("expected ip_hash BLOB, got {other:?}"),
+        };
+        assert_eq!(stored_hash, hash.to_vec());
+    }
+
+    #[tokio::test]
     async fn test_duplicate_tx_hash_rejected() {
         let reg = setup().await;
         let mut a = make_ann(0x42);
@@ -656,13 +835,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_channel_id_roundtrip() {
+    async fn test_insert_onchain_idempotent() {
         let reg = setup().await;
-        let ch = [0xCC; 32];
-        let ann = Announcement::with_channel(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], 0x01, ch);
-        let id = reg.publish(ann).await.unwrap();
-        let r = reg.get_by_id(id).await.unwrap().unwrap();
-        assert_eq!(r.channel_id, Some(ch));
+        let mut ann = make_ann(0x42);
+        ann.block_number = Some(1_000_000);
+        ann.tx_hash = Some("0xdeadbeef".into());
+
+        let id1 = reg.insert_onchain_announcement(&ann).await.unwrap();
+        let id2 = reg.insert_onchain_announcement(&ann).await.unwrap();
+        // Second insert should return the same id (idempotent)
+        assert_eq!(id1, id2);
+        // Only one row in DB
+        assert_eq!(reg.count().await.unwrap(), 1);
     }
 
     #[tokio::test]
@@ -725,5 +909,50 @@ mod tests {
             r.unwrap();
         }
         assert_eq!(reg.count().await.unwrap(), 50);
+    }
+
+    #[tokio::test]
+    async fn reserve_dedups_and_finalize_sets_tx() {
+        let reg = TursoRegistry::new_test().await;
+        let mut a = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], 0x42);
+        a.stealth_address = Some("0x1111111111111111111111111111111111111111".into());
+        a.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);
+        let id = reg.reserve_announcement(&a).await.expect("first reserve ok");
+        // second reserve with same hmac → Duplicate
+        let mut b = Announcement::new(vec![0x43u8; KYBER_CIPHERTEXT_SIZE], 0x43);
+        b.payment_tx_hash_hmac = Some(vec![0x07u8; 32]);
+        assert!(matches!(
+            reg.reserve_announcement(&b).await,
+            Err(specter_core::error::SpecterError::DuplicatePayment)
+        ));
+        // finalize sets tx_hash + on_chain
+        reg.finalize_announcement(id, 0x42, "0xdeadbeef")
+            .await
+            .expect("finalize ok");
+        let got = reg.get_by_id(id).await.unwrap().unwrap();
+        assert_eq!(got.tx_hash.as_deref(), Some("0xdeadbeef"));
+    }
+
+    #[tokio::test]
+    async fn test_hash_only_announcement_roundtrips() {
+        let reg = setup().await;
+
+        // A chain-indexed, hash-only announcement: empty ciphertext, but a
+        // 32-byte keccak hash of the ephemeral key plus the metadata blob.
+        let mut ann = Announcement::new(Vec::new(), 0x42);
+        ann.ephemeral_key_hash = Some(vec![0x11u8; 32]);
+        ann.metadata_blob = Some(vec![0xAA, 0xBB, 0xCC]);
+        ann.tx_hash = Some("0x".to_string() + &"aa".repeat(32));
+        ann.block_number = Some(123_456);
+
+        reg.insert_onchain_announcement(&ann).await.unwrap();
+
+        let got = reg.get_by_view_tag(0x42).await.unwrap();
+        assert_eq!(got.len(), 1);
+        let r = &got[0];
+        assert_eq!(r.ephemeral_key_hash, Some(vec![0x11u8; 32]));
+        assert_eq!(r.metadata_blob, Some(vec![0xAA, 0xBB, 0xCC]));
+        // Empty ciphertext means it has not been resolved yet.
+        assert!(!r.is_resolved());
     }
 }

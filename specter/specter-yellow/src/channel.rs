@@ -144,17 +144,7 @@ impl PrivateChannel {
         let ephemeral_key =
             hex::decode(&self.announcement.ephemeral_key).map_err(SpecterError::HexError)?;
 
-        let channel_id_bytes =
-            hex::decode(&self.announcement.channel_id).map_err(SpecterError::HexError)?;
-
-        let mut channel_id_arr = [0u8; 32];
-        if channel_id_bytes.len() == 32 {
-            channel_id_arr.copy_from_slice(&channel_id_bytes);
-        }
-
-        let announcement =
-            Announcement::with_channel(ephemeral_key, self.announcement.view_tag, channel_id_arr);
-
+        let announcement = Announcement::new(ephemeral_key, self.announcement.view_tag);
         let id = registry.publish(announcement).await?;
         Ok(id)
     }
@@ -164,19 +154,7 @@ impl PrivateChannel {
         let ephemeral_key =
             hex::decode(&self.announcement.ephemeral_key).map_err(SpecterError::HexError)?;
 
-        let channel_id_bytes =
-            hex::decode(&self.announcement.channel_id).map_err(SpecterError::HexError)?;
-
-        let mut channel_id_arr = [0u8; 32];
-        if channel_id_bytes.len() == 32 {
-            channel_id_arr.copy_from_slice(&channel_id_bytes);
-        }
-
-        Ok(Announcement::with_channel(
-            ephemeral_key,
-            self.announcement.view_tag,
-            channel_id_arr,
-        ))
+        Ok(Announcement::new(ephemeral_key, self.announcement.view_tag))
     }
 }
 

@@ -1,0 +1,33 @@
+# Source-chain filter — find all announcements for payments that originated
+# on a specific chain (e.g., all Arbitrum payments announced on Monad).
+#
+# Variables:
+#   $sourceChainId — EIP-155 chain ID (e.g., 42161 = Arbitrum, 1 = Ethereum)
+#   $fromBlock     — optional checkpoint (default: scan from genesis)
+#   $limit         — max results per page
+
+query ScanBySourceChain(
+  $sourceChainId: numeric!
+  $fromBlock: numeric = "0"
+  $limit: Int = 1000
+) {
+  AnnouncementEvent(
+    where: {
+      sourceChainId: { _eq: $sourceChainId }
+      blockNumber: { _gte: $fromBlock }
+    }
+    order_by: { blockNumber: desc, logIndex: desc }
+    limit: $limit
+  ) {
+    id
+    stealthAddress
+    ephemeralPubKey
+    viewTag
+    txHash
+    sourceChainId
+    amount
+    blockNumber
+    blockTimestamp
+    transactionHash
+  }
+}

@@ -24,14 +24,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/registry/announcements", get(handlers::list_announcements))
         .route("/api/v1/registry/announcements", post(handlers::publish_announcement))
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
-        // Yellow Network endpoints
-        .route("/api/v1/yellow/channel/create", post(handlers::yellow_create_channel))
-        .route("/api/v1/yellow/channel/discover", post(handlers::yellow_discover_channels))
-        .route("/api/v1/yellow/channel/fund", post(handlers::yellow_fund_channel))
-        .route("/api/v1/yellow/channel/close", post(handlers::yellow_close_channel))
-        .route("/api/v1/yellow/channel/:id/status", get(handlers::yellow_channel_status))
-        .route("/api/v1/yellow/transfer", post(handlers::yellow_transfer))
-        .route("/api/v1/yellow/config", get(handlers::yellow_config))
         .with_state(state)
 }
 
@@ -172,7 +164,24 @@ mod tests {
             "registry must hold the protocol view_tag built at create time"
         );
         assert_eq!(all[0].tx_hash.as_deref(), Some("0xdeadbeef"));
-        assert_eq!(all[0].amount.as_deref(), Some("0.01"));
+        // Plaintext payment fields are NOT persisted — they live only inside the
+        // encrypted metadata_blob. The row must carry the encrypted shape instead.
+        assert_eq!(
+            all[0].amount, None,
+            "amount must not be persisted in plaintext"
+        );
+        assert_eq!(
+            all[0].source_chain_id, None,
+            "source_chain_id must not be persisted in plaintext"
+        );
+        assert!(
+            all[0].metadata_blob.is_some(),
+            "encrypted metadata_blob must be present"
+        );
+        assert!(
+            all[0].ephemeral_key_hash.is_some(),
+            "ephemeral_key_hash must be present"
+        );
         assert_eq!(all[0].chain.as_deref(), Some("ethereum"));
     }
 

@@ -1,0 +1,49 @@
+# SPECTER Envio GraphQL schema
+#
+# Entities are indexed from SPECTERAnnouncer Announcement events on Monad testnet.
+# Recipients use these queries to scan for stealth payments addressed to them.
+
+type AnnouncementEvent @entity {
+  # "<transactionHash>-<logIndex>" — globally unique across all blocks
+  id: ID!
+
+  # ── On-chain event fields ────────────────────────────────────────────────
+  schemeId:       BigInt!   # 1000 = ML-KEM-768 (SPECTER's post-quantum scheme)
+  stealthAddress: String!   # Checksummed recipient stealth address (indexed)
+  caller:         String!   # Address that submitted the announcement tx
+
+  # Full 1088-byte ML-KEM ciphertext (hex, no 0x prefix), RESOLVED from the
+  # announce() calldata at index time. The on-chain event itself only carries
+  # the keccak256 hash (ephemeralKeyHash) — we recover the ciphertext from the
+  # tx input and verify keccak256(ciphertext) === ephemeralKeyHash before storing.
+  ephemeralPubKey: String!
+
+  # keccak256 of the ML-KEM ciphertext (hex, no 0x prefix — 32 bytes) as emitted
+  # by the event. Guards integrity of the resolved ephemeralPubKey above.
+  ephemeralKeyHash: String!
+
+  # ── View tag (from metadata byte 0) ──────────────────────────────────────
+  #
+  # The metadata is now an opaque AEAD-encrypted blob; ONLY byte [0] (view_tag)
+  # is plaintext. The rest (txHash/amount/sourceChainId) is encrypted and can
+  # only be read by the recipient — the indexer can no longer decode it.
+  #
+  # First byte of SHAKE-256(shared_secret). Recipients compute their own
+  # view tag and compare — matching tags mean O(1) filtering before expensive
+  # decapsulation. 256 possible values → ~99.6% of non-matching events skipped.
+  viewTag: Int!
+
+  # ── Monad block context ──────────────────────────────────────────────────
+  blockNumber:      BigInt!  # Monad block number (indexed, for sync checkpointing)
+  blockTimestamp:   BigInt!  # Unix timestamp of the Monad block
+  transactionHash:  String!  # Monad tx hash (different from source-chain txHash above)
+  logIndex:         Int!     # Log index within the Monad tx
+
+  # Full metadata as hex string — now an opaque AEAD-encrypted blob.
+  # Byte [0] is the plaintext view_tag; everything else is ciphertext.
+  metadataRaw: String!
+
+  # Whether this event was successfully written to the SPECTER Turso registry.
+  # False means the API scanning path may not have this announcement yet.
+  tursoSynced: Boolean!
+}

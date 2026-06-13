@@ -10,6 +10,7 @@ mod middleware;
 mod pending;
 mod routes;
 mod state;
+mod verifier;
 
 pub use error::ApiError;
 pub use pending::{PendingPaymentStore, DEFAULT_PENDING_TTL};

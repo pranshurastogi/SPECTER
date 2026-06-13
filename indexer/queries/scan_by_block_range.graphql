@@ -1,0 +1,40 @@
+# Block-range scan — used by the Turso sync service to catch up on missed events.
+#
+# When the SPECTER API server restarts or Turso was temporarily unavailable,
+# this query identifies which on-chain announcements need to be re-synced.
+# Walk forward in $limit-sized windows until AnnouncementEvent returns empty.
+#
+# Variables:
+#   $fromBlock — inclusive start block
+#   $toBlock   — inclusive end block
+#   $limit     — max results per page (default 500)
+
+query ScanByBlockRange(
+  $fromBlock: numeric!
+  $toBlock: numeric!
+  $limit: Int = 500
+) {
+  AnnouncementEvent(
+    where: {
+      blockNumber: { _gte: $fromBlock, _lte: $toBlock }
+    }
+    order_by: { blockNumber: asc, logIndex: asc }
+    limit: $limit
+  ) {
+    id
+    schemeId
+    stealthAddress
+    caller
+    ephemeralPubKey
+    viewTag
+    txHash
+    sourceChainId
+    amount
+    blockNumber
+    blockTimestamp
+    transactionHash
+    logIndex
+    metadataRaw
+    tursoSynced
+  }
+}

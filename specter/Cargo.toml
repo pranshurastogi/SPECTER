@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "specter-core",
+    "specter-chain",
     "specter-crypto",
     "specter-stealth",
     "specter-registry",
@@ -93,6 +94,7 @@ dialoguer = "0.11"               # Interactive prompts
 # ═══════════════════════════════════════════════════════════════════════════════
 thiserror = "1.0"                # Derive Error trait
 anyhow = "1.0"                   # Error context
+dotenvy = "0.15"                 # .env file loading
 tracing = "0.1"                  # Structured logging
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 

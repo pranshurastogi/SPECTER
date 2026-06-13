@@ -6,7 +6,7 @@
 import { formatEther } from "viem";
 import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
-import { useTestnet } from "./chainConfig";
+import { sendUseTestnet } from "./chainConfig";
 import {
   getPublicClientForEvm,
   getSendChainConfig,
@@ -84,7 +84,9 @@ export async function verifySuiTx(
   const digest = txDigest.startsWith("0x") ? txDigest.slice(2) : txDigest.trim();
 
   // Try preferred network first, then the other if tx not found
-  const networks: Array<"mainnet" | "testnet"> = useTestnet ? ["testnet", "mainnet"] : ["mainnet", "testnet"];
+  const networks: Array<"mainnet" | "testnet"> = sendUseTestnet
+    ? ["testnet", "mainnet"]
+    : ["mainnet", "testnet"];
   let tx: Awaited<ReturnType<SuiJsonRpcClient["getTransactionBlock"]>> | null = null;
   let client: SuiJsonRpcClient | null = null;
 

@@ -1,9 +1,34 @@
 import { createPublicClient, defineChain, http, type Chain, type PublicClient } from "viem";
 import { arbitrumSepolia, mainnet, sepolia } from "viem/chains";
-import { useTestnet } from "./chainConfig";
+import { sendUseTestnet } from "./chainConfig";
+import {
+  CHAIN_STANDARDS,
+  EIP155_CHAIN_IDS,
+  getBackendChainName,
+  getCaip2,
+  getChainDecimals,
+  getChainStandard,
+  getSourceChainId,
+  getTxChainFromBackendName,
+  getTxChainFromSourceChainId,
+  type EvmTxChain,
+  type TxChain,
+} from "./chainRegistry";
 
-export type EvmTxChain = "ethereum" | "arbitrum" | "monad";
-export type TxChain = EvmTxChain | "sui";
+// Chain identity (names, EIP-155 ids, CAIP-2, decimals) lives in
+// chainRegistry.ts — re-exported here so existing imports keep working.
+export {
+  CHAIN_STANDARDS,
+  EIP155_CHAIN_IDS,
+  getBackendChainName,
+  getCaip2,
+  getChainDecimals,
+  getChainStandard,
+  getSourceChainId,
+  getTxChainFromBackendName,
+  getTxChainFromSourceChainId,
+};
+export type { EvmTxChain, TxChain };
 
 export interface SendChainConfig {
   id: TxChain;
@@ -17,7 +42,7 @@ export interface SendChainConfig {
 }
 
 const monadTestnet = defineChain({
-  id: 10143,
+  id: EIP155_CHAIN_IDS.MONAD_TESTNET,
   name: "Monad Testnet",
   network: "monad-testnet",
   nativeCurrency: {
@@ -38,22 +63,21 @@ const monadTestnet = defineChain({
   testnet: true,
 });
 
+// Per-chain runtime config (viem chain + RPC + presentation). Identity
+// fields (label, symbol, ids) come from the chain registry.
 const EVM_CONFIG: Record<EvmTxChain, {
   chain: Chain;
   rpcUrl: string;
-  label: string;
-  shortLabel: string;
-  currencySymbol: string;
   colorClass: string;
+  logoPath?: string;
 }> = {
   ethereum: {
-    chain: useTestnet ? sepolia : mainnet,
-    rpcUrl:
-      import.meta.env.VITE_ETH_RPC_URL ||
-      (useTestnet ? "https://ethereum-sepolia-rpc.publicnode.com" : "https://cloudflare-eth.com"),
-    label: useTestnet ? "Ethereum Sepolia" : "Ethereum",
-    shortLabel: useTestnet ? "Sepolia" : "Ethereum",
-    currencySymbol: "ETH",
+    chain: sendUseTestnet ? sepolia : mainnet,
+    rpcUrl: sendUseTestnet
+      ? import.meta.env.VITE_ETH_SEPOLIA_RPC_URL ||
+        import.meta.env.VITE_YELLOW_SANDBOX_RPC_SEPOLIA ||
+        "https://ethereum-sepolia-rpc.publicnode.com"
+      : import.meta.env.VITE_ETH_RPC_URL || "https://cloudflare-eth.com",
     colorClass: "text-primary",
     logoPath: undefined,
   },
@@ -62,9 +86,6 @@ const EVM_CONFIG: Record<EvmTxChain, {
     rpcUrl:
       import.meta.env.VITE_ARB_SEPOLIA_RPC_URL ||
       "https://sepolia-rollup.arbitrum.io/rpc",
-    label: "Arbitrum Sepolia",
-    shortLabel: "Arbitrum",
-    currencySymbol: "ETH",
     colorClass: "text-[#96BEDC]",
     logoPath: "/assets/logo/arbitrum-logo.png",
   },
@@ -73,9 +94,6 @@ const EVM_CONFIG: Record<EvmTxChain, {
     rpcUrl:
       import.meta.env.VITE_MONAD_TESTNET_RPC_URL ||
       "https://testnet-rpc.monad.xyz",
-    label: "Monad Testnet",
-    shortLabel: "Monad",
-    currencySymbol: "MON",
     colorClass: "text-[#9E7BFF]",
     logoPath: "/assets/logo/monad-logo.png",
   },
@@ -83,9 +101,9 @@ const EVM_CONFIG: Record<EvmTxChain, {
 
 const SUI_CONFIG: SendChainConfig = {
   id: "sui",
-  label: "Sui",
-  shortLabel: "Sui",
-  currencySymbol: "SUI",
+  label: CHAIN_STANDARDS.sui.label,
+  shortLabel: CHAIN_STANDARDS.sui.shortLabel,
+  currencySymbol: CHAIN_STANDARDS.sui.currencySymbol,
   isEvm: false,
   colorClass: "text-[#4DA2FF]",
   txHashPlaceholder: "e.g. DFBxP4qNbDPYyXdwwDxUu3MSVXV13g51PwHkWv34VMCv",
@@ -98,7 +116,7 @@ export function isEvmChain(chain: TxChain): chain is EvmTxChain {
 
 export function getAvailableSendChains(includeSui: boolean): TxChain[] {
   const base: TxChain[] = ["ethereum"];
-  if (useTestnet) {
+  if (sendUseTestnet) {
     base.push("arbitrum", "monad");
   }
   if (includeSui) {
@@ -112,11 +130,12 @@ export function getSendChainConfig(chain: TxChain): SendChainConfig {
     return SUI_CONFIG;
   }
   const evm = EVM_CONFIG[chain];
+  const std = getChainStandard(chain);
   return {
     id: chain,
-    label: evm.label,
-    shortLabel: evm.shortLabel,
-    currencySymbol: evm.currencySymbol,
+    label: std.label,
+    shortLabel: std.shortLabel,
+    currencySymbol: std.currencySymbol,
     isEvm: true,
     colorClass: evm.colorClass,
     txHashPlaceholder: "0x...",
@@ -135,11 +154,23 @@ export function getRpcUrlForEvm(chain: EvmTxChain): string {
 export function getExplorerTxUrl(chain: TxChain, txHash: string): string {
   if (!txHash) return "";
   if (chain === "sui") {
-    const base = useTestnet ? "https://suiscan.xyz/testnet/tx/" : "https://suiscan.xyz/mainnet/tx/";
+    const base = sendUseTestnet ? "https://suiscan.xyz/testnet/tx/" : "https://suiscan.xyz/mainnet/tx/";
     return `${base}${txHash}`;
   }
   const explorer = EVM_CONFIG[chain].chain.blockExplorers?.default?.url ?? "";
   return explorer ? `${explorer}/tx/${txHash}` : "";
+}
+
+// Dev-time guard: the viem chain objects must agree with the registry's
+// EIP-155 ids, otherwise publish requests would carry the wrong chain id.
+if (import.meta.env.DEV) {
+  for (const c of ["ethereum", "arbitrum", "monad"] as const) {
+    if (EVM_CONFIG[c].chain.id !== CHAIN_STANDARDS[c].chainId) {
+      console.warn(
+        `[sendChains] viem chain id (${EVM_CONFIG[c].chain.id}) disagrees with chainRegistry (${CHAIN_STANDARDS[c].chainId}) for "${c}"`,
+      );
+    }
+  }
 }
 
 const evmClients = new Map<EvmTxChain, PublicClient>();

@@ -36,6 +36,11 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, message, "NOT_FOUND")
     }
 
+    /// 409 Conflict — generic; do not reveal which resource conflicted.
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, message, "CONFLICT")
+    }
+
     /// Internal server error.
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message, "INTERNAL_ERROR")
