@@ -50,7 +50,7 @@ const buildEvmNetworks = () => {
     rpcUrls: [
       import.meta.env.VITE_ETH_RPC_URL ||
         (chain.id === 1
-          ? 'https://cloudflare-eth.com'
+          ? 'https://ethereum.publicnode.com'
           : 'https://ethereum-sepolia-rpc.publicnode.com'),
     ],
     vanityName: chain.name,
@@ -139,7 +139,7 @@ const buildEvmNetworks = () => {
       networkId: mainnet.id,
       rpcUrls: [
         import.meta.env.VITE_YELLOW_MAINNET_RPC_ETH ||
-          'https://cloudflare-eth.com',
+          'https://ethereum.publicnode.com',
       ],
       vanityName: 'Ethereum',
     });

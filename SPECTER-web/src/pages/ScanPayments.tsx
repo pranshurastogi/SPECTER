@@ -66,6 +66,8 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
+  viewing_pk: string;
+  meta_address: string;
 }
 
 /**
@@ -174,6 +176,7 @@ export default function ScanPayments() {
   const [fullKeySet, setFullKeySet] = useState<DecryptedKeys | null>(null);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [keysSavedToVault, setKeysSavedToVault] = useState(false);
+  const [savePromptDismissed, setSavePromptDismissed] = useState(false);
 
   // Quick unlock & scan state
   const [vaultEntries, setVaultEntries] = useState<VaultEntry[]>(() => {
@@ -444,6 +447,8 @@ export default function ScanPayments() {
       viewing_sk: dk.viewing_sk,
       spending_pk: dk.spending_pk,
       spending_sk: dk.spending_sk,
+      viewing_pk: dk.viewing_pk,
+      meta_address: dk.meta_address,
     };
     setKeys(k);
     setKeySource("vault");
@@ -552,11 +557,14 @@ export default function ScanPayments() {
                     viewing_sk: dk.viewing_sk,
                     spending_pk: dk.spending_pk,
                     spending_sk: dk.spending_sk,
+                    viewing_pk: dk.viewing_pk,
+                    meta_address: dk.meta_address,
                   });
                   setKeySource("vault");
                   setFullKeySet(null);
                   setKeysPaste("");
                   setLoadError(null);
+                  setSavePromptDismissed(true); // Already from vault, no need to prompt
                 }}
               />
 

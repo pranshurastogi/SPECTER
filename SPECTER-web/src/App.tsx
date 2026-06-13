@@ -7,6 +7,7 @@ import { WalletProvider } from "@/components/features/wallet/WalletProvider";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
 import { Analytics } from "@vercel/analytics/react";
+import { WalkthroughVideoPrompt } from "@/components/features/WalkthroughVideoPrompt";
 import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
@@ -55,6 +56,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </div>
+          <WalkthroughVideoPrompt />
           <Analytics />
         </div>
       </BrowserRouter>

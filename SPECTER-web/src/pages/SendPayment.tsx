@@ -37,6 +37,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Button } from "@/components/ui/base/button";
+import { parseBlockchainError, formatErrorMessage } from "@/lib/blockchain/errorParser";
 import { SearchBar } from "@/components/ui/specialized/search-bar";
 import {
   Check,
@@ -1164,7 +1165,8 @@ export default function SendPayment() {
         txConfirmed: true,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Transaction failed";
+      const parsed = parseBlockchainError(err);
+      const message = formatErrorMessage(parsed);
       setSendError(message);
       setFlowError(message);
       if (!broadcasted || !txHashResult) {

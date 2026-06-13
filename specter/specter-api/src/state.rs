@@ -54,9 +54,9 @@ impl RelayerConfig {
 /// Configuration for the API service.
 #[derive(Clone, Debug)]
 pub struct ApiConfig {
-    /// Ethereum RPC URL.
+    /// Ethereum mainnet RPC URL for ENS resolution.
     pub rpc_url: String,
-    /// When true, use Sepolia ENS (Sepolia RPC default).
+    /// When true, SuiNS and other non-ENS features use testnet defaults.
     pub use_testnet: bool,
     /// Optional Pinata JWT used for pinning.
     pub pinata_jwt: Option<String>,
@@ -92,7 +92,6 @@ pub struct SecurityConfig {
 }
 
 const DEFAULT_ETH_MAINNET_RPC: &str = "https://ethereum.publicnode.com";
-const DEFAULT_ETH_SEPOLIA_RPC: &str = "https://ethereum-sepolia-rpc.publicnode.com";
 const DEFAULT_SUI_MAINNET_RPC: &str = "https://fullnode.mainnet.sui.io:443";
 const DEFAULT_SUI_TESTNET_RPC: &str = "https://fullnode.testnet.sui.io:443";
 
@@ -186,12 +185,9 @@ impl ApiConfig {
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
 
-        let default_rpc = if use_testnet {
-            DEFAULT_ETH_SEPOLIA_RPC
-        } else {
-            DEFAULT_ETH_MAINNET_RPC
-        };
-        let rpc_url = std::env::var("ETH_RPC_URL").unwrap_or_else(|_| default_rpc.into());
+        // ENS resolution always uses Ethereum mainnet — real .eth names are not on Sepolia.
+        let rpc_url = std::env::var("ENS_RPC_URL")
+            .unwrap_or_else(|_| DEFAULT_ETH_MAINNET_RPC.into());
 
         let sui_rpc_url = std::env::var("SUI_RPC_URL").unwrap_or_else(|_| {
             if use_testnet {

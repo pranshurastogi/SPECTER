@@ -7,6 +7,7 @@ import { TwitterThreadCard } from "@/components/features/insights/TwitterThreadC
 import { MEDIUM_POSTS, TWITTER_THREADS } from "@/components/features/insights/insightsData";
 import { XLogo } from "@/components/features/insights/XLogo";
 import { ParticleCanvas } from "@/components/features/insights/ParticleCanvas";
+import { WalkthroughVideoCard } from "@/components/features/insights/WalkthroughVideoCard";
 
 import "react-tweet/theme.css";
 
@@ -96,6 +97,11 @@ export default function InsightsPage() {
         </section>
 
         <div className="max-w-5xl mx-auto space-y-16 sm:space-y-24">
+
+          {/* Walkthrough */}
+          <section id="walkthrough">
+            <WalkthroughVideoCard />
+          </section>
 
           {/* Articles */}
           <section id="articles">
