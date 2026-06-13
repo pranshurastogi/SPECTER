@@ -1123,11 +1123,16 @@ export default function SendPayment() {
           setPublishPhase("idle");
           return;
         }
+        // Do NOT pass `chain` here — we already switched chains above, and
+        // passing `chain` causes viem to re-validate via the wallet's EIP-1193
+        // provider. Some providers (Dynamic Labs / WalletConnect) return a
+        // "JSON-RPC protocol version not supported" error during that step for
+        // standard testnets (Sepolia, Arbitrum Sepolia). Omitting `chain` also
+        // lets the wallet estimate gas natively, avoiding stale maxFeePerGas
+        // rejections on Arbitrum Sepolia.
         txHashResult = await walletClient.sendTransaction({
           to: stealthResult.stealth_address as `0x${string}`,
           value: parseEther(amt),
-          account: walletClient.account,
-          chain: targetChain,
         } as unknown as Parameters<typeof walletClient.sendTransaction>[0]);
         analytics.sendTxSubmitted(evmChain);
         broadcasted = true;
