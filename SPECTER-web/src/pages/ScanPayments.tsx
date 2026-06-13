@@ -489,32 +489,31 @@ export default function ScanPayments() {
             </p>
           </div>
 
-          {/* Quick Unlock & Scan — only when vault has keys and none loaded yet */}
+          {/* Quick Unlock & Scan — compact card when saved vault keys exist */}
           {vaultEntries.length > 0 && !keys && scanState === "idle" && (
-            <div className="w-full mb-4 rounded-xl overflow-hidden border border-white/[0.06] bg-black/60 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-white/[0.05] bg-primary/[0.04]">
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-                </span>
-                <span className="font-display text-[10px] font-bold tracking-[0.2em] uppercase text-white/30">
-                  Saved identity detected
-                </span>
-              </div>
-              <div className="px-4 py-3 space-y-3">
-                {/* Entry picker — only show if multiple */}
-                {vaultEntries.length === 1 && (
-                  <p className="text-xs text-white/40 font-display flex items-center gap-1">
-                    {getEntryUnlockMethod(vaultEntries[0]!) === "passkey" ? (
-                      <Fingerprint className="h-3 w-3 text-white/50" />
-                    ) : (
-                      <Lock className="h-3 w-3 text-white/50" />
-                    )}
-                    <span className="text-white/70 font-medium">{vaultEntries[0]!.label}</span>
-                    {" · "}saved {new Date(vaultEntries[0]!.createdAt).toLocaleDateString()}
+            <div className="w-full mb-4 rounded-xl border border-primary/20 bg-primary/[0.04] backdrop-blur-md">
+              <div className="px-4 py-3 flex items-center gap-3">
+                {/* Identity icon */}
+                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                  {getEntryUnlockMethod(vaultEntries[0]!) === "passkey"
+                    ? <Fingerprint className="h-4 w-4 text-primary" />
+                    : <Lock className="h-4 w-4 text-primary" />}
+                </div>
+                {/* Label + date */}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate">
+                    {vaultEntries.length === 1
+                      ? vaultEntries[0]!.label
+                      : `${vaultEntries.length} saved identities`}
                   </p>
-                )}
-
+                  {vaultEntries.length === 1 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      saved {new Date(vaultEntries[0]!.createdAt).toLocaleDateString()}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="px-4 pb-3">
                 <VaultUnlockForm
                   entries={vaultEntries}
                   selectedId={quickSelectedId}
@@ -530,51 +529,42 @@ export default function ScanPayments() {
 
           {/* Load keys + Scan */}
           <Card className="w-full border-border bg-card/50 shadow-lg rounded-xl">
-            <CardContent className="p-6">
+            <CardContent className="p-5">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-                  <KeyRound className="h-4 w-4 text-primary" />
+                <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                  <KeyRound className="h-3.5 w-3.5 text-primary" />
                 </div>
-                <div>
-                  <h2 className="font-display font-semibold text-foreground">
-                    Load or paste keys
+                <div className="min-w-0">
+                  <h2 className="font-display font-semibold text-foreground text-sm">
+                    {vaultEntries.length > 0 && !keys ? "Use a different key" : "Load keys"}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    JSON keys from <Link to="/setup" className="text-primary hover:underline">Setup</Link>
+                    Upload or paste your JSON backup from <Link to="/setup" className="text-primary hover:underline">Setup</Link>
                   </p>
                 </div>
               </div>
-              <div className="rounded-lg border border-muted bg-muted/30 p-3 mb-4 flex items-start gap-2">
-                <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-                <p className="text-xs text-muted-foreground">
-                  Keys are never stored on the backend. Use only on trusted devices.
-                </p>
-              </div>
 
-              <UnlockSavedKeys
-                onUnlock={(dk: DecryptedKeys) => {
-                  setKeys({
-                    viewing_sk: dk.viewing_sk,
-                    spending_pk: dk.spending_pk,
-                    spending_sk: dk.spending_sk,
-                    viewing_pk: dk.viewing_pk,
-                    meta_address: dk.meta_address,
-                  });
-                  setKeySource("vault");
-                  setFullKeySet(null);
-                  setKeysPaste("");
-                  setLoadError(null);
-                  setSavePromptDismissed(true); // Already from vault, no need to prompt
-                }}
-              />
+              {/* Only show UnlockSavedKeys when there are no vault entries (no quick-unlock card above) */}
+              {vaultEntries.length === 0 && (
+                <UnlockSavedKeys
+                  onUnlock={(dk: DecryptedKeys) => {
+                    setKeys({
+                      viewing_sk: dk.viewing_sk,
+                      spending_pk: dk.spending_pk,
+                      spending_sk: dk.spending_sk,
+                      viewing_pk: dk.viewing_pk,
+                      meta_address: dk.meta_address,
+                    });
+                    setKeySource("vault");
+                    setFullKeySet(null);
+                    setKeysPaste("");
+                    setLoadError(null);
+                    setSavePromptDismissed(true);
+                  }}
+                />
+              )}
 
-              <div className="flex items-center gap-2 my-4">
-                <div className="flex-1 h-px bg-border" />
-                <span className="text-xs text-muted-foreground">or load from file</span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
-
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -856,8 +846,8 @@ export default function ScanPayments() {
                         );
                       })}
                     </div>
-                    <div className="space-y-2">
-                      {paginatedDiscoveries.map((d, i) => {
+                    <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb:hover]:bg-white/20">
+                      {filteredDiscoveries.map((d, i) => {
                         const mappedChain = resolveDiscoveryChain(d);
                         const addr = mappedChain === "sui" ? d.stealth_sui_address : d.stealth_address;
                         const shortAddr = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr;
@@ -902,29 +892,6 @@ export default function ScanPayments() {
                         );
                       })}
                     </div>
-                    {totalPages > 1 && (
-                      <div className="flex items-center justify-between gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setPage((p) => Math.max(0, p - 1))}
-                          disabled={page === 0}
-                        >
-                          Previous
-                        </Button>
-                        <span className="text-xs text-muted-foreground">
-                          {page + 1} / {totalPages}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                          disabled={page >= totalPages - 1}
-                        >
-                          Next
-                        </Button>
-                      </div>
-                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
