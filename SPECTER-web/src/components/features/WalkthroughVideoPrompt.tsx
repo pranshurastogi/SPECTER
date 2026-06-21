@@ -4,9 +4,10 @@ import { Play, X } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import {
-  hasSeenWalkthroughPrompt,
   isSpecterProductionHost,
   markWalkthroughPromptSeen,
+  recordWalkthroughPromptView,
+  shouldShowWalkthroughPrompt,
 } from "@/lib/walkthroughPrompt";
 import {
   SPECTER_WALKTHROUGH_THUMBNAIL_URL,
@@ -18,7 +19,7 @@ const ALLOWED_PATHS = new Set(["/", "/insights"]);
 
 export function WalkthroughVideoPrompt() {
   const { pathname } = useLocation();
-  const [dismissed, setDismissed] = useState(() => hasSeenWalkthroughPrompt());
+  const [dismissed, setDismissed] = useState(() => !shouldShowWalkthroughPrompt());
 
   const dismiss = () => {
     markWalkthroughPromptSeen();
@@ -36,6 +37,11 @@ export function WalkthroughVideoPrompt() {
   }, [pathname]);
 
   const visible = !dismissed && ALLOWED_PATHS.has(pathname) && isSpecterProductionHost();
+
+  // Count this appearance toward the lifetime cap (once per session).
+  useEffect(() => {
+    if (visible) recordWalkthroughPromptView();
+  }, [visible]);
 
   return (
     <AnimatePresence>
@@ -99,7 +105,7 @@ export function WalkthroughVideoPrompt() {
               {/* Tag line — right of mascot */}
               <div className="absolute right-3 top-1/2 -translate-y-1/2 text-right z-10">
                 <span className="block text-[9px] font-bold uppercase tracking-[0.18em] text-amber-400/70 mb-0.5">
-                  First visit
+                  Quick start
                 </span>
                 <span
                   className="block font-black leading-none tracking-tight text-zinc-200"

@@ -1,8 +1,16 @@
 import { Link } from "react-router-dom";
-import { Github, BookOpen, MonitorPlay, Rss } from "lucide-react";
+import {
+  Github,
+  BookOpen,
+  MonitorPlay,
+  Rss,
+  MessageSquarePlus,
+  CalendarClock,
+} from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { XLogo } from "@/components/features/insights/XLogo";
 import { getAppDeployment } from "@/lib/appEnv";
+import { FEEDBACK_FORM_URL, SCHEDULE_CALL_URL } from "@/lib/feedback";
 import { cn } from "@/lib/utils";
 
 /** npm brand mark (Simple Icons), inherits `currentColor` for theme consistency */
@@ -78,6 +86,32 @@ export function Footer() {
               <span>Insights</span>
             </Link>
           </div>
+
+          {/* Talk to us — centered, quiet, but always reachable */}
+          <div className="flex flex-col gap-2 mt-6 md:mt-0 md:items-center">
+            <span className="font-display text-[9px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/40 select-none">
+              Talk to us
+            </span>
+            <a
+              href={FEEDBACK_FORM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={devLinkClass}
+            >
+              <MessageSquarePlus className="h-4 w-4 shrink-0" />
+              <span>Share feedback</span>
+            </a>
+            <a
+              href={SCHEDULE_CALL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={devLinkClass}
+            >
+              <CalendarClock className="h-4 w-4 shrink-0" />
+              <span>Book a 15-min call</span>
+            </a>
+          </div>
+
           <div className="flex flex-col gap-4 mt-6 md:mt-0 md:items-end">
             <ul className="flex list-none gap-3 md:justify-end">
               {socialLinks.map((link, i) => (
