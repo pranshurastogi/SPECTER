@@ -163,3 +163,6 @@ signing_key*
 registry.json
 *.db
 *.sqlite
+
+# Agent planning docs (specs/plans) — kept locally for agents, not uploaded
+docs/superpowers/
