@@ -470,3 +470,352 @@
   background: rgba(234, 179, 8, 0.2);
   box-shadow: 0 0 20px rgba(234, 179, 8, 0.3);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Retro TV error display (RetroTvError — src/components/ui/404-error-page.tsx)
+   All selectors are scoped under `.main_wrapper` so the generic class names
+   (.main, .tv, .screen, .bottom, .lines …) can't collide with app styles.
+   Themed to SPECTER's gold-plastic-on-midnight look.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@keyframes b {
+  100% {
+    background-position: 50% 0, 60% 50%;
+  }
+}
+
+@keyframes tv-flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.82; }
+  99% { opacity: 0.94; }
+}
+
+.main_wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 360px;
+  --tv-gold: #e7b15a;
+  --tv-gold-dark: #b07d2c;
+  --tv-shadow: #6e4f17;
+  --tv-bezel: #2a2113;
+  --tv-amber: #f5b942;
+}
+
+.main_wrapper .main {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Antenna ── */
+.main_wrapper .antenna {
+  width: 5px;
+  height: 50px;
+  border-radius: 50px;
+  background-color: #9aa0aa;
+  margin-bottom: -14px;
+  z-index: 0;
+  position: relative;
+}
+.main_wrapper .antenna_shadow {
+  position: absolute;
+  background-color: transparent;
+  width: 50px;
+  height: 56px;
+  margin-left: 1.5px;
+  border-radius: 20%;
+  transform: rotate(140deg);
+  border: 4px solid transparent;
+  box-shadow: inset 0 16px #777c86, inset 0 16px 1px 1px #777c86;
+}
+.main_wrapper .a1 {
+  position: absolute;
+  width: 5px;
+  height: 36px;
+  border-radius: 50px;
+  background-color: #b8bdc6;
+  transform: rotate(-25deg);
+  margin-top: -28px;
+  margin-left: -1px;
+}
+.main_wrapper .a1d {
+  transform: rotate(-25deg);
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background-color: #d9dde3;
+  border-radius: 50%;
+  margin-top: -53px;
+  margin-left: -16px;
+  z-index: 99;
+}
+.main_wrapper .a2 {
+  position: absolute;
+  width: 5px;
+  height: 36px;
+  border-radius: 50px;
+  background-color: #b8bdc6;
+  transform: rotate(25deg);
+  margin-top: -28px;
+  margin-left: 1px;
+}
+.main_wrapper .a2d {
+  transform: rotate(25deg);
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background-color: #d9dde3;
+  border-radius: 50%;
+  margin-top: -53px;
+  margin-left: 17px;
+  z-index: 99;
+}
+.main_wrapper .a_base {
+  background: linear-gradient(180deg, var(--tv-gold) 0%, var(--tv-gold-dark) 100%);
+  width: 50px;
+  height: 12px;
+  margin-top: 36px;
+  border-radius: 50px 50px 7px 7px;
+  z-index: 1;
+}
+
+/* ── TV body ── */
+.main_wrapper .tv {
+  width: 360px;
+  height: 270px;
+  margin-top: 14px;
+  border-radius: 18px;
+  background: linear-gradient(165deg, var(--tv-gold) 0%, var(--tv-gold-dark) 70%, var(--tv-shadow) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 18px;
+  position: relative;
+  box-shadow:
+    inset 3px 3px 6px rgba(255, 236, 196, 0.55),
+    inset -4px -4px 10px rgba(0, 0, 0, 0.35),
+    0 22px 40px -14px rgba(0, 0, 0, 0.75),
+    0 0 38px -10px rgba(245, 185, 66, 0.35);
+}
+.main_wrapper .cruve {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 14px;
+  height: 14px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.main_wrapper .curve_svg {
+  width: 100%;
+  height: 100%;
+  fill: rgba(255, 240, 205, 0.6);
+}
+
+/* ── Screen ── */
+.main_wrapper .display_div {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.main_wrapper .screen_out {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--tv-bezel);
+  padding: 10px;
+  box-shadow:
+    inset 2px 2px 5px rgba(0, 0, 0, 0.7),
+    inset -2px -2px 4px rgba(255, 220, 160, 0.18);
+}
+.main_wrapper .screen_out1 {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 9px;
+  overflow: hidden;
+}
+.main_wrapper .screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(245, 185, 66, 0.12), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.035) 0 2px, transparent 2px 4px),
+    #0c0d11;
+  box-shadow: inset 0 0 26px 6px rgba(0, 0, 0, 0.9);
+  animation: tv-flicker 6s linear infinite;
+}
+.main_wrapper .screenM {
+  position: absolute;
+  inset: 0;
+  border-radius: 9px;
+  pointer-events: none;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.12) 0%, transparent 35%, transparent 70%, rgba(255, 255, 255, 0.05) 100%);
+}
+.main_wrapper .screenM .notfound_text {
+  display: none;
+}
+.main_wrapper .notfound_text {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: 0.18em;
+  color: var(--tv-amber);
+  text-shadow: 0 0 8px rgba(245, 185, 66, 0.85), 0 0 22px rgba(245, 185, 66, 0.45);
+  text-align: center;
+  padding: 0 6px;
+}
+
+/* ── Decorative tuner lines on the control column ── */
+.main_wrapper .lines {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.main_wrapper .line1,
+.main_wrapper .line2,
+.main_wrapper .line3 {
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(42, 33, 19, 0.55);
+}
+.main_wrapper .line1 { width: 26px; }
+.main_wrapper .line2 { width: 20px; }
+.main_wrapper .line3 { width: 14px; }
+
+/* ── Right-hand control panel ── */
+.main_wrapper .buttons_div {
+  width: 64px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  padding-top: 4px;
+}
+.main_wrapper .b1,
+.main_wrapper .b2 {
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fbe2ad, var(--tv-gold-dark) 75%, var(--tv-shadow));
+  box-shadow: inset -2px -2px 4px rgba(0, 0, 0, 0.4), inset 2px 2px 3px rgba(255, 240, 205, 0.7), 0 2px 4px rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+.main_wrapper .b1 {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.main_wrapper .b1 > div {
+  width: 3px;
+  height: 13px;
+  border-radius: 3px;
+  background: var(--tv-bezel);
+  transform: translateY(-3px) rotate(28deg);
+}
+.main_wrapper .b2 {
+  width: 26px;
+  height: 26px;
+}
+
+/* ── Speaker grille ── */
+.main_wrapper .speakers {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.main_wrapper .g1 {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+.main_wrapper .g11,
+.main_wrapper .g12,
+.main_wrapper .g13 {
+  width: 8px;
+  height: 4px;
+  border-radius: 2px;
+}
+.main_wrapper .g11 { background: #d9534f; }
+.main_wrapper .g12 { background: #e7c84f; }
+.main_wrapper .g13 { background: #5fae5f; }
+.main_wrapper .speakers .g {
+  width: 40px;
+  height: 13px;
+  border-radius: 4px;
+  background-color: var(--tv-bezel);
+  background-image:
+    radial-gradient(rgba(255, 224, 170, 0.35) 1px, transparent 1.4px),
+    radial-gradient(rgba(0, 0, 0, 0.5) 1px, transparent 1.4px);
+  background-size: 6px 6px, 6px 6px;
+  background-position: 0 0, 3px 3px;
+  animation: b 0.7s steps(2) infinite;
+}
+
+/* ── Stand / legs ── */
+.main_wrapper .bottom {
+  position: relative;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.main_wrapper .base1 {
+  width: 90px;
+  height: 14px;
+  background: linear-gradient(180deg, var(--tv-gold-dark), var(--tv-shadow));
+  border-radius: 0 0 6px 6px;
+}
+.main_wrapper .base2 {
+  width: 130px;
+  height: 10px;
+  background: linear-gradient(180deg, var(--tv-gold), var(--tv-gold-dark));
+  border-radius: 7px;
+}
+.main_wrapper .base3 {
+  width: 200px;
+  height: 8px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  filter: blur(2px);
+}
+
+/* ── Giant translucent error code behind the set ── */
+.main_wrapper .text_404 {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14rem;
+  pointer-events: none;
+}
+.main_wrapper .text_404 > div {
+  font-family: "Signika", "Space Grotesk", sans-serif;
+  font-weight: 700;
+  font-size: clamp(7rem, 22vw, 15rem);
+  line-height: 1;
+  color: rgba(245, 185, 66, 0.10);
+  text-shadow: 0 0 40px rgba(245, 185, 66, 0.08);
+  user-select: none;
+}

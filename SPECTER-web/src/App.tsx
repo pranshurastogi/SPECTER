@@ -8,6 +8,8 @@ import { usePageTracking } from "@/hooks/usePageTracking";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
 import { Analytics } from "@vercel/analytics/react";
 import { WalkthroughVideoPrompt } from "@/components/features/WalkthroughVideoPrompt";
+import { FeedbackBubble } from "@/components/features/FeedbackBubble";
+import { ErrorBoundary } from "@/components/features/ErrorBoundary";
 import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
@@ -44,19 +46,22 @@ const App = () => (
           <div className="relative z-10">
             <ScrollToTop />
             <RouteTracker />
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/setup" element={<GenerateKeys />} />
-              <Route path="/send" element={<SendPayment />} />
-              <Route path="/scan" element={<ScanPayments />} />
-              <Route path="/yellow" element={<YellowPage />} />
-              <Route path="/usecases" element={<UseCasesPage />} />
-              <Route path="/insights" element={<InsightsPage />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/setup" element={<GenerateKeys />} />
+                <Route path="/send" element={<SendPayment />} />
+                <Route path="/scan" element={<ScanPayments />} />
+                <Route path="/yellow" element={<YellowPage />} />
+                <Route path="/usecases" element={<UseCasesPage />} />
+                <Route path="/insights" element={<InsightsPage />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </ErrorBoundary>
           </div>
           <WalkthroughVideoPrompt />
+          <FeedbackBubble />
           <Analytics />
         </div>
       </BrowserRouter>
