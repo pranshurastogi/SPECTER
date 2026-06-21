@@ -64,6 +64,7 @@ import { SaveToDeviceDialog } from "@/components/features/keys/SaveToDeviceDialo
 import { CoreSpinLoader } from "@/components/ui/core-spin-loader";
 import { listVaultEntries, getEntryUnlockMethod, type VaultEntry } from "@/lib/crypto/keyVault";
 import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
+import LoadExistingKeysPanel from "@/components/features/keys/LoadExistingKeysPanel";
 import { NetworkPrompt, ErrorCard } from "@/components/ui/specialized/network-prompt";
 
 type SetupStep = 1 | 2 | 3 | 4;
@@ -316,6 +317,7 @@ const securityTips = [
 export default function GenerateKeys() {
   const [currentStep, setCurrentStep] = useState<SetupStep>(1);
   const [step1Status, setStep1Status] = useState<"idle" | "generating" | "complete">("idle");
+  const [step1Mode, setStep1Mode] = useState<"generate" | "load">("generate");
   const [keys, setKeys] = useState<GenerateKeysResponse | null>(null);
   const [keysDownloaded, setKeysDownloaded] = useState(false);
   const [keySavedToDevice, setKeySavedToDevice] = useState(false);
@@ -450,6 +452,17 @@ export default function GenerateKeys() {
       toast.error(message);
       setStep1Status("idle");
     }
+  };
+
+  const handleLoadExisting = (loaded: GenerateKeysResponse) => {
+    setKeys(loaded);
+    setStep1Status("complete");
+    setKeysDownloaded(true); // user already holds these keys — no download nag
+    setEnsUploadResult(null);
+    setSuinsUploadResult(null);
+    saveSetupProgress({ keysGenerated: true });
+    setStep1Mode("generate");
+    toast.success("Keys loaded");
   };
 
   const handleAttachToEns = async () => {
@@ -726,7 +739,7 @@ export default function GenerateKeys() {
                       Step 1 — Generate keys
                     </h2>
 
-                    {step1Status === "idle" && (
+                    {step1Status === "idle" && step1Mode === "generate" && (
                       <div className="flex flex-col items-center text-center">
                         <div className="w-14 h-14 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-5">
                           <Key className="h-7 w-7 text-primary" />
@@ -737,7 +750,29 @@ export default function GenerateKeys() {
                         <Button variant="quantum" size="lg" onClick={handleGenerate}>
                           Generate Keys
                         </Button>
+
+                        <div className="flex items-center gap-3 w-full my-5">
+                          <span className="h-px flex-1 bg-border" />
+                          <span className="text-[11px] uppercase tracking-widest text-muted-foreground">or</span>
+                          <span className="h-px flex-1 bg-border" />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setStep1Mode("load")}
+                          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          <HardDrive className="h-3.5 w-3.5" />
+                          I already have keys
+                        </button>
                       </div>
+                    )}
+
+                    {step1Status === "idle" && step1Mode === "load" && (
+                      <LoadExistingKeysPanel
+                        onLoaded={handleLoadExisting}
+                        onBack={() => setStep1Mode("generate")}
+                      />
                     )}
 
                     {step1Status === "generating" && (
