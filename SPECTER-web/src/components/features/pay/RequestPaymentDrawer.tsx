@@ -78,10 +78,15 @@ export function RequestPaymentDrawer({
     toast.success("Request saved");
   }
 
-  function handleCreateAndCopy() {
-    navigator.clipboard.writeText(url);
-    analytics.requestCreated({ has_amount: Boolean(amount), chain: toAnalyticsChain(chain) });
-    toast.success("Request link copied");
+  async function handleCreateAndCopy() {
+    try {
+      await navigator.clipboard.writeText(url);
+      analytics.requestCreated({ has_amount: Boolean(amount), chain: toAnalyticsChain(chain) });
+      analytics.payLinkCopied("drawer");
+      toast.success("Request link copied");
+    } catch {
+      toast.error("Couldn't copy to clipboard");
+    }
   }
 
   return (
