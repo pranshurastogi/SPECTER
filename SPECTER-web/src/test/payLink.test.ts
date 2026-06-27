@@ -18,6 +18,13 @@ describe("isValidRecipientName", () => {
     expect(isValidRecipientName("alice")).toBe(false);
     expect(isValidRecipientName("../etc")).toBe(false);
   });
+  it("rejects leading/trailing hyphen labels", () => {
+    expect(isValidRecipientName("alice-.eth")).toBe(false);
+    expect(isValidRecipientName("-alice.eth")).toBe(false);
+  });
+  it("accepts subdomain names", () => {
+    expect(isValidRecipientName("sub.alice.eth")).toBe(true);
+  });
 });
 
 describe("buildPayPath / buildPayUrl", () => {
@@ -55,5 +62,9 @@ describe("parsePayParams", () => {
   });
   it("accepts a URLSearchParams instance", () => {
     expect(parsePayParams(new URLSearchParams("chain=monad")).chain).toBe("monad");
+  });
+  it("caps ref at 40 chars", () => {
+    const p = parsePayParams(`ref=${"z".repeat(60)}`);
+    expect(p.ref!.length).toBe(40);
   });
 });

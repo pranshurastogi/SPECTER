@@ -25,11 +25,11 @@ export interface PayLinkConfig extends PayLinkParams {
 /** True for ENS (.eth) or SuiNS (.sui) names. Rejects junk/path traversal. */
 export function isValidRecipientName(name: string): boolean {
   const n = (name || "").trim().toLowerCase();
-  return /^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.(eth|sui)$/.test(n);
+  return /^([a-z0-9]+(-[a-z0-9]+)*\.)+(eth|sui)$/.test(n);
 }
 
 function isValidAmount(value: string): boolean {
-  if (!/^\d*\.?\d+$/.test(value)) return false;
+  if (!/^\d+(\.\d+)?$/.test(value)) return false;
   return Number(value) > 0;
 }
 
@@ -62,13 +62,13 @@ export function parsePayParams(search: URLSearchParams | string): PayLinkParams 
   if (chain && VALID_CHAINS.has(chain)) out.chain = chain as TxChain;
 
   const label = sp.get("label");
-  if (label) out.label = label.replace(/[\r\n]+/g, " ").slice(0, LABEL_MAX);
+  if (label) out.label = label.replace(/[\r\n]+/g, " ").slice(0, LABEL_MAX).trimEnd();
 
   const memo = sp.get("memo");
-  if (memo) out.memo = memo.replace(/[\r\n]+/g, " ").slice(0, MEMO_MAX);
+  if (memo) out.memo = memo.replace(/[\r\n]+/g, " ").slice(0, MEMO_MAX).trimEnd();
 
   const ref = sp.get("ref");
-  if (ref) out.ref = ref.replace(/[\r\n]+/g, " ").slice(0, REF_MAX);
+  if (ref) out.ref = ref.replace(/[\r\n]+/g, " ").slice(0, REF_MAX).trimEnd();
 
   return out;
 }
