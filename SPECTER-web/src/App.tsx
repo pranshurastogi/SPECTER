@@ -18,6 +18,7 @@ import YellowPage from "./pages/YellowPage";
 import UseCasesPage from "./pages/UseCasesPage";
 import InsightsPage from "./pages/InsightsPage";
 import NotFound from "./pages/NotFound";
+import PayPage from "./pages/PayPage";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -55,6 +56,7 @@ const App = () => (
                 <Route path="/yellow" element={<YellowPage />} />
                 <Route path="/usecases" element={<UseCasesPage />} />
                 <Route path="/insights" element={<InsightsPage />} />
+                <Route path="/pay/:name" element={<PayPage />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
