@@ -173,6 +173,8 @@ import { Transaction } from "@mysten/sui/transactions";
 import { parseEther, parseUnits } from "viem";
 import { StageFlowLoader, type FlowStage } from "@/components/ui/specialized/stage-flow-loader";
 import { Switch } from "@/components/ui/base/switch";
+import type { PayLinkConfig } from "@/lib/payLink";
+import { PayLinkIdentityCard, type PayResolveStatus } from "@/components/features/pay/PayLinkIdentityCard";
 
 type SendStep = "input" | "generated" | "published";
 
@@ -345,7 +347,7 @@ function getFundingUrl(chain: TxChain): string {
   return "https://faucet.quicknode.com/ethereum/sepolia";
 }
 
-export default function SendPayment() {
+export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {}) {
   const ticketRef = useRef<HTMLDivElement>(null);
 
   const captureTicketCanvas = async () => {
@@ -424,8 +426,8 @@ export default function SendPayment() {
   };
 
   const [step, setStep] = useState<SendStep>("input");
-  const [ensName, setEnsName] = useState("");
-  const [amount, setAmount] = useState("");
+  const [ensName, setEnsName] = useState(payLink?.recipient ?? "");
+  const [amount, setAmount] = useState(payLink?.amount ?? "");
   const [isResolving, setIsResolving] = useState(false);
   const [resolveStatus, setResolveStatus] = useState<string>("");
   const [resolveError, setResolveError] = useState<string | null>(null);
@@ -435,7 +437,7 @@ export default function SendPayment() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [announcementId, setAnnouncementId] = useState<number | null>(null);
   const [txHash, setTxHash] = useState("");
-  const [publishChain, setPublishChain] = useState<TxChain>("ethereum");
+  const [publishChain, setPublishChain] = useState<TxChain>(payLink?.chain ?? "ethereum");
   const [verifiedTx, setVerifiedTx] = useState<VerifiedTx | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [publishPhase, setPublishPhase] = useState<PublishPhase>("idle");
@@ -451,7 +453,7 @@ export default function SendPayment() {
 
   // Wallet send state
   const [sendMode, setSendMode] = useState<"manual" | "wallet">("wallet");
-  const [walletAmount, setWalletAmount] = useState("");
+  const [walletAmount, setWalletAmount] = useState(payLink?.amount ?? "");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [suiConnectOpen, setSuiConnectOpen] = useState(false);
@@ -550,6 +552,19 @@ export default function SendPayment() {
       setPublishChain(availableSendChains[0] ?? "ethereum");
     }
   }, [availableSendChains, publishChain]);
+
+  /* ─────────────────────────────────────────────────────────────────────── */
+  /* Pay-link mode: auto-resolve the locked recipient exactly once on mount   */
+  /* ─────────────────────────────────────────────────────────────────────── */
+  const payLinkResolvedRef = useRef(false);
+  useEffect(() => {
+    if (!payLink?.recipient || payLinkResolvedRef.current) return;
+    payLinkResolvedRef.current = true;
+    // performResolve handles its own errors/toasts; fire-and-forget.
+    void performResolve(payLink.recipient);
+    // performResolve is stable via useCallback; intentionally run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payLink?.recipient]);
 
   /* ─────────────────────────────────────────────────────────────────────── */
   /* Helpers                                                                  */
@@ -1481,8 +1496,27 @@ export default function SendPayment() {
             </p>
           </motion.div>
 
+          {/* ─── Pay-link identity header (payer-facing) ─── */}
+          {payLink && (
+            <PayLinkIdentityCard
+              recipient={payLink.recipient}
+              status={
+                (resolveError
+                  ? "error"
+                  : resolvedENS
+                    ? "resolved"
+                    : "resolving") satisfies PayResolveStatus
+              }
+              amount={payLink.amount}
+              chain={payLink.chain}
+              label={payLink.label}
+              memo={payLink.memo}
+              errorMessage={resolveError ?? undefined}
+            />
+          )}
+
           {/* ─── Mount banner: incomplete payments from previous sessions ─── */}
-          {!bannerDismissed && incompletePending.length > 0 && step === "input" && (
+          {!payLink && !bannerDismissed && incompletePending.length > 0 && step === "input" && (
             <motion.div
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1605,20 +1639,34 @@ export default function SendPayment() {
                       tooltip="ENS (e.g. bob.eth), SuiNS (e.g. alice.sui), or paste meta-address hex from Setup."
                     />
                   </div>
-                  <SearchBar
-                    placeholder="bob.eth, alice.sui, or meta-address"
-                    value={ensName}
-                    onChange={(val) => {
-                      setEnsName(val);
-                    }}
-                    onSearch={(val) => {
-                      setEnsName(val);
-                      handleResolve(val);
-                    }}
-                    variant="minimal"
-                  />
+                  {payLink ? (
+                    // Pay-link mode: recipient is locked — render as static,
+                    // non-editable text so the payer cannot change it.
+                    <div
+                      className="relative flex items-center w-full rounded-2xl border border-border bg-background/30 px-5 py-4 cursor-not-allowed"
+                      aria-readonly="true"
+                    >
+                      <Lock className="h-5 w-5 mr-3 shrink-0 text-muted-foreground" strokeWidth={1.8} />
+                      <span className="flex-1 min-w-0 truncate text-lg font-medium text-foreground">
+                        {ensName}
+                      </span>
+                    </div>
+                  ) : (
+                    <SearchBar
+                      placeholder="bob.eth, alice.sui, or meta-address"
+                      value={ensName}
+                      onChange={(val) => {
+                        setEnsName(val);
+                      }}
+                      onSearch={(val) => {
+                        setEnsName(val);
+                        handleResolve(val);
+                      }}
+                      variant="minimal"
+                    />
+                  )}
 
-                  {recentRecipients.length > 0 && step === "input" && !isResolving && (
+                  {!payLink && recentRecipients.length > 0 && step === "input" && !isResolving && (
                     <div className="flex flex-wrap gap-1.5 pt-1">
                       {recentRecipients.map((r) => (
                         <button
@@ -2323,7 +2371,7 @@ export default function SendPayment() {
           </div>
 
           {/* ─── Recent Transactions ─── */}
-          {paymentHistory.length > 0 && (
+          {!payLink && paymentHistory.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
