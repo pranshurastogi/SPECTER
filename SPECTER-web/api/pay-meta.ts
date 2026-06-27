@@ -15,16 +15,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const base = `${proto}://${host}`;
 
   const q = req.query;
-  const name = esc((Array.isArray(q.name) ? q.name[0] : q.name) ?? "someone");
-  const amount = esc((Array.isArray(q.amount) ? q.amount[0] : q.amount) ?? "");
-  const chain = esc((Array.isArray(q.chain) ? q.chain[0] : q.chain) ?? "");
-  const label = esc((Array.isArray(q.label) ? q.label[0] : q.label) ?? "");
+  const rawName = (Array.isArray(q.name) ? q.name[0] : q.name) ?? "someone";
+  const rawAmount = (Array.isArray(q.amount) ? q.amount[0] : q.amount) ?? "";
+  const rawChain = (Array.isArray(q.chain) ? q.chain[0] : q.chain) ?? "";
+  const rawLabel = (Array.isArray(q.label) ? q.label[0] : q.label) ?? "";
+
+  // Escaped values for the HTML context (title/desc/meta tags).
+  const name = esc(rawName);
+  const amount = esc(rawAmount);
+  const chain = esc(rawChain);
+  const label = esc(rawLabel);
 
   const title = amount ? `Pay ${amount} ${chain.toUpperCase()} to ${name}` : `Pay ${name} privately on SPECTER`;
   const desc = label
     ? `${label} — paid privately with a fresh post-quantum stealth address. No address reuse.`
     : `Send ${name} a private payment. Every payer gets a fresh, unlinkable post-quantum stealth address.`;
-  const ogImage = `${base}/api/og-pay?name=${encodeURIComponent(name)}&amount=${encodeURIComponent(amount)}&chain=${encodeURIComponent(chain)}&label=${encodeURIComponent(label)}`;
+  // Raw values for the URL context — encodeURIComponent makes them URL/attribute-safe.
+  const ogImage = `${base}/api/og-pay?name=${encodeURIComponent(rawName)}&amount=${encodeURIComponent(rawAmount)}&chain=${encodeURIComponent(rawChain)}&label=${encodeURIComponent(rawLabel)}`;
+  // Escape the `&` query separators so the URL is valid inside an HTML attribute.
+  const ogImageAttr = ogImage.replace(/&/g, "&amp;");
 
   // Pull the built SPA shell (a real static file — not rewritten) and inject meta into <head>.
   let html = "<!doctype html><html><head></head><body><div id=\"root\"></div></body></html>";
@@ -41,11 +50,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     <meta property="og:type" content="website" />
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${desc}" />
-    <meta property="og:image" content="${ogImage}" />
+    <meta property="og:image" content="${ogImageAttr}" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="${title}" />
     <meta name="twitter:description" content="${desc}" />
-    <meta name="twitter:image" content="${ogImage}" />
+    <meta name="twitter:image" content="${ogImageAttr}" />
   `;
 
   const injected = html.includes("</head>") ? html.replace("</head>", `${tags}</head>`) : html + tags;
