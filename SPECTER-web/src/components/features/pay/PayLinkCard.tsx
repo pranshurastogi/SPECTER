@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 export function PayLinkCard({ source, className }: { source: "scan" | "setup"; className?: string }) {
   const [name, setName] = useState<string>(() => getRegisteredName() ?? "");
+  const [isManualEntry] = useState<boolean>(() => !getRegisteredName());
   const [showQr, setShowQr] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -31,8 +32,10 @@ export function PayLinkCard({ source, className }: { source: "scan" | "setup"; c
       try {
         await navigator.share({ title: "Pay me on SPECTER", url });
         return;
-      } catch {
-        /* user cancelled or share rejected — fall through to clipboard copy */
+      } catch (e) {
+        // Explicit cancel: dismiss silently, no clipboard fallback / toast.
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        // Genuine share failure: fall through to clipboard copy.
       }
     }
     try {
@@ -52,7 +55,7 @@ export function PayLinkCard({ source, className }: { source: "scan" | "setup"; c
           <Badge variant="secondary" className="ml-auto text-[10px]">private by default</Badge>
         </div>
 
-        {!getRegisteredName() && (
+        {isManualEntry && (
           <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">Enter your registered name</label>
             <Input
