@@ -31,8 +31,9 @@ export function downloadQrPng(value: string, fileName: string, size = 512): void
     document.body.appendChild(host);
 
     import("react-dom/client").then(({ createRoot }) => {
+      let root: ReturnType<typeof createRoot> | undefined;
       try {
-        const root = createRoot(host);
+        root = createRoot(host);
         root.render(<QRCodeCanvas value={value} size={size} level="M" includeMargin />);
         // Allow a tick for the canvas to paint.
         requestAnimationFrame(() => {
@@ -56,11 +57,12 @@ export function downloadQrPng(value: string, fileName: string, size = 512): void
           } catch {
             // fail silently if canvas ops fail
           } finally {
-            root.unmount();
+            root?.unmount();
             host.remove();
           }
         });
       } catch {
+        try { root?.unmount(); } catch { /* ignore */ }
         host.remove();
       }
     }).catch(() => {
