@@ -41,7 +41,7 @@ export default function handler(req: Request) {
           <div style={{ fontSize: 32, marginTop: 12, color: "#d4d4d8", display: "flex" }}>{label}</div>
         ) : null}
         <div style={{ fontSize: 26, marginTop: 48, color: "#a1a1aa", display: "flex" }}>
-          🛡 Stealth address · 🔒 Post-quantum · specterpq.com
+          Stealth address  ·  Post-quantum  ·  specterpq.com
         </div>
       </div>
     ),
