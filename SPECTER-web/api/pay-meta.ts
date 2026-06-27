@@ -10,7 +10,7 @@ function esc(s: string): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const host = process.env.VERCEL_URL ?? req.headers.host ?? "specterpq.com";
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL ?? req.headers.host ?? "specterpq.com";
   const proto = (req.headers["x-forwarded-proto"] as string) ?? "https";
   const base = `${proto}://${host}`;
 
