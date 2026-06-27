@@ -29,7 +29,7 @@ export function trackPageView(pagePath: string, pageTitle: string) {
 // ── Generic escape hatch ─────────────────────────────────────────────────────
 
 type EventParams = Record<string, string | number | boolean | undefined>;
-type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui" | "unknown";
+export type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui" | "unknown";
 
 export function trackEvent(eventName: string, params?: EventParams) {
   gtag("event", eventName, { send_to: GA_ID, ...params });
@@ -179,5 +179,49 @@ export const analytics = {
   },
   downloadReceiptClicked() {
     trackEvent("download_receipt_clicked");
+  },
+
+  // ── Pay Links (receiver) ──────────────────────────────────────────────────────
+
+  payLinkCardViewed(source: "scan" | "setup") {
+    trackEvent("pay_link_card_viewed", { source });
+  },
+  payLinkCopied(context: "card" | "drawer" | "pay_page") {
+    trackEvent("pay_link_copied", { context });
+  },
+  payLinkQrDownloaded(context: "card" | "drawer") {
+    trackEvent("pay_link_qr_downloaded", { context });
+  },
+  payLinkShared(context: "card" | "drawer") {
+    trackEvent("pay_link_shared", { context });
+  },
+  payLinkCardImageDownloaded() {
+    trackEvent("pay_link_card_image_downloaded");
+  },
+
+  // ── Request Builder ───────────────────────────────────────────────────────────
+
+  requestBuilderOpened() {
+    trackEvent("request_builder_opened");
+  },
+  requestCreated(params: { has_amount: boolean; chain: AnalyticsChain }) {
+    trackEvent("request_created", { has_amount: params.has_amount, chain: params.chain });
+  },
+  requestSaved() {
+    trackEvent("request_saved");
+  },
+
+  // ── Pay Page (payer) ──────────────────────────────────────────────────────────
+
+  payPageViewed(params: { name_type: "ens" | "sui"; has_amount: boolean; chain: string; ref: string }) {
+    trackEvent("pay_page_viewed", {
+      name_type: params.name_type,
+      has_amount: params.has_amount,
+      chain: params.chain,
+      ref: params.ref,
+    });
+  },
+  payPageInvalidName() {
+    trackEvent("pay_page_invalid_name");
   },
 };
