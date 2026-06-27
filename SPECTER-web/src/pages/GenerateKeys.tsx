@@ -1174,7 +1174,7 @@ export default function GenerateKeys() {
                                       text_record: existingEnsRecord.meta_address,
                                       ensName: existingEnsRecord.ens_name,
                                     });
-                                    saveSetupProgress({ ensAttached: true });
+                                    saveSetupProgress({ ensAttached: true, ensName: existingEnsRecord.ens_name });
                                     analytics.setupEnsRecordKept(existingEnsRecord.ens_name);
                                     toast.success("Existing ENS record confirmed.");
                                   }}
