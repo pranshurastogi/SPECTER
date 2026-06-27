@@ -2,15 +2,15 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 function esc(s: string): string {
   return String(s)
+    .slice(0, 120)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .slice(0, 120);
+    .replace(/"/g, "&quot;");
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const host = req.headers.host ?? "specterpq.com";
+  const host = process.env.VERCEL_URL ?? req.headers.host ?? "specterpq.com";
   const proto = (req.headers["x-forwarded-proto"] as string) ?? "https";
   const base = `${proto}://${host}`;
 

@@ -865,7 +865,12 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
         setResolveStatus("Generating stealth address…");
         const stealth = await api.createStealth({ meta_address: resolved.meta_address });
         setStealthResult(stealth);
-        const initialChain: TxChain = isSuiName ? "sui" : "ethereum";
+        const initialChain: TxChain =
+          !isSuiName && payLink?.chain && payLink.chain !== "sui"
+            ? payLink.chain
+            : isSuiName
+              ? "sui"
+              : "ethereum";
         setPublishChain(initialChain);
         const rec = savePending({
           payment_id: stealth.payment_id,
@@ -1511,7 +1516,7 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
               chain={payLink.chain}
               label={payLink.label}
               memo={payLink.memo}
-              errorMessage={resolveError ?? undefined}
+              errorMessage={resolveError && resolveError !== "no-specter-setup" ? resolveError : undefined}
             />
           )}
 
@@ -1684,7 +1689,7 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
                       ))}
                     </div>
                   )}
-                  {resolveError && step === "input" && (
+                  {!payLink && resolveError && step === "input" && (
                     <div className="mt-2 space-y-2">
                       {resolveError === "no-specter-setup" ? (
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">

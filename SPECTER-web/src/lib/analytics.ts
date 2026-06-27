@@ -195,9 +195,6 @@ export const analytics = {
   payLinkShared(context: "card" | "drawer") {
     trackEvent("pay_link_shared", { context });
   },
-  payLinkCardImageDownloaded() {
-    trackEvent("pay_link_card_image_downloaded");
-  },
 
   // ── Request Builder ───────────────────────────────────────────────────────────
 

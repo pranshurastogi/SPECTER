@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Download, Save, Share2 } from "lucide-react";
 import {
   Sheet,
@@ -51,8 +51,6 @@ export function RequestPaymentDrawer({
   const [chain, setChain] = useState<TxChain>(chains[0]);
   const [label, setLabel] = useState("");
   const [memo, setMemo] = useState("");
-  // cardRef is kept for future card-image-download (html-to-image) feature
-  const cardRef = useRef<HTMLDivElement>(null);
 
   const symbol = getSendChainConfig(chain).currencySymbol;
   const params: PayLinkParams = useMemo(
@@ -151,7 +149,6 @@ export function RequestPaymentDrawer({
 
           {/* Live shareable card */}
           <div
-            ref={cardRef}
             className="rounded-xl border border-border bg-card p-5 flex flex-col items-center gap-3"
           >
             <p className="text-xs text-muted-foreground">Pay request</p>
