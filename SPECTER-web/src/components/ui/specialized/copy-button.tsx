@@ -17,6 +17,8 @@ interface CopyButtonProps {
   tooltip?: string;
   /** Optional: tooltip when copied */
   tooltipCopied?: string;
+  /** Optional: callback fired after a successful copy */
+  onCopied?: () => void;
 }
 
 export function CopyButton({
@@ -29,6 +31,7 @@ export function CopyButton({
   showLabel = true,
   tooltip = "Copy to clipboard",
   tooltipCopied = "Copied!",
+  onCopied,
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
@@ -36,6 +39,7 @@ export function CopyButton({
     navigator.clipboard.writeText(text);
     setCopied(true);
     toast.success(successMessage);
+    onCopied?.();
     setTimeout(() => setCopied(false), 2000);
   };
 
