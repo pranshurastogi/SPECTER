@@ -195,6 +195,15 @@ export const analytics = {
   payLinkShared(context: "card" | "drawer") {
     trackEvent("pay_link_shared", { context });
   },
+  payLinkNameVerified(nameType: "ens" | "sui") {
+    trackEvent("pay_link_name_verified", { name_type: nameType });
+  },
+  payLinkNameUnregistered(nameType: "ens" | "sui") {
+    trackEvent("pay_link_name_unregistered", { name_type: nameType });
+  },
+  payLinkSetupCtaClicked() {
+    trackEvent("pay_link_setup_cta_clicked");
+  },
 
   // ── Request Builder ───────────────────────────────────────────────────────────
 
