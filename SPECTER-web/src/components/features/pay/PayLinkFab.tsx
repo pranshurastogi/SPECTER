@@ -155,7 +155,7 @@ export function PayLinkFab() {
                 className="relative grid h-14 w-14 place-items-center"
               >
                 <DotLottieReact
-                  src="/receive-payment.lottie"
+                  src="/payment-asset.lottie"
                   autoplay
                   loop
                   className="h-full w-full"
