@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Wallet, X } from "lucide-react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import { X } from "lucide-react";
 import { PayLinkCard } from "./PayLinkCard";
 import { analytics } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,9 @@ export function PayLinkFab() {
   const reduce = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
+  const constraintsRef = useRef<HTMLDivElement>(null);
+  // Distinguishes a drag from a tap so dragging the orb doesn't open the panel.
+  const dragged = useRef(false);
 
   // One-time "peek" label on mount to aid discovery, then settle.
   useEffect(() => {
@@ -47,6 +51,9 @@ export function PayLinkFab() {
 
   return createPortal(
     <>
+      {/* Drag bounds: a viewport-sized box (with a small margin) so the orb can't leave the screen */}
+      <div ref={constraintsRef} className="pointer-events-none fixed inset-3 -z-10" aria-hidden="true" />
+
       {/* Dimmed, blurred backdrop — click to dismiss */}
       <AnimatePresence>
         {open && (
@@ -71,7 +78,7 @@ export function PayLinkFab() {
             role="dialog"
             aria-modal="true"
             aria-label="Your pay link"
-            className="fixed z-50 bottom-24 right-4 left-4 sm:left-auto sm:w-[23rem] max-h-[calc(100vh-8rem)] overflow-y-auto outline-none"
+            className="fixed z-50 bottom-40 right-4 left-4 sm:left-auto sm:w-[23rem] max-h-[calc(100vh-13rem)] overflow-y-auto outline-none"
             style={{ transformOrigin: "bottom right" }}
             initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 14 }}
             animate={reduce ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
@@ -83,22 +90,41 @@ export function PayLinkFab() {
         )}
       </AnimatePresence>
 
-      {/* The orb */}
-      <div className="fixed bottom-6 right-6 z-50">
+      {/* The orb — draggable anywhere, defaulted to the right-middle so it never sits on the footer */}
+      <motion.div
+        className="fixed right-5 top-[calc(50%-2rem)] z-50 touch-none"
+        drag={!open}
+        dragConstraints={constraintsRef}
+        dragMomentum={false}
+        dragElastic={0.12}
+        whileDrag={{ scale: 1.08 }}
+        onPointerDownCapture={() => {
+          dragged.current = false;
+        }}
+        onDragStart={() => {
+          dragged.current = true;
+        }}
+      >
         <motion.button
           ref={fabRef}
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            if (dragged.current) {
+              dragged.current = false;
+              return; // it was a drag, not a tap
+            }
+            setOpen((o) => !o);
+          }}
           aria-label={open ? "Close your pay link" : "Open your pay link"}
           aria-expanded={open}
           whileHover={reduce ? undefined : { scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          className="peer relative grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-white shadow-lg shadow-primary/40 ring-1 ring-white/10 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="peer relative grid h-16 w-16 cursor-grab place-items-center overflow-hidden rounded-[1.4rem] bg-gradient-to-br from-primary to-accent text-white shadow-xl shadow-primary/40 ring-1 ring-white/15 outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {/* Idle pulse ring (closed only) */}
           {!open && !reduce && (
             <span
-              className="pointer-events-none absolute inset-0 rounded-full bg-primary/40 motion-safe:animate-ping"
+              className="pointer-events-none absolute inset-0 rounded-[1.4rem] bg-primary/40 motion-safe:animate-ping"
               style={{ animationDuration: "2.6s" }}
               aria-hidden="true"
             />
@@ -113,18 +139,24 @@ export function PayLinkFab() {
                 transition={{ duration: 0.15 }}
                 className="relative"
               >
-                <X className="h-5 w-5" />
+                <X className="h-6 w-6" />
               </motion.span>
             ) : (
               <motion.span
-                key="wallet"
-                initial={{ rotate: 90, opacity: 0 }}
-                animate={{ rotate: 0, opacity: 1 }}
-                exit={{ rotate: -90, opacity: 0 }}
-                transition={{ duration: 0.15 }}
-                className="relative"
+                key="lottie"
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.6 }}
+                transition={{ duration: 0.18 }}
+                className="relative grid h-14 w-14 place-items-center"
               >
-                <Wallet className="h-5 w-5" />
+                <DotLottieReact
+                  src="/receive-payment.lottie"
+                  autoplay
+                  loop
+                  className="h-full w-full"
+                  aria-hidden
+                />
               </motion.span>
             )}
           </AnimatePresence>
@@ -138,9 +170,9 @@ export function PayLinkFab() {
             !open && hint ? "opacity-100 translate-x-0" : "opacity-0 translate-x-1"
           )}
         >
-          Your pay link
+          Drag me · tap to open
         </span>
-      </div>
+      </motion.div>
     </>,
     document.body
   );

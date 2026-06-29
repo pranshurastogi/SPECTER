@@ -20,6 +20,7 @@
     "@erc7824/nitrolite": "^0.5.3",
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^3.10.0",
+    "@lottiefiles/dotlottie-react": "^0.19.5",
     "@mysten/dapp-kit": "^1.0.1",
     "@mysten/sui": "^2.3.1",
     "@mysten/suins": "^1.0.0",

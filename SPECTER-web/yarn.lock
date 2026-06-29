@@ -1461,6 +1461,18 @@
   dependencies:
     "@lit-labs/ssr-dom-shim" "^1.5.0"
 
+"@lottiefiles/dotlottie-react@^0.19.5":
+  version "0.19.5"
+  resolved "https://registry.npmjs.org/@lottiefiles/dotlottie-react/-/dotlottie-react-0.19.5.tgz"
+  integrity sha512-lkGPsdabX/GBWsOHabKdfa44DORg35W/r5bW4mnV2igomdP7a6OAJJe1A+/rWKYSuN/Cd7eJ8dpXLM+7h7182A==
+  dependencies:
+    "@lottiefiles/dotlottie-web" "0.75.0"
+
+"@lottiefiles/dotlottie-web@0.75.0":
+  version "0.75.0"
+  resolved "https://registry.npmjs.org/@lottiefiles/dotlottie-web/-/dotlottie-web-0.75.0.tgz"
+  integrity sha512-2IZAIK7TblPPxSsjmPsDrSDew2XYj422rWKmwjIUPH+zroUPK6/gImjkKoJhKOXzByLEo5bTPx9qW4DCZfM5/g==
+
 "@mapbox/node-pre-gyp@^2.0.0":
   version "2.0.3"
   resolved "https://registry.npmjs.org/@mapbox/node-pre-gyp/-/node-pre-gyp-2.0.3.tgz"
