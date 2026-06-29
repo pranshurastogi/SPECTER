@@ -58,7 +58,7 @@ import {
   getTxChainFromSourceChainId,
   type TxChain,
 } from "@/lib/blockchain/sendChains";
-import { PayLinkCard } from "@/components/features/pay/PayLinkCard";
+import { PayLinkFab } from "@/components/features/pay/PayLinkFab";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 type KeySource = "vault" | "file" | "paste";
@@ -477,7 +477,6 @@ export default function ScanPayments() {
 
       <main className="flex-1 pt-48 pb-12 flex flex-col items-center">
         <div className="w-full max-w-lg mx-auto px-4 flex flex-col items-center">
-          <PayLinkCard source="scan" className="mb-8" />
           {/* Title */}
           <div className="text-center mb-8">
             <HeadingScramble
@@ -903,6 +902,9 @@ export default function ScanPayments() {
       </main>
 
       <Footer />
+
+      {/* Floating pay-link launcher (keeps scanning as the page's hero) */}
+      <PayLinkFab />
 
       {/* Payment detail modal */}
       <AnimatePresence>

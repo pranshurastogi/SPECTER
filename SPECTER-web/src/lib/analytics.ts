@@ -204,6 +204,9 @@ export const analytics = {
   payLinkSetupCtaClicked() {
     trackEvent("pay_link_setup_cta_clicked");
   },
+  payLinkFabOpened() {
+    trackEvent("pay_link_fab_opened");
+  },
 
   // ── Request Builder ───────────────────────────────────────────────────────────
 
