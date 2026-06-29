@@ -5,7 +5,11 @@ import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { X } from "lucide-react";
 import { PayLinkCard } from "./PayLinkCard";
 import { analytics } from "@/lib/analytics";
+import { configureDotLottieWasm } from "@/lib/dotlottieWasm";
 import { cn } from "@/lib/utils";
+
+// Use the self-hosted WASM renderer (CDN fallback) before any dotLottie mounts.
+configureDotLottieWasm();
 
 /**
  * Floating pay-link launcher. Keeps the Scan page's primary action (scanning)
