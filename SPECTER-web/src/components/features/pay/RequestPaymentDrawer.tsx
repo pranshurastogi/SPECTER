@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Download, Save, Share2 } from "lucide-react";
+import { Copy, Download, Save, Share2 } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -17,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/base/select";
-import { CopyButton } from "@/components/ui/specialized/copy-button";
 import { QrCode, downloadQrPng } from "@/components/ui/specialized/qr-code";
 import { buildPayUrl, sanitizeAmountInput, type PayLinkParams } from "@/lib/payLink";
 import { addSavedRequest } from "@/lib/savedRequests";
@@ -27,7 +26,17 @@ import {
   type TxChain,
 } from "@/lib/blockchain/sendChains";
 import { analytics, type AnalyticsChain } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+/* Dark Knight palette — kept in sync with PayLinkCard so the request flow
+ * feels like the same sealed object. */
+const goldBtn =
+  "bg-[#F2C94C] text-[#0B0D10] hover:bg-[#E5BE43] focus-visible:ring-[#F2C94C] border-0";
+const ghostBtn =
+  "border border-[#2A2E37] bg-transparent text-[#C7CBD2] hover:bg-[#15181E] hover:text-white";
+const fieldCls =
+  "border-[#23262E] bg-[#111317] text-[#EDEEF0] placeholder:text-[#5B616B] focus-visible:ring-[#F2C94C]/60";
 
 function toAnalyticsChain(chain: TxChain): AnalyticsChain {
   if (chain === "sui") return "sui";
@@ -87,37 +96,45 @@ export function RequestPaymentDrawer({
     }
   }
 
+  const canShare = typeof navigator !== "undefined" && "share" in navigator;
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-md overflow-y-auto border-[#1E222A] bg-[#0B0D10] text-[#EDEEF0]"
+      >
+        {/* Bat-signal beam — the single gold note carried over from the pay card. */}
+        <div className="-mx-6 -mt-6 mb-6 h-px bg-gradient-to-r from-transparent via-[#F2C94C]/70 to-transparent" />
         <SheetHeader>
-          <SheetTitle>Request a payment</SheetTitle>
-          <SheetDescription className="sr-only">
-            Create a shareable payment request link and QR.
+          <SheetTitle className="text-[#F4F5F7]">Request a payment</SheetTitle>
+          <SheetDescription className="text-[#878C96]">
+            Set an amount and chain, then share the link or QR.
           </SheetDescription>
         </SheetHeader>
 
         <div className="mt-6 space-y-5">
           <div className="space-y-1.5">
-            <Label htmlFor="req-amount">Amount ({symbol})</Label>
+            <Label htmlFor="req-amount" className="text-[#878C96]">Amount ({symbol})</Label>
             <Input
               id="req-amount"
               inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
               placeholder="0.00"
+              className={fieldCls}
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label>Chain</Label>
+            <Label className="text-[#878C96]">Chain</Label>
             <Select value={chain} onValueChange={(v) => setChain(v as TxChain)}>
-              <SelectTrigger>
+              <SelectTrigger className={fieldCls}>
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="border-[#23262E] bg-[#0E1014] text-[#EDEEF0]">
                 {chains.map((c) => (
-                  <SelectItem key={c} value={c}>
+                  <SelectItem key={c} value={c} className="focus:bg-[#15181E] focus:text-white">
                     {getSendChainConfig(c).label} ({getSendChainConfig(c).currencySymbol})
                   </SelectItem>
                 ))}
@@ -126,54 +143,63 @@ export function RequestPaymentDrawer({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="req-label">Label (optional)</Label>
+            <Label htmlFor="req-label" className="text-[#878C96]">Label (optional)</Label>
             <Input
               id="req-label"
               value={label}
               maxLength={80}
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Invoice #204"
+              className={fieldCls}
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="req-memo">Note to payer (optional)</Label>
+            <Label htmlFor="req-memo" className="text-[#878C96]">Note to payer (optional)</Label>
             <Input
               id="req-memo"
               value={memo}
               maxLength={140}
               onChange={(e) => setMemo(e.target.value)}
               placeholder="Design work, March"
+              className={fieldCls}
             />
           </div>
 
           {/* Live shareable card */}
-          <div
-            className="rounded-xl border border-border bg-card p-5 flex flex-col items-center gap-3"
-          >
-            <p className="text-xs text-muted-foreground">Pay request</p>
-            <p className="text-lg font-semibold">
-              {amount ? `${amount} ${symbol}` : "Any amount"}{" "}
-              <span className="text-muted-foreground font-normal">to {recipient}</span>
-            </p>
-            {label && <p className="text-sm">{label}</p>}
-            <QrCode value={url} size={160} />
-            <p className="font-mono text-[10px] text-muted-foreground break-all text-center">
-              {url}
-            </p>
+          <div className="overflow-hidden rounded-xl border border-[#1E222A] bg-[#0E1014]">
+            <div className="h-px w-full bg-gradient-to-r from-transparent via-[#F2C94C]/60 to-transparent" />
+            <div className="flex flex-col items-center gap-3 p-5">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-[#878C96]">Pay request</p>
+              <p className="text-center text-lg font-semibold text-[#F4F5F7]">
+                {amount ? (
+                  <>
+                    {amount} <span className="text-[#F2C94C]">{symbol}</span>
+                  </>
+                ) : (
+                  "Any amount"
+                )}{" "}
+                <span className="font-normal text-[#878C96]">to {recipient}</span>
+              </p>
+              {label && <p className="text-sm text-[#C7CBD2]">{label}</p>}
+              <div className="rounded-lg bg-white p-2.5">
+                <QrCode value={url} size={148} />
+              </div>
+              <p className="break-all text-center font-mono text-[10px] text-[#5B616B]">{url}</p>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleCreateAndCopy} className="flex-1 min-w-[8rem]">
-              Copy request link
-            </Button>
-            <CopyButton
-              text={url}
-              onCopied={() => analytics.payLinkCopied("drawer")}
-              showLabel={false}
-            />
+          {/* Primary: one unambiguous copy action (the standalone copy icon was a
+              duplicate of this button, so it's gone). */}
+          <Button onClick={handleCreateAndCopy} className={cn("w-full", goldBtn)}>
+            <Copy className="h-4 w-4 mr-1.5" /> Copy request link
+          </Button>
+
+          {/* Secondary: equal-width row so QR / Save / Share never wrap unevenly. */}
+          <div className={cn("grid gap-2", canShare ? "grid-cols-3" : "grid-cols-2")}>
             <Button
-              variant="outline"
+              size="sm"
+              className={ghostBtn}
               onClick={() => {
                 analytics.payLinkQrDownloaded("drawer");
                 downloadQrPng(url, `specter-request-${recipient}`);
@@ -181,12 +207,13 @@ export function RequestPaymentDrawer({
             >
               <Download className="h-4 w-4 mr-1.5" /> QR
             </Button>
-            <Button variant="outline" onClick={handleSave}>
+            <Button size="sm" className={ghostBtn} onClick={handleSave}>
               <Save className="h-4 w-4 mr-1.5" /> Save
             </Button>
-            {typeof navigator !== "undefined" && "share" in navigator && (
+            {canShare && (
               <Button
-                variant="ghost"
+                size="sm"
+                className={ghostBtn}
                 onClick={() => {
                   analytics.payLinkShared("drawer");
                   navigator.share?.({ title: "Pay request", url });
