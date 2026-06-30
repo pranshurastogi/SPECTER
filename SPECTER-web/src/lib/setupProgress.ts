@@ -4,6 +4,8 @@ export interface SetupProgress {
   keysGenerated: boolean;
   ensAttached: boolean;
   suinsAttached: boolean;
+  ensName?: string;
+  suinsName?: string;
   startedAt: number;
 }
 
@@ -46,4 +48,10 @@ export function clearSetupProgress(): void {
 export function isSetupInProgress(): boolean {
   const p = read();
   return p !== null && p.keysGenerated;
+}
+
+/** The user's registered name for building their pay link. ENS takes precedence. */
+export function getRegisteredName(): string | null {
+  const p = read();
+  return p?.ensName ?? p?.suinsName ?? null;
 }

@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/pay/:name", "destination": "/api/pay-meta?name=:name" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
