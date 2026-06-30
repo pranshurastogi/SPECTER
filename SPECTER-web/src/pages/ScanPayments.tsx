@@ -58,6 +58,7 @@ import {
   getTxChainFromSourceChainId,
   type TxChain,
 } from "@/lib/blockchain/sendChains";
+import { PayLinkFab } from "@/components/features/pay/PayLinkFab";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 type KeySource = "vault" | "file" | "paste";
@@ -901,6 +902,9 @@ export default function ScanPayments() {
       </main>
 
       <Footer />
+
+      {/* Floating pay-link launcher (keeps scanning as the page's hero) */}
+      <PayLinkFab />
 
       {/* Payment detail modal */}
       <AnimatePresence>

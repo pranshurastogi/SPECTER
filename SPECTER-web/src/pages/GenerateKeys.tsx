@@ -511,7 +511,7 @@ export default function GenerateKeys() {
 
       setEnsUploadResult({ cid: res.cid, text_record: textRecordValue, ensName });
       setEnsTxHash(null);
-      saveSetupProgress({ ensAttached: true });
+      saveSetupProgress({ ensAttached: true, ensName });
       analytics.setupEnsAttached(ensName);
       toast.success("Meta address attached to ENS.");
     } catch (err: unknown) {
@@ -627,7 +627,7 @@ export default function GenerateKeys() {
 
       setSuinsUploadResult({ cid: res.cid, text_record: textRecordValue, suinsName: primarySuiName });
       setSuinsTxDigest(null);
-      saveSetupProgress({ suinsAttached: true });
+      saveSetupProgress({ suinsAttached: true, suinsName: primarySuiName });
       analytics.setupSuinsAttached(primarySuiName);
       toast.success("Meta address attached to SuiNS.");
     } catch (err) {
@@ -1174,7 +1174,7 @@ export default function GenerateKeys() {
                                       text_record: existingEnsRecord.meta_address,
                                       ensName: existingEnsRecord.ens_name,
                                     });
-                                    saveSetupProgress({ ensAttached: true });
+                                    saveSetupProgress({ ensAttached: true, ensName: existingEnsRecord.ens_name });
                                     analytics.setupEnsRecordKept(existingEnsRecord.ens_name);
                                     toast.success("Existing ENS record confirmed.");
                                   }}

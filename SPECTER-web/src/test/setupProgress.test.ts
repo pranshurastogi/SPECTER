@@ -4,6 +4,7 @@ import {
   saveSetupProgress,
   clearSetupProgress,
   isSetupInProgress,
+  getRegisteredName,
 } from "@/lib/setupProgress";
 
 beforeEach(() => {
@@ -64,5 +65,29 @@ describe("isSetupInProgress", () => {
   it("returns true once keys are generated", () => {
     saveSetupProgress({ keysGenerated: true });
     expect(isSetupInProgress()).toBe(true);
+  });
+});
+
+describe("getRegisteredName", () => {
+  beforeEach(() => localStorage.clear());
+  it("returns null when nothing stored", () => {
+    expect(getRegisteredName()).toBeNull();
+  });
+  it("returns the ENS name when present", () => {
+    saveSetupProgress({ ensAttached: true, ensName: "alice.eth" });
+    expect(getRegisteredName()).toBe("alice.eth");
+  });
+  it("falls back to the SuiNS name", () => {
+    saveSetupProgress({ suinsAttached: true, suinsName: "bob.sui" });
+    expect(getRegisteredName()).toBe("bob.sui");
+  });
+  it("prefers the ENS name when both are set", () => {
+    saveSetupProgress({
+      ensAttached: true,
+      ensName: "alice.eth",
+      suinsAttached: true,
+      suinsName: "bob.sui",
+    });
+    expect(getRegisteredName()).toBe("alice.eth");
   });
 });
