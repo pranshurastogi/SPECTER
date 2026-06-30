@@ -89,7 +89,7 @@ export function PayLinkFab() {
             exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 14 }}
             transition={reduce ? { duration: 0.15 } : { type: "spring", stiffness: 380, damping: 30 }}
           >
-            <PayLinkCard source="scan" className="border-primary/25 shadow-2xl shadow-primary/25" />
+            <PayLinkCard source="scan" className="border-[#F2C94C]/25 shadow-2xl shadow-black/60" />
           </motion.div>
         )}
       </AnimatePresence>
@@ -123,13 +123,22 @@ export function PayLinkFab() {
           aria-expanded={open}
           whileHover={reduce ? undefined : { scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
-          className="peer relative grid h-16 w-16 cursor-grab place-items-center overflow-hidden rounded-[1.4rem] bg-gradient-to-br from-primary to-accent text-white shadow-xl shadow-primary/40 ring-1 ring-white/15 outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className={cn(
+            "peer relative grid h-16 w-16 cursor-grab place-items-center rounded-full outline-none transition-colors active:cursor-grabbing",
+            "focus-visible:ring-2 focus-visible:ring-[#F2C94C] focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            // Open = a quiet graphite disc behind the close icon; closed = bare orb, just the lottie.
+            open
+              ? "bg-[#15181E] text-[#EDEEF0] ring-1 ring-[#2A2E37] shadow-lg shadow-black/50"
+              : "bg-transparent"
+          )}
         >
-          {/* Idle pulse ring (closed only) */}
-          {!open && !reduce && (
-            <span
-              className="pointer-events-none absolute inset-0 rounded-[1.4rem] bg-primary/40 motion-safe:animate-ping"
-              style={{ animationDuration: "2.6s" }}
+          {/* Ambient bat-signal glow (closed only) — a soft gold breath, no box. */}
+          {!open && (
+            <motion.span
+              className="pointer-events-none absolute inset-1 rounded-full"
+              style={{ background: "radial-gradient(circle, rgba(242,201,76,0.30), transparent 68%)" }}
+              animate={reduce ? undefined : { opacity: [0.45, 0.85, 0.45], scale: [0.92, 1.04, 0.92] }}
+              transition={reduce ? undefined : { duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
               aria-hidden="true"
             />
           )}
@@ -152,7 +161,8 @@ export function PayLinkFab() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.6 }}
                 transition={{ duration: 0.18 }}
-                className="relative grid h-14 w-14 place-items-center"
+                className="relative grid h-16 w-16 place-items-center"
+                style={{ filter: "drop-shadow(0 0 9px rgba(242,201,76,0.5))" }}
               >
                 <DotLottieReact
                   src="/payment-asset.lottie"
@@ -169,7 +179,7 @@ export function PayLinkFab() {
         {/* Hover label (peer must follow the button in the DOM) + first-mount peek */}
         <span
           className={cn(
-            "pointer-events-none absolute right-full top-1/2 mr-3 -translate-y-1/2 whitespace-nowrap rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium shadow-md transition-all duration-300",
+            "pointer-events-none absolute right-full top-1/2 mr-3 -translate-y-1/2 whitespace-nowrap rounded-full border border-[#23262E] bg-[#0E1014] px-3 py-1.5 text-xs font-medium text-[#C7CBD2] shadow-md transition-all duration-300",
             "peer-hover:opacity-100 peer-hover:translate-x-0",
             !open && hint ? "opacity-100 translate-x-0" : "opacity-0 translate-x-1"
           )}
