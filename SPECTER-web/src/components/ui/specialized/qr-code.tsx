@@ -1,3 +1,4 @@
+import { createRoot } from "react-dom/client";
 import { QRCodeSVG, QRCodeCanvas } from "qrcode.react";
 import { cn } from "@/lib/utils";
 
@@ -73,51 +74,45 @@ export function downloadQrPng(value: string, fileName: string, size = 640): void
     host.style.left = "-9999px";
     document.body.appendChild(host);
 
-    import("react-dom/client")
-      .then(({ createRoot }) => {
-        let root: ReturnType<typeof createRoot> | undefined;
+    let root: ReturnType<typeof createRoot> | undefined;
+    try {
+      root = createRoot(host);
+      root.render(
+        <QRCodeCanvas value={value} size={size} level="H" fgColor={DOWNLOAD_FG} bgColor="#ffffff" marginSize={4} />
+      );
+      requestAnimationFrame(() => {
         try {
-          root = createRoot(host);
-          root.render(
-            <QRCodeCanvas value={value} size={size} level="H" fgColor={DOWNLOAD_FG} bgColor="#ffffff" marginSize={4} />
-          );
-          requestAnimationFrame(() => {
-            try {
-              const rendered = host.querySelector("canvas");
-              if (rendered) {
-                canvas.width = rendered.width;
-                canvas.height = rendered.height;
-                const ctx = canvas.getContext("2d");
-                if (ctx) {
-                  ctx.fillStyle = "#ffffff";
-                  ctx.fillRect(0, 0, canvas.width, canvas.height);
-                  ctx.drawImage(rendered, 0, 0);
-                  const url = canvas.toDataURL("image/png");
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = fileName.endsWith(".png") ? fileName : `${fileName}.png`;
-                  a.click();
-                }
-              }
-            } catch {
-              /* fail silently if canvas ops fail */
-            } finally {
-              root?.unmount();
-              host.remove();
+          const rendered = host.querySelector("canvas");
+          if (rendered) {
+            canvas.width = rendered.width;
+            canvas.height = rendered.height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(rendered, 0, 0);
+              const url = canvas.toDataURL("image/png");
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = fileName.endsWith(".png") ? fileName : `${fileName}.png`;
+              a.click();
             }
-          });
-        } catch {
-          try {
-            root?.unmount();
-          } catch {
-            /* ignore */
           }
+        } catch {
+          /* fail silently if canvas ops fail */
+        } finally {
+          root?.unmount();
           host.remove();
         }
-      })
-      .catch(() => {
-        host.remove();
       });
+    } catch {
+      try {
+        root?.unmount();
+      } catch {
+        /* ignore */
+      }
+      host.remove();
+    }
   } catch {
     /* fail silently if called in a non-DOM context */
   }

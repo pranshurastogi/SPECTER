@@ -53,7 +53,6 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@tanstack/react-query": "^5.83.0",
     "@vercel/analytics": "^2.0.1",
-    "@vercel/og": "^0.11.1",
     "@web3icons/react": "^4.1.17",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
