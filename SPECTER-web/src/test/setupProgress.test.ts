@@ -81,4 +81,13 @@ describe("getRegisteredName", () => {
     saveSetupProgress({ suinsAttached: true, suinsName: "bob.sui" });
     expect(getRegisteredName()).toBe("bob.sui");
   });
+  it("prefers the ENS name when both are set", () => {
+    saveSetupProgress({
+      ensAttached: true,
+      ensName: "alice.eth",
+      suinsAttached: true,
+      suinsName: "bob.sui",
+    });
+    expect(getRegisteredName()).toBe("alice.eth");
+  });
 });

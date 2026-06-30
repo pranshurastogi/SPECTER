@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/base/select";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import { QrCode, downloadQrPng } from "@/components/ui/specialized/qr-code";
-import { buildPayUrl, type PayLinkParams } from "@/lib/payLink";
+import { buildPayUrl, sanitizeAmountInput, type PayLinkParams } from "@/lib/payLink";
 import { addSavedRequest } from "@/lib/savedRequests";
 import {
   getAvailableSendChains,
@@ -48,14 +48,6 @@ export function RequestPaymentDrawer({
 }) {
   const chains = useMemo(() => getAvailableSendChains(true), []);
   const [amount, setAmount] = useState("");
-
-  // Keep only digits and a single decimal point (e.g. reject "1.2.3").
-  function sanitizeAmount(raw: string): string {
-    const cleaned = raw.replace(/[^0-9.]/g, "");
-    const firstDot = cleaned.indexOf(".");
-    if (firstDot === -1) return cleaned;
-    return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
-  }
   const [chain, setChain] = useState<TxChain>(chains[0]);
   const [label, setLabel] = useState("");
   const [memo, setMemo] = useState("");
@@ -112,7 +104,7 @@ export function RequestPaymentDrawer({
               id="req-amount"
               inputMode="decimal"
               value={amount}
-              onChange={(e) => setAmount(sanitizeAmount(e.target.value))}
+              onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
               placeholder="0.00"
             />
           </div>

@@ -38,3 +38,22 @@ describe("savedRequests", () => {
     expect(getSavedRequests()).toEqual([]);
   });
 });
+
+describe("savedRequests error handling", () => {
+  it("returns [] when stored JSON is corrupt", () => {
+    localStorage.setItem("specter_saved_requests", "not-json{");
+    expect(getSavedRequests()).toEqual([]);
+  });
+
+  it("does not throw when localStorage.setItem fails (e.g. quota exceeded)", () => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new DOMException("QuotaExceededError");
+    };
+    try {
+      expect(() => addSavedRequest({ recipient: "alice.eth" })).not.toThrow();
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+  });
+});

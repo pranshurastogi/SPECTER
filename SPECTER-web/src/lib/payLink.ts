@@ -72,3 +72,15 @@ export function parsePayParams(search: URLSearchParams | string): PayLinkParams 
 
   return out;
 }
+
+/**
+ * Clean a free-typed amount as the user types: keep digits and at most one
+ * decimal point (so "1.2.3" becomes "1.23"). Does not validate — `parsePayParams`
+ * is the gate for what ends up in a link.
+ */
+export function sanitizeAmountInput(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const firstDot = cleaned.indexOf(".");
+  if (firstDot === -1) return cleaned;
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+}

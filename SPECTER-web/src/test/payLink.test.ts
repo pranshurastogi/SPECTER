@@ -4,6 +4,7 @@ import {
   buildPayPath,
   buildPayUrl,
   parsePayParams,
+  sanitizeAmountInput,
   PAY_ORIGIN,
 } from "@/lib/payLink";
 
@@ -66,5 +67,20 @@ describe("parsePayParams", () => {
   it("caps ref at 40 chars", () => {
     const p = parsePayParams(`ref=${"z".repeat(60)}`);
     expect(p.ref!.length).toBe(40);
+  });
+});
+
+describe("sanitizeAmountInput", () => {
+  it("keeps digits and a single decimal point", () => {
+    expect(sanitizeAmountInput("12.34")).toBe("12.34");
+    expect(sanitizeAmountInput("abc1.2x")).toBe("1.2");
+  });
+  it("collapses extra decimal points to the first", () => {
+    expect(sanitizeAmountInput("1.2.3")).toBe("1.23");
+    expect(sanitizeAmountInput("...5")).toBe(".5");
+  });
+  it("handles empty and dot-only input", () => {
+    expect(sanitizeAmountInput("")).toBe("");
+    expect(sanitizeAmountInput(".")).toBe(".");
   });
 });
