@@ -6,6 +6,7 @@ import {
   Rss,
   MessageSquarePlus,
   CalendarClock,
+  Presentation,
 } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { XLogo } from "@/components/features/insights/XLogo";
@@ -85,6 +86,15 @@ export function Footer() {
               <Rss className="h-4 w-4 shrink-0" />
               <span>Insights</span>
             </Link>
+            <a
+              href="https://canva.link/specter-pitch"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={devLinkClass}
+            >
+              <Presentation className="h-4 w-4 shrink-0" />
+              <span>Pitch deck</span>
+            </a>
           </div>
 
           {/* Talk to us — centered, quiet, but always reachable */}

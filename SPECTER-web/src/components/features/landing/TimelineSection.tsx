@@ -1,18 +1,22 @@
-import { motion, animate, useInView } from "framer-motion";
-import { useEffect, useRef, useState } from "react";
+import { motion, useInView } from "framer-motion";
+import { useRef, useState, type ComponentType } from "react";
+import { TextScramble } from "@/components/ui/animations/text-scramble";
 import {
-  ShieldCheck,
-  Gauge,
-  Network,
-  KeyRound,
-  UserPlus,
-  Send,
-  Eye,
-  WalletCards,
-} from "lucide-react";
+  LockUnlockIcon,
+  SendIcon,
+  EyeToggleIcon,
+  DownloadDoneIcon,
+  SuccessIcon,
+} from "@/components/ui/animated-state-icons";
+import {
+  PencilIcon,
+  MetronomeIcon,
+  CompassIcon,
+} from "@/components/ui/animated-everyday-icons";
 import { Timeline } from "@/components/ui/specialized/timeline";
 import type { TimelineEntry } from "@/components/ui/specialized/timeline";
 
+type AnimatedIcon = ComponentType<{ size?: number; className?: string }>;
 
 function AnimatedNumber({
   value,
@@ -21,37 +25,45 @@ function AnimatedNumber({
   value: number;
   suffix: string;
 }) {
-  const [n, setN] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true, margin: "-60px" });
-
-  useEffect(() => {
-    if (!isInView) return;
-    const c = animate(0, value, {
-      duration: 2,
-      ease: [0.16, 1, 0.3, 1],
-      onUpdate: (v) => setN(v),
-    });
-    return () => c.stop();
-  }, [value, isInView]);
+  const [hoverTick, setHoverTick] = useState(0);
 
   const str =
     suffix === "%"
-      ? n.toFixed(1)
+      ? value.toFixed(1)
       : suffix === "s"
-        ? n.toFixed(1)
-        : Math.floor(n).toString();
+        ? value.toFixed(1)
+        : Math.floor(value).toString();
+  const display = `${str}${suffix}`;
+
+  // Scramble on scroll-in, and re-scramble every hover.
+  const trigger = (isInView ? 1 : 0) + hoverTick;
 
   return (
-    <span ref={ref} className="gradient-text font-display font-bold tabular-nums">
-      {str}
-      {suffix}
+    <span
+      ref={ref}
+      onMouseEnter={() => setHoverTick((t) => t + 1)}
+      className="inline-block cursor-default"
+    >
+      <TextScramble
+        as="span"
+        trigger={trigger}
+        duration={0.9}
+        speed={0.03}
+        className="font-display font-bold tabular-nums bg-clip-text text-transparent bg-gradient-to-b from-amber-200 via-amber-300 to-amber-500 drop-shadow-[0_0_16px_rgba(245,158,11,0.35)]"
+      >
+        {display}
+      </TextScramble>
     </span>
   );
 }
 
-export function TimelineSection() {
+// Shared amber tile — keeps the whole flow on the SPECTER "signal" palette.
+const tileClass =
+  "inline-flex items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/15 to-amber-600/[0.06] border border-amber-500/25 text-amber-300 shadow-[0_0_22px_rgba(245,158,11,0.12)]";
 
+export function TimelineSection() {
   const sectionIntro =
     "text-muted-foreground text-lg md:text-xl lg:text-2xl font-normal text-center md:text-left max-w-3xl mb-10 md:mb-8 mx-auto md:mx-0";
   const featureTitle =
@@ -63,46 +75,67 @@ export function TimelineSection() {
   const stepDesc =
     "text-sm md:text-base text-muted-foreground text-center md:text-left leading-relaxed";
 
-  const data: TimelineEntry[] = [
+  const steps: {
+    Icon: AnimatedIcon;
+    step: string;
+    title: string;
+    desc: string;
+  }[] = [
     {
-      title: "Built for the future",
-      content: (
-        <div className="max-w-4xl">
-          <p className={sectionIntro}>
-            SPECTER combines lattice cryptography with intuitive design.
-          </p>
-          <div className="grid gap-6 md:grid-cols-3 md:gap-10">
-            <div className="py-4 pr-4 flex flex-col items-center md:items-start text-center md:text-left">
-              <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/10 border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
-                <ShieldCheck className="h-6 w-6 text-purple-400" />
-              </div>
-              <h4 className={featureTitle}>Quantum-Proof</h4>
-              <p className={featureDesc}>
-                ML-KEM-768 post-quantum cryptography
-              </p>
-            </div>
-            <div className="py-4 pr-4 flex flex-col items-center md:items-start text-center md:text-left">
-              <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/20 shadow-[0_0_20px_rgba(34,211,238,0.15)]">
-                <Gauge className="h-6 w-6 text-cyan-400" />
-              </div>
-              <h4 className={featureTitle}>66% Faster</h4>
-              <p className={featureDesc}>
-                View tag optimization for fast scanning
-              </p>
-            </div>
-            <div className="py-4 pr-4 flex flex-col items-center md:items-start text-center md:text-left">
-              <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/20 shadow-[0_0_20px_rgba(52,211,153,0.15)]">
-                <Network className="h-6 w-6 text-emerald-400" />
-              </div>
-              <h4 className={featureTitle}>ENS + SuiNS</h4>
-              <p className={featureDesc}>
-                Human-readable private payments on Ethereum and Sui
-              </p>
-            </div>
-          </div>
-        </div>
-      ),
+      Icon: LockUnlockIcon,
+      step: "01",
+      title: "Generate keys",
+      desc: "Create your post-quantum SPECTER keys on Setup",
     },
+    {
+      Icon: PencilIcon,
+      step: "02",
+      title: "Register",
+      desc: "Link your meta-address to an ENS or SuiNS name",
+    },
+    {
+      Icon: SendIcon,
+      step: "03",
+      title: "Send",
+      desc: "Pay any human-readable name — privately",
+    },
+    {
+      Icon: EyeToggleIcon,
+      step: "04",
+      title: "Onchain",
+      desc: "Funds land at a fresh, unlinkable stealth address",
+    },
+    {
+      Icon: DownloadDoneIcon,
+      step: "05",
+      title: "Claim",
+      desc: "Scan with view tags and sweep your funds",
+    },
+  ];
+
+  const features: {
+    Icon: AnimatedIcon;
+    title: string;
+    desc: string;
+  }[] = [
+    {
+      Icon: SuccessIcon,
+      title: "Quantum-Proof",
+      desc: "ML-KEM-768 post-quantum cryptography",
+    },
+    {
+      Icon: MetronomeIcon,
+      title: "66% Faster",
+      desc: "View-tag optimization for lightning scanning",
+    },
+    {
+      Icon: CompassIcon,
+      title: "ENS + SuiNS",
+      desc: "Human-readable private payments on Ethereum and Sui",
+    },
+  ];
+
+  const data: TimelineEntry[] = [
     {
       title: "From setup to claim",
       content: (
@@ -111,65 +144,43 @@ export function TimelineSection() {
             Five simple steps to complete privacy.
           </p>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-5 md:gap-6">
-            {[
-              {
-                icon: KeyRound,
-                step: "01",
-                title: "Generate keys",
-                desc: "Create your SPECTER keys on Setup",
-                color: "text-purple-400",
-                bg: "bg-purple-500/10",
-                border: "border-purple-500/20",
-              },
-              {
-                icon: UserPlus,
-                step: "02",
-                title: "Register",
-                desc: "Link meta-address to ENS or SuiNS",
-                color: "text-blue-400",
-                bg: "bg-blue-500/10",
-                border: "border-blue-500/20",
-              },
-              {
-                icon: Send,
-                step: "03",
-                title: "Send",
-                desc: "Send to any name privately",
-                color: "text-cyan-400",
-                bg: "bg-cyan-500/10",
-                border: "border-cyan-500/20",
-              },
-              {
-                icon: Eye,
-                step: "04",
-                title: "Onchain",
-                desc: "Payment to random stealth address",
-                color: "text-emerald-400",
-                bg: "bg-emerald-500/10",
-                border: "border-emerald-500/20",
-              },
-              {
-                icon: WalletCards,
-                step: "05",
-                title: "Claim",
-                desc: "Scan and claim funds",
-                color: "text-amber-400",
-                bg: "bg-amber-500/10",
-                border: "border-amber-500/20",
-              },
-            ].map((s) => (
+            {steps.map((s) => (
               <div
                 key={s.step}
                 className="py-4 flex flex-col items-center md:items-start text-center md:text-left"
               >
-                <div className={`mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl ${s.bg} border ${s.border}`}>
-                  <s.icon className={`h-6 w-6 ${s.color}`} />
+                <div className={`mb-3 h-12 w-12 ${tileClass}`}>
+                  <s.Icon size={26} />
                 </div>
-                <span className="gradient-text text-sm font-mono uppercase tracking-[0.18em] mb-1.5 font-semibold">
+                <span className="text-sm font-mono uppercase tracking-[0.18em] mb-1.5 font-semibold text-amber-400/80">
                   {s.step}
                 </span>
                 <h4 className={stepTitle}>{s.title}</h4>
                 <p className={`${stepDesc} mt-1`}>{s.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: "Built for the future",
+      content: (
+        <div className="max-w-4xl">
+          <p className={sectionIntro}>
+            SPECTER combines lattice cryptography with intuitive design.
+          </p>
+          <div className="grid gap-6 md:grid-cols-3 md:gap-10">
+            {features.map((f) => (
+              <div
+                key={f.title}
+                className="py-4 pr-4 flex flex-col items-center md:items-start text-center md:text-left"
+              >
+                <div className={`mb-4 h-12 w-12 ${tileClass}`}>
+                  <f.Icon size={26} />
+                </div>
+                <h4 className={featureTitle}>{f.title}</h4>
+                <p className={featureDesc}>{f.desc}</p>
               </div>
             ))}
           </div>

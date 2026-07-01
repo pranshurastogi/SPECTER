@@ -82,8 +82,8 @@ export function Timeline({
             className="flex justify-start pt-6 md:pt-16 md:gap-8"
           >
             <div className="sticky flex flex-col md:flex-row z-40 items-center top-28 self-start max-w-xs lg:max-w-sm md:w-full">
-              <div className="h-9 absolute left-3 md:left-3 w-9 rounded-full bg-background/80 dark:bg-background/80 backdrop-blur-xl border border-border flex items-center justify-center ring-2 ring-primary/20">
-                <div className="h-3 w-3 rounded-full bg-primary/20 border border-primary/40" />
+              <div className="h-9 absolute left-3 md:left-3 w-9 rounded-full bg-background/80 dark:bg-background/80 backdrop-blur-xl border border-border flex items-center justify-center ring-2 ring-amber-500/25">
+                <div className="h-3 w-3 rounded-full bg-amber-500/25 border border-amber-500/50" />
               </div>
               <HeadingScramble
                 as="h3"
@@ -119,7 +119,7 @@ export function Timeline({
             }}
             className={cn(
               "absolute inset-x-0 top-0 w-[2px] rounded-full",
-              "bg-gradient-to-t from-primary via-primary/50 to-transparent"
+              "bg-gradient-to-t from-amber-500 via-orange-400/60 to-transparent"
             )}
           />
         </div>
