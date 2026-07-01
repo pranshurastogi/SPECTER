@@ -13,6 +13,8 @@ interface ImportMetaEnv {
   readonly VITE_ENS_RPC_URL?: string;
   /** `staging` shows staging-only UI; `main` or omitted = production behavior */
   readonly VITE_APP_DEPLOYMENT?: string;
+  /** Monad testnet RPC (send flow + trustless recovery direct-RPC sweep). */
+  readonly VITE_MONAD_TESTNET_RPC_URL?: string;
 }
 
 interface ImportMeta {
