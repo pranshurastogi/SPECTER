@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { BookOpen, CalendarDays } from "lucide-react";
 import { SpiralAnimation } from "@/components/ui/spiral-animation";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
-import { LiquidMetalButton } from "@/components/ui/liquid-metal-button";
+import { Button } from "@/components/ui/base/button";
 import { SCHEDULE_CALL_URL } from "@/lib/feedback";
 
 const DOCS_URL = "https://docs.specterpq.com/";
@@ -56,16 +56,31 @@ export function HeroSection() {
             transition={{ delay: 0.4, duration: 0.5 }}
             className="flex flex-wrap items-center justify-center gap-4"
           >
-            <LiquidMetalButton
-              href={DOCS_URL}
-              label="Read the Docs"
-              icon={<BookOpen className="h-4 w-4" />}
-            />
-            <LiquidMetalButton
-              href={SCHEDULE_CALL_URL}
-              label="Talk to Us"
-              icon={<CalendarDays className="h-4 w-4" />}
-            />
+            {/* Primary CTA — dark "quantum" glass with a restrained brand-purple edge. */}
+            <Button
+              asChild
+              variant="quantum"
+              size="lg"
+              className="rounded-full px-6 border-primary/25 hover:border-primary/45 hover:shadow-[0_0_28px_-8px_hsl(263_70%_52%/0.55)]"
+            >
+              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">
+                <BookOpen className="h-4 w-4" />
+                Read the Docs
+              </a>
+            </Button>
+
+            {/* Secondary CTA — frosted purple outline, same pill silhouette. */}
+            <Button
+              asChild
+              variant="outline"
+              size="lg"
+              className="rounded-full px-6 bg-white/[0.02] backdrop-blur-sm hover:bg-primary/10"
+            >
+              <a href={SCHEDULE_CALL_URL} target="_blank" rel="noopener noreferrer">
+                <CalendarDays className="h-4 w-4" />
+                Talk to Us
+              </a>
+            </Button>
           </motion.div>
         </motion.div>
       </div>

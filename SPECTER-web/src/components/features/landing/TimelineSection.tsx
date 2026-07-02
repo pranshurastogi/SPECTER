@@ -51,7 +51,7 @@ function AnimatedNumber({
         trigger={trigger}
         duration={0.9}
         speed={0.03}
-        className="font-display font-bold tabular-nums bg-clip-text text-transparent bg-gradient-to-b from-amber-200 via-amber-300 to-amber-500 drop-shadow-[0_0_16px_rgba(245,158,11,0.35)]"
+        className="font-display font-bold tabular-nums bg-clip-text text-transparent bg-gradient-to-b from-violet-200 via-primary to-accent drop-shadow-[0_0_16px_hsl(263_70%_52%/0.35)]"
       >
         {display}
       </TextScramble>
@@ -59,9 +59,9 @@ function AnimatedNumber({
   );
 }
 
-// Shared amber tile — keeps the whole flow on the SPECTER "signal" palette.
+// Shared brand tile — keeps the whole flow on the SPECTER quantum palette.
 const tileClass =
-  "inline-flex items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/15 to-amber-600/[0.06] border border-amber-500/25 text-amber-300 shadow-[0_0_22px_rgba(245,158,11,0.12)]";
+  "inline-flex items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/[0.06] border border-primary/25 text-primary shadow-[0_0_22px_hsl(263_70%_52%/0.14)]";
 
 export function TimelineSection() {
   const sectionIntro =
@@ -152,7 +152,7 @@ export function TimelineSection() {
                 <div className={`mb-3 h-12 w-12 ${tileClass}`}>
                   <s.Icon size={26} />
                 </div>
-                <span className="text-sm font-mono uppercase tracking-[0.18em] mb-1.5 font-semibold text-amber-400/80">
+                <span className="text-sm font-mono uppercase tracking-[0.18em] mb-1.5 font-semibold text-primary/80">
                   {s.step}
                 </span>
                 <h4 className={stepTitle}>{s.title}</h4>
