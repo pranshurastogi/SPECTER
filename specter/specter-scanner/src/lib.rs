@@ -343,11 +343,7 @@ impl Scanner {
                 }
 
                 // Scan the announcement
-                let result = scan_announcement(
-                    &announcement,
-                    &self.viewing_sk,
-                    &self.spending_pub,
-                );
+                let result = scan_announcement(&announcement, &self.viewing_sk, &self.spending_pub);
 
                 // Record stats
                 self.stats.write().record(&result);
@@ -449,11 +445,7 @@ impl Scanner {
                 }
 
                 // Scan
-                let result = scan_announcement(
-                    &announcement,
-                    &self.viewing_sk,
-                    &self.spending_pub,
-                );
+                let result = scan_announcement(&announcement, &self.viewing_sk, &self.spending_pub);
 
                 self.stats.write().record(&result);
                 scanned += 1;
@@ -491,11 +483,7 @@ impl Scanner {
 
     /// Scans a single announcement.
     pub fn scan_one(&self, announcement: &Announcement) -> ScanResult {
-        let result = scan_announcement(
-            announcement,
-            &self.viewing_sk,
-            &self.spending_pub,
-        );
+        let result = scan_announcement(announcement, &self.viewing_sk, &self.spending_pub);
 
         self.stats.write().record(&result);
         result
@@ -543,7 +531,9 @@ mod tests {
     use async_trait::async_trait;
     use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
     use specter_core::resolver::EphemeralKeyResolver;
-    use specter_crypto::{compute_view_tag, encapsulate, generate_keypair, generate_spending_keypair};
+    use specter_crypto::{
+        compute_view_tag, encapsulate, generate_keypair, generate_spending_keypair,
+    };
     use specter_registry::MemoryRegistry;
 
     struct StubResolver {

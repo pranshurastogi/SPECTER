@@ -172,7 +172,9 @@ pub fn verify_payment(payment: &StealthPayment, _meta_address: &MetaAddress) -> 
 mod tests {
     use super::*;
     use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_keys};
-    use specter_crypto::{decapsulate, generate_keypair, generate_spending_keypair, KyberCiphertext};
+    use specter_crypto::{
+        decapsulate, generate_keypair, generate_spending_keypair, KyberCiphertext,
+    };
 
     fn create_test_meta_address() -> MetaAddress {
         let spending = generate_spending_keypair();

@@ -327,11 +327,10 @@ impl Secp256k1SecretKey {
                 actual: bytes.len(),
             });
         }
-        k256::SecretKey::from_slice(bytes)
-            .map_err(|_| SpecterError::InvalidKeySize {
-                expected: SECP256K1_SECRET_KEY_SIZE,
-                actual: bytes.len(),
-            })?;
+        k256::SecretKey::from_slice(bytes).map_err(|_| SpecterError::InvalidKeySize {
+            expected: SECP256K1_SECRET_KEY_SIZE,
+            actual: bytes.len(),
+        })?;
         let mut arr = [0u8; SECP256K1_SECRET_KEY_SIZE];
         arr.copy_from_slice(bytes);
         Ok(Self { bytes: arr })
