@@ -8,6 +8,7 @@ import {
   type DecryptedKeys,
 } from "@/lib/crypto/keyVault";
 import { VaultUnlockForm } from "@/components/features/keys/VaultUnlockForm";
+import { looksLikeV1Keys, V1_KEYS_MESSAGE } from "@/lib/crypto/specter";
 import type { GenerateKeysResponse } from "@/lib/api";
 
 type LoadStep = "pick-method" | "upload" | "vault";
@@ -37,13 +38,24 @@ export default function LoadExistingKeysPanel({
   );
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Reject protocol-v1 key material with a clear "regenerate + withdraw" message
+  // instead of loading keys that can never find or spend v2 payments.
+  const handleLoaded = (keys: GenerateKeysResponse): boolean => {
+    if (looksLikeV1Keys(keys)) {
+      setError(V1_KEYS_MESSAGE);
+      return false;
+    }
+    onLoaded(keys);
+    return true;
+  };
+
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const text = await file.text();
-      onLoaded(parseKeyFile(text));
+      handleLoaded(parseKeyFile(text));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not read file");
     }
@@ -158,10 +170,16 @@ export default function LoadExistingKeysPanel({
               entries={vaultEntries}
               selectedId={selectedEntry}
               onSelectId={setSelectedEntry}
-              onUnlock={(decrypted) => onLoaded(toKeys(decrypted))}
+              onUnlock={(decrypted) => handleLoaded(toKeys(decrypted))}
               unlockLabel="Unlock & load"
               showEntryPicker={false}
             />
+          )}
+          {error && (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              {error}
+            </p>
           )}
           <button
             type="button"

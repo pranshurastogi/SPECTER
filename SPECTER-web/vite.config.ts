@@ -18,6 +18,9 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle heavy deps for faster dev startup
+    // The SPECTER SDK loads its crypto from WebAssembly via a dynamic import.
+    // esbuild's dep pre-bundling mangles that dynamic import + the `.wasm`
+    // asset URL, so exclude it and let Vite serve the wasm as a real asset.
+    exclude: ["@specterpq/sdk"],
   },
 });

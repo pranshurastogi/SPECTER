@@ -219,6 +219,16 @@ pub struct AnnouncementDto {
     /// Recipient stealth address (checksummed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stealth_address: Option<String>,
+    /// AEAD-encrypted on-chain metadata blob (hex). Opaque to everyone except
+    /// the recipient, who decrypts it with the per-payment shared secret to
+    /// recover the amount / source tx / chain id during client-side scanning.
+    /// Safe to serve publicly — it reveals nothing without the viewing key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_blob: Option<String>,
+    /// keccak256(ciphertext) for chain-indexed rows whose full ciphertext has
+    /// not been resolved yet (hex). Lets clients verify a resolved ciphertext.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_key_hash: Option<String>,
 }
 
 impl From<Announcement> for AnnouncementDto {
@@ -234,6 +244,8 @@ impl From<Announcement> for AnnouncementDto {
             amount: ann.amount,
             chain: ann.chain,
             stealth_address: ann.stealth_address,
+            metadata_blob: ann.metadata_blob.map(hex::encode),
+            ephemeral_key_hash: ann.ephemeral_key_hash.map(hex::encode),
         }
     }
 }

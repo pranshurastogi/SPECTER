@@ -718,7 +718,7 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
       setResolvedENS({
         ens_name: rec.recipient,
         meta_address: rec.meta_address,
-        spending_pk: "",
+        spending_pub: "",
         viewing_pk: "",
       });
       setEnsName(rec.recipient);
@@ -768,12 +768,13 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
       if (looksLikeHex) {
         analytics.sendResolveInitiated("meta_address");
         const metaHex = name.replace(/^0x/, "").trim();
-        const spk = metaHex.length >= 2370 ? metaHex.slice(2, 2370) : "";
-        const vpk = metaHex.length >= 4738 ? metaHex.slice(2370, 4738) : "";
+        // v2 meta-address layout (hex, no 0x): version(2) ‖ spending_pub(66) ‖ viewing_pk(2368).
+        const spk = metaHex.length >= 68 ? metaHex.slice(2, 68) : "";
+        const vpk = metaHex.length >= 2436 ? metaHex.slice(68, 2436) : "";
         const resolved: ResolveEnsResponse = {
           ens_name: "meta-address",
           meta_address: metaHex,
-          spending_pk: spk,
+          spending_pub: spk,
           viewing_pk: vpk,
         };
         setResolvedENS(resolved);
@@ -848,7 +849,7 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
           resolved = {
             ens_name: res.suins_name,
             meta_address: res.meta_address,
-            spending_pk: res.spending_pk,
+            spending_pub: res.spending_pub,
             viewing_pk: res.viewing_pk,
             ipfs_cid: res.ipfs_cid,
           };
@@ -1784,14 +1785,14 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
                               Post-Quantum Safe
                             </span>
                           </div>
-                          {resolvedENS.spending_pk && (
+                          {resolvedENS.spending_pub && (
                             <div className="flex items-center justify-between gap-3">
                               <span className="font-display text-[10px] font-semibold tracking-[0.16em] uppercase shrink-0" style={{ color: "rgba(255,255,255,0.28)" }}>
                                 Spending Key
                               </span>
                               <div className="flex-1 border-b border-dashed border-white/[0.06]" />
                               <span className="font-mono text-[10px] text-white/50 shrink-0">
-                                {resolvedENS.spending_pk.slice(0, 10)}···{resolvedENS.spending_pk.slice(-6)}
+                                {resolvedENS.spending_pub.slice(0, 10)}···{resolvedENS.spending_pub.slice(-6)}
                               </span>
                             </div>
                           )}

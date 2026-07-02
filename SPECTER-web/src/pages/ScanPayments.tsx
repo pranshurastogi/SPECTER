@@ -33,7 +33,8 @@ import {
   Activity,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
-import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
+import { api, ApiError, type AnnouncementDto, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
+import { scanAnnouncementsLocal, looksLikeV1Keys, V1_KEYS_MESSAGE } from "@/lib/crypto/specter";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import {
   ArbitrumIcon,
@@ -336,6 +337,13 @@ export default function ScanPayments() {
         setKeySource(null);
         return false;
       }
+      if (looksLikeV1Keys({ spending_pk, spending_sk })) {
+        setLoadError(V1_KEYS_MESSAGE);
+        setKeys(null);
+        setFullKeySet(null);
+        setKeySource(null);
+        return false;
+      }
       setKeys({ viewing_sk, spending_pk, spending_sk });
       setKeySource(source);
       setKeysSavedToVault(false);
@@ -384,6 +392,11 @@ export default function ScanPayments() {
       toast.error("Load keys first");
       return;
     }
+    if (looksLikeV1Keys(scanKeys)) {
+      setScanState("idle");
+      toast.error(V1_KEYS_MESSAGE);
+      return;
+    }
     const keyMethod = method ?? (keysPaste ? "paste" : "file");
     analytics.scanInitiated(keyMethod);
     setScanState("scanning");
@@ -403,12 +416,28 @@ export default function ScanPayments() {
     clearStageTimers();
     stageTimersRef.current.push(window.setTimeout(() => setScanStageIndex(1), 900));
 
-    const stripHex = (s: string) => s.replace(/^0x/i, "").trim();
     try {
-      const scanRes = await api.scanPayments({
-        viewing_sk: stripHex(scanKeys.viewing_sk),
-        spending_pk: stripHex(scanKeys.spending_pk),
-        spending_sk: stripHex(scanKeys.spending_sk),
+      // Fetch announcements (public data) then scan ENTIRELY on-device via the
+      // SDK (Rust→WASM). The viewing/spending secret keys never leave the
+      // browser — no secret is ever sent to the server.
+      const pageSize = 1000;
+      const safetyCap = 50_000;
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+      const all: AnnouncementDto[] = [];
+      while (all.length < total && all.length < safetyCap) {
+        const page = await api.listAnnouncements({ limit: pageSize, offset });
+        all.push(...page.announcements);
+        total = page.total;
+        if (page.announcements.length === 0) break;
+        offset += pageSize;
+      }
+      setRegistryTotal(total === Number.POSITIVE_INFINITY ? all.length : total);
+
+      const scanRes = await scanAnnouncementsLocal(all, {
+        viewing_sk: scanKeys.viewing_sk,
+        spending_pk: scanKeys.spending_pk,
+        spending_sk: scanKeys.spending_sk,
       });
       clearStageTimers();
       // Flash the final stage as done, then reveal results.
