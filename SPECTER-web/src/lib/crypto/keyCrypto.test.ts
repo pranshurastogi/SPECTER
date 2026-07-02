@@ -19,6 +19,17 @@ describe("keyCrypto password envelope", () => {
     const envelope = await encryptWithPassword("secret", "correct");
     await expect(decryptWithPassword(envelope, "wrong")).rejects.toThrow();
   });
+
+  it("stamps the current PBKDF2 iteration count and honors it on decrypt", async () => {
+    const envelope = await encryptWithPassword("secret", "pw");
+    // New vaults record 600k iterations…
+    expect(envelope.iterations).toBe(600_000);
+    // …and the stored count is actually used: tampering with it breaks the
+    // derived key. This also proves legacy envelopes (no `iterations` field)
+    // are decrypted at the original 210k default rather than the new value.
+    const tampered = { ...envelope, iterations: 210_000 };
+    await expect(decryptWithPassword(tampered, "pw")).rejects.toThrow();
+  });
 });
 
 describe("keyCrypto passkey PRF envelope", () => {

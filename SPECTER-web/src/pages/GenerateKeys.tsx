@@ -57,6 +57,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/specialized/alert-dialog";
 import { api, ApiError, type GenerateKeysResponse, type ResolveEnsResponse } from "@/lib/api";
+import { generateKeysLocal } from "@/lib/crypto/specter";
 import { saveSetupProgress, clearSetupProgress } from "@/lib/setupProgress";
 import { analytics } from "@/lib/analytics";
 import { formatAddress } from "@/lib/utils";
@@ -441,12 +442,14 @@ export default function GenerateKeys() {
     setEnsUploadResult(null);
     setSuinsUploadResult(null);
     try {
-      const response = await api.generateKeys();
+      // Keys are generated entirely in the browser (Rust→WASM via @specterpq/sdk).
+      // No secret key ever touches the network — the server never sees them.
+      const response = await generateKeysLocal();
       setKeys(response);
       setStep1Status("complete");
       saveSetupProgress({ keysGenerated: true });
       analytics.setupKeysGenerated();
-      toast.success("Keys generated successfully");
+      toast.success("Keys generated on your device");
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to generate keys";
       toast.error(message);

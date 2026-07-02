@@ -1,13 +1,20 @@
 /**
  * AES-256-GCM encryption/decryption for SPECTER keys using Web Crypto API.
  *
- * Password path: PBKDF2 (SHA-256, 210 000 iterations) → AES-256-GCM.
+ * Password path: PBKDF2 (SHA-256, 600 000 iterations) → AES-256-GCM.
  * Passkey path: WebAuthn PRF output → HKDF-SHA256 → AES-256-GCM (see passkeyVault.ts).
  *
- * Ciphertext envelope: { v, kdf?, salt, iv, data } — all Base64-encoded.
+ * Ciphertext envelope: { v, kdf?, salt, iv, data, iterations? } — all Base64-encoded.
+ * The PBKDF2 iteration count is stored per-envelope so the count can be raised
+ * over time without breaking already-saved vaults: new entries embed 600 000,
+ * while legacy entries with no `iterations` field are decrypted at the original
+ * 210 000.
  */
 
-const PBKDF2_ITERATIONS = 210_000;
+/** Current PBKDF2 iteration count for new password vaults (OWASP-aligned). */
+const PBKDF2_ITERATIONS = 600_000;
+/** Iteration count assumed for legacy envelopes that predate the stored field. */
+const PBKDF2_ITERATIONS_LEGACY = 210_000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const ENVELOPE_VERSION = 1;
@@ -28,7 +35,11 @@ function fromBase64(b64: string): ArrayBuffer {
   return buf.buffer;
 }
 
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(
+  password: string,
+  salt: Uint8Array,
+  iterations: number,
+): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -38,7 +49,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -55,6 +66,8 @@ export interface EncryptedEnvelope {
   salt: string;
   iv: string;
   data: string;
+  /** PBKDF2 iteration count (password path). Omitted on legacy entries → 210 000. */
+  iterations?: number;
 }
 
 /** Derive AES-256-GCM wrap key from WebAuthn PRF output (never store PRF output). */
@@ -125,7 +138,7 @@ export async function encryptWithPassword(
 ): Promise<EncryptedEnvelope> {
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt, PBKDF2_ITERATIONS);
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
@@ -136,6 +149,7 @@ export async function encryptWithPassword(
     salt: toBase64(salt.buffer),
     iv: toBase64(iv.buffer),
     data: toBase64(ciphertext),
+    iterations: PBKDF2_ITERATIONS,
   };
 }
 
@@ -149,7 +163,7 @@ export async function decryptWithPassword(
   const salt = new Uint8Array(fromBase64(envelope.salt));
   const iv = new Uint8Array(fromBase64(envelope.iv));
   const ciphertext = fromBase64(envelope.data);
-  const key = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt, envelope.iterations ?? PBKDF2_ITERATIONS_LEGACY);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
     key,
