@@ -38,7 +38,9 @@ use specter_core::constants::{
     DOMAIN_STEALTH_TWEAK, ETH_ADDRESS_SIZE, SECP256K1_PUBLIC_KEY_SIZE, SUI_ADDRESS_SIZE,
 };
 use specter_core::error::{Result, SpecterError};
-use specter_core::types::{EthAddress, Secp256k1KeyPair, Secp256k1PublicKey, Secp256k1SecretKey, SuiAddress};
+use specter_core::types::{
+    EthAddress, Secp256k1KeyPair, Secp256k1PublicKey, Secp256k1SecretKey, SuiAddress,
+};
 
 use crate::hash::{keccak256, shake256};
 
@@ -246,10 +248,11 @@ pub fn derive_stealth_keys(
     spending_sk: &[u8],
     shared_secret: &[u8],
 ) -> Result<StealthKeys> {
-    let b_secret = SecretKey::from_slice(spending_sk).map_err(|_| SpecterError::InvalidKeySize {
-        expected: 32,
-        actual: spending_sk.len(),
-    })?;
+    let b_secret =
+        SecretKey::from_slice(spending_sk).map_err(|_| SpecterError::InvalidKeySize {
+            expected: 32,
+            actual: spending_sk.len(),
+        })?;
 
     // Defense-in-depth: reject a mismatched (spending_pub, spending_sk) pair so a
     // caller can never silently derive keys for the wrong meta-address.
@@ -265,9 +268,10 @@ pub fn derive_stealth_keys(
     let t = derive_stealth_tweak(shared_secret);
 
     let p_scalar: Scalar = *b.as_ref() + t;
-    let p_nonzero = Option::<NonZeroScalar>::from(NonZeroScalar::new(p_scalar)).ok_or_else(|| {
-        SpecterError::InvalidStealthAddress("derived stealth scalar is zero".into())
-    })?;
+    let p_nonzero =
+        Option::<NonZeroScalar>::from(NonZeroScalar::new(p_scalar)).ok_or_else(|| {
+            SpecterError::InvalidStealthAddress("derived stealth scalar is zero".into())
+        })?;
     let p_secret = SecretKey::from(p_nonzero);
 
     let mut seed = [0u8; 32];
@@ -325,9 +329,8 @@ mod tests {
         let b = generate_spending_keypair();
         assert_ne!(a.public.as_bytes(), b.public.as_bytes());
         // secret must derive back to the public key
-        let derived = derive_eth_address_from_seed(
-            &a.secret.as_bytes().try_into().expect("32 bytes"),
-        );
+        let derived =
+            derive_eth_address_from_seed(&a.secret.as_bytes().try_into().expect("32 bytes"));
         assert!(derived.is_ok());
     }
 

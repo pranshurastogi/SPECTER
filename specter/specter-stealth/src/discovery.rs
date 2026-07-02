@@ -176,7 +176,10 @@ pub fn scan_announcement(
 }
 
 /// Builds a [`DiscoveredPayment`] from public spending key + shared secret.
-fn build_discovered_payment(spending_pub: &[u8], shared_secret: &[u8]) -> Result<DiscoveredPayment> {
+fn build_discovered_payment(
+    spending_pub: &[u8],
+    shared_secret: &[u8],
+) -> Result<DiscoveredPayment> {
     let address = derive_stealth_address(spending_pub, shared_secret)?;
     let sui_address = derive_stealth_sui_address(spending_pub, shared_secret)?;
     let mut ss = [0u8; 32];
@@ -589,9 +592,8 @@ mod tests {
         let shared_secret = specter_crypto::decapsulate(&ciphertext, &vsk).unwrap();
         let expected_addr = derive_stealth_address(&spending_pub, &shared_secret).unwrap();
 
-        let ok =
-            verify_address_from_announcement(&ann, &viewing_sk, &spending_pub, &expected_addr)
-                .unwrap();
+        let ok = verify_address_from_announcement(&ann, &viewing_sk, &spending_pub, &expected_addr)
+            .unwrap();
         assert!(ok, "correct key should verify address");
     }
 
@@ -602,8 +604,8 @@ mod tests {
 
         let wrong_addr = EthAddress::zero();
 
-        let ok =
-            verify_address_from_announcement(&ann, &viewing_sk, &spending_pub, &wrong_addr).unwrap();
+        let ok = verify_address_from_announcement(&ann, &viewing_sk, &spending_pub, &wrong_addr)
+            .unwrap();
         assert!(!ok, "wrong address should not verify");
     }
 
