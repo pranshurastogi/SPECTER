@@ -38,7 +38,8 @@ use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{AnnouncementBuilder, AnnouncementMetadata, MetaAddress};
 use specter_crypto::{
     derive::derive_stealth_address, encapsulate, encrypt_announcement_metadata, generate_keypair,
-    hash::keccak256, metadata::ENCRYPTED_METADATA_SIZE, view_tag::compute_view_tag, DbKeys,
+    generate_spending_keypair, hash::keccak256, metadata::ENCRYPTED_METADATA_SIZE,
+    view_tag::compute_view_tag, DbKeys,
 };
 use specter_registry::turso::TursoRegistry;
 use specter_stealth::discovery::scan_with_context_and_stats;
@@ -164,9 +165,10 @@ async fn main() -> Result<()> {
         "Generating ephemeral recipient SPECTER keys (ML-KEM-768)",
     );
 
-    // Raw ML-KEM keypairs (spending + viewing) so the canonical recipient scan in
-    // step 9 can run with the recipient's secret keys — exactly as a wallet/SDK does.
-    let spending = generate_keypair();
+    // secp256k1 spending keypair + ML-KEM viewing keypair (protocol v2), so the
+    // canonical recipient scan in step 9 can run with the recipient's secret keys
+    // — exactly as a wallet/SDK does.
+    let spending = generate_spending_keypair();
     let viewing = generate_keypair();
     let meta = MetaAddress::new(spending.public.clone(), viewing.public.clone());
 
@@ -190,8 +192,8 @@ async fn main() -> Result<()> {
 
     let view_tag = compute_view_tag(&shared_secret);
 
-    // derive_stealth_address(spending_pk_bytes, shared_secret) → EthAddress
-    let stealth_eth = derive_stealth_address(meta.spending_pk.as_bytes(), &shared_secret)
+    // derive_stealth_address(spending_pub_bytes, shared_secret) → EthAddress
+    let stealth_eth = derive_stealth_address(meta.spending_pub.as_bytes(), &shared_secret)
         .context("Stealth address derivation failed")?;
 
     let stealth_addr_hex = stealth_eth.to_checksum_string();
@@ -579,14 +581,11 @@ async fn main() -> Result<()> {
     // ciphertext, matches the view tag, decrypts metadata_blob, AND derives the
     // stealth keys — all in one pass (no manual decrypt, no separate discovery).
     let viewing_sk = viewing.secret.as_bytes().to_vec();
-    let spending_pk = spending.public.as_bytes().to_vec();
+    let spending_pub = spending.public.as_bytes().to_vec();
     let spending_sk = spending.secret.as_bytes().to_vec();
-    let (discoveries, _scan_stats) = scan_with_context_and_stats(
-        std::slice::from_ref(found),
-        &viewing_sk,
-        &spending_pk,
-        &spending_sk,
-    );
+    // Detection is view-only (viewing_sk + spending_pub).
+    let (discoveries, _scan_stats) =
+        scan_with_context_and_stats(std::slice::from_ref(found), &viewing_sk, &spending_pub);
 
     match discoveries.first() {
         Some(d) => {
@@ -606,11 +605,31 @@ async fn main() -> Result<()> {
                 fail_msg("canonical scan: source_chain_id not recovered from blob");
                 errs += 1;
             }
-            let recovered = d.keys.address.to_checksum_string();
+            let recovered = d.payment.address.to_checksum_string();
             if recovered.eq_ignore_ascii_case(&stealth_addr_hex) {
                 ok(&format!(
                     "canonical scan:     stealth address recovered {recovered}"
                 ));
+
+                // Spend step: derive the private key locally with the secret
+                // spending key and confirm it controls the stealth address.
+                match specter_stealth::discovery::derive_spend_keys(
+                    &spending_pub,
+                    &spending_sk,
+                    &d.payment.shared_secret,
+                ) {
+                    Ok(keys) if keys.address == d.payment.address => {
+                        ok("spend derivation:   eth private key controls stealth address")
+                    }
+                    Ok(_) => {
+                        fail_msg("spend derivation: derived address mismatch");
+                        errs += 1;
+                    }
+                    Err(e) => {
+                        fail_msg(&format!("spend derivation failed: {e}"));
+                        errs += 1;
+                    }
+                }
             } else {
                 fail_msg(&format!(
                     "canonical scan: expected {stealth_addr_hex}, got {recovered}"

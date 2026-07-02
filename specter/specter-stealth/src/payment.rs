@@ -45,9 +45,9 @@ pub fn create_stealth_payment(meta_address: &MetaAddress) -> Result<StealthPayme
     let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
     let view_tag = compute_view_tag(&shared_secret);
     let stealth_address =
-        derive_stealth_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+        derive_stealth_address(meta_address.spending_pub.as_bytes(), &shared_secret)?;
     let stealth_sui_address =
-        derive_stealth_sui_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+        derive_stealth_sui_address(meta_address.spending_pub.as_bytes(), &shared_secret)?;
     let announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
 
     Ok(StealthPayment {
@@ -133,9 +133,9 @@ impl StealthPaymentBuilder {
         let (ciphertext, shared_secret) = encapsulate(&meta_address.viewing_pk)?;
         let view_tag = compute_view_tag(&shared_secret);
         let stealth_address =
-            derive_stealth_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+            derive_stealth_address(meta_address.spending_pub.as_bytes(), &shared_secret)?;
         let stealth_sui_address =
-            derive_stealth_sui_address(meta_address.spending_pk.as_bytes(), &shared_secret)?;
+            derive_stealth_sui_address(meta_address.spending_pub.as_bytes(), &shared_secret)?;
         let mut announcement = Announcement::new(ciphertext.into_bytes(), view_tag);
         if let Some(chain_id) = self.source_chain_id {
             announcement.source_chain_id = Some(chain_id);
@@ -172,10 +172,10 @@ pub fn verify_payment(payment: &StealthPayment, _meta_address: &MetaAddress) -> 
 mod tests {
     use super::*;
     use specter_crypto::derive::{derive_eth_address_from_seed, derive_stealth_keys};
-    use specter_crypto::{decapsulate, generate_keypair, KyberCiphertext};
+    use specter_crypto::{decapsulate, generate_keypair, generate_spending_keypair, KyberCiphertext};
 
     fn create_test_meta_address() -> MetaAddress {
-        let spending = generate_keypair();
+        let spending = generate_spending_keypair();
         let viewing = generate_keypair();
         MetaAddress::new(spending.public.clone(), viewing.public.clone())
     }
@@ -273,7 +273,7 @@ mod tests {
     /// Proves stealth_address matches the address derived from eth_private_key (wallet compatibility).
     #[test]
     fn test_stealth_address_matches_eth_private_key() {
-        let spending = generate_keypair();
+        let spending = generate_spending_keypair();
         let viewing = generate_keypair();
         let meta = MetaAddress::new(spending.public.clone(), viewing.public.clone());
 

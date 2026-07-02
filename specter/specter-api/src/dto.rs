@@ -12,16 +12,19 @@ use uuid::Uuid;
 /// stable view tag.
 #[derive(Debug, Serialize)]
 pub struct GenerateKeysResponse {
-    /// Spending public key (hex)
-    pub spending_pk: String,
-    /// Spending secret key (hex) - HANDLE WITH CARE
+    /// secp256k1 spending public key (33-byte compressed, hex)
+    pub spending_pub: String,
+    /// secp256k1 spending secret key (32 bytes, hex) - HANDLE WITH CARE.
+    /// This controls all funds; generate client-side in production.
     pub spending_sk: String,
-    /// Viewing public key (hex)
+    /// ML-KEM viewing public key (hex)
     pub viewing_pk: String,
-    /// Viewing secret key (hex) - HANDLE WITH CARE
+    /// ML-KEM viewing secret key (hex) - HANDLE WITH CARE
     pub viewing_sk: String,
     /// Meta-address (hex-encoded, for ENS storage)
     pub meta_address: String,
+    /// Protocol version of the generated keys (currently 2).
+    pub protocol_version: u8,
 }
 
 /// Request to create a stealth payment.
@@ -55,15 +58,18 @@ pub struct CreateStealthResponse {
     pub announcement: AnnouncementDto,
 }
 
-/// Request to scan for payments.
+/// Request to scan for payments (view-only).
+///
+/// Deliberately does NOT accept the spending secret key. Detection needs only
+/// the viewing secret key and the spending *public* key; the per-payment
+/// `shared_secret` is returned so the client can derive spend keys locally with
+/// its own secret spending key (which must never be sent to a server).
 #[derive(Debug, Deserialize)]
 pub struct ScanRequest {
-    /// Viewing secret key (hex)
+    /// ML-KEM viewing secret key (hex)
     pub viewing_sk: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
-    /// Spending secret key (hex)
-    pub spending_sk: String,
+    /// secp256k1 spending public key (33-byte compressed, hex)
+    pub spending_pub: String,
     /// Optional: Only scan specific view tags
     pub view_tags: Option<Vec<u8>>,
     /// Optional: Scan from timestamp
@@ -82,16 +88,19 @@ pub struct ScanResponse {
 }
 
 /// A discovered payment.
+///
+/// Contains no private key. To spend, the client derives the spend key locally
+/// from `shared_secret` + its secret spending key (never sent to the server).
 #[derive(Debug, Serialize)]
 pub struct DiscoveryDto {
     /// Stealth Ethereum address (checksummed)
     pub stealth_address: String,
     /// Stealth Sui address
     pub stealth_sui_address: String,
-    /// Stealth private key (hex) - HANDLE WITH CARE
-    pub stealth_sk: String,
-    /// Ethereum-compatible private key (32 bytes, hex)
-    pub eth_private_key: String,
+    /// Per-payment ML-KEM shared secret (hex). Feed this plus your secret
+    /// spending key into client-side `derive_stealth_keys` to obtain the spend
+    /// key. Knowing it alone does NOT allow spending.
+    pub shared_secret: String,
     /// Announcement ID
     pub announcement_id: u64,
     /// Timestamp
@@ -140,8 +149,8 @@ pub struct ResolveEnsResponse {
     pub ens_name: String,
     /// Meta-address (hex)
     pub meta_address: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
+    /// secp256k1 spending public key (hex)
+    pub spending_pub: String,
     /// Viewing public key (hex)
     pub viewing_pk: String,
     /// IPFS CID where meta-address is stored
@@ -155,8 +164,8 @@ pub struct ResolveSuinsResponse {
     pub suins_name: String,
     /// Meta-address (hex)
     pub meta_address: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
+    /// secp256k1 spending public key (hex)
+    pub spending_pub: String,
     /// Viewing public key (hex)
     pub viewing_pk: String,
     /// IPFS CID where meta-address is stored

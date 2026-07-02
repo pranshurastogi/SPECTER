@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use zeroize::ZeroizeOnDrop;
 
 use specter_core::error::Result;
-use specter_core::types::{KyberPublicKey, MetaAddress, SpecterKeys};
+use specter_core::types::{KyberPublicKey, MetaAddress, Secp256k1PublicKey, SpecterKeys};
 use specter_crypto::derive::{derive_stealth_keys, StealthKeys};
-use specter_crypto::{compute_view_tag, decapsulate, generate_keypair};
+use specter_crypto::{compute_view_tag, decapsulate, generate_keypair, generate_spending_keypair};
 
 /// Configuration for wallet creation.
 #[derive(Clone, Debug, Default)]
@@ -54,8 +54,8 @@ impl SpecterWallet {
 
     /// Generates a new wallet with custom configuration.
     pub fn generate_with_config(config: WalletConfig) -> Result<Self> {
-        // Generate spending and viewing key pairs
-        let spending = generate_keypair();
+        // Generate spending (secp256k1) and viewing (ML-KEM) key pairs
+        let spending = generate_spending_keypair();
         let viewing = generate_keypair();
 
         let meta_address = MetaAddress::new(spending.public.clone(), viewing.public.clone());
@@ -92,8 +92,8 @@ impl SpecterWallet {
         &self.meta_address
     }
 
-    /// Returns the spending public key.
-    pub fn spending_public_key(&self) -> &KyberPublicKey {
+    /// Returns the secp256k1 spending public key.
+    pub fn spending_public_key(&self) -> &Secp256k1PublicKey {
         &self.keys.spending.public
     }
 

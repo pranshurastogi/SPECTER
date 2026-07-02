@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
-use specter_crypto::generate_keypair;
+use specter_crypto::{generate_keypair, generate_spending_keypair};
 use specter_stealth::create_stealth_payment;
 
 use crate::dto::*;
@@ -32,23 +32,24 @@ type Result<T> = std::result::Result<T, ApiError>;
 pub async fn generate_keys(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<GenerateKeysResponse>> {
-    let spending = generate_keypair();
+    let spending = generate_spending_keypair();
     let viewing = generate_keypair();
 
     let meta = MetaAddress::new(
-        KyberPublicKey::from_array(*spending.public.as_array()),
+        spending.public.clone(),
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
     let response = GenerateKeysResponse {
-        spending_pk: hex::encode(spending.public.as_bytes()),
+        spending_pub: spending.public.to_hex(),
         spending_sk: hex::encode(spending.secret.as_bytes()),
         viewing_pk: hex::encode(viewing.public.as_bytes()),
         viewing_sk: hex::encode(viewing.secret.as_bytes()),
         meta_address: meta.to_hex(),
+        protocol_version: specter_core::constants::PROTOCOL_VERSION,
     };
 
-    info!("Generated new SPECTER keys");
+    info!("Generated new SPECTER keys (protocol v2, secp256k1 spending)");
     Ok(Json(response))
 }
 
@@ -103,8 +104,7 @@ pub async fn scan_payments(
     let start = Instant::now();
 
     let viewing_sk = hex::decode(strip_hex_prefix(&req.viewing_sk))?;
-    let spending_pk = hex::decode(strip_hex_prefix(&req.spending_pk))?;
-    let spending_sk = hex::decode(strip_hex_prefix(&req.spending_sk))?;
+    let spending_pub = hex::decode(strip_hex_prefix(&req.spending_pub))?;
 
     let announcements = if let Some(tags) = &req.view_tags {
         let mut all = Vec::new();
@@ -130,8 +130,7 @@ pub async fn scan_payments(
     let (discoveries, scan_stats) = specter_stealth::discovery::scan_with_context_and_stats(
         &announcements,
         &viewing_sk,
-        &spending_pk,
-        &spending_sk,
+        &spending_pub,
     );
 
     let elapsed = start.elapsed();
@@ -140,10 +139,9 @@ pub async fn scan_payments(
     let discovery_dtos: Vec<DiscoveryDto> = discoveries
         .into_iter()
         .map(|d| DiscoveryDto {
-            stealth_address: d.keys.address.to_checksum_string(),
-            stealth_sui_address: d.keys.sui_address.to_hex_string(),
-            stealth_sk: hex::encode(d.keys.private_key.as_bytes()),
-            eth_private_key: hex::encode(d.keys.private_key.to_eth_private_key()),
+            stealth_address: d.payment.address.to_checksum_string(),
+            stealth_sui_address: d.payment.sui_address.to_hex_string(),
+            shared_secret: hex::encode(d.payment.shared_secret),
             announcement_id: d.announcement.id,
             timestamp: d.announcement.timestamp,
             tx_hash: d.announcement.tx_hash.clone(),
@@ -196,7 +194,7 @@ pub async fn resolve_ens(
     Ok(Json(ResolveEnsResponse {
         ens_name: result.ens_name,
         meta_address: result.meta_address.to_hex(),
-        spending_pk: result.meta_address.spending_pk.to_hex(),
+        spending_pub: result.meta_address.spending_pub.to_hex(),
         viewing_pk: result.meta_address.viewing_pk.to_hex(),
         ipfs_cid: if result.ipfs_cid.is_empty() {
             None
@@ -225,7 +223,7 @@ pub async fn resolve_suins(
     Ok(Json(ResolveSuinsResponse {
         suins_name: result.suins_name,
         meta_address: result.meta_address.to_hex(),
-        spending_pk: result.meta_address.spending_pk.to_hex(),
+        spending_pub: result.meta_address.spending_pub.to_hex(),
         viewing_pk: result.meta_address.viewing_pk.to_hex(),
         ipfs_cid: if result.ipfs_cid.is_empty() {
             None
