@@ -1,10 +1,10 @@
 /**
  * Step 2 of the claim flow: where should the funds go? One input that
- * accepts a 0x address or an ENS name, resolved before the user can
- * continue so there are no surprises at confirm time.
+ * accepts a 0x address or an ENS name. Resolution happens automatically as
+ * the user types (debounced for ENS lookups), so the only button is Continue.
  */
-import { useState } from "react";
-import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { Input } from "@/components/ui/base/input";
 import { resolveDestination, type ResolvedDestination } from "@/lib/claim/destination";
@@ -13,64 +13,77 @@ interface DestinationInputProps {
   /** Lowercased stealth addresses owned by this identity (self-send guard). */
   ownStealthAddresses: Set<string>;
   onConfirm: (dest: ResolvedDestination) => void;
-  onBack: () => void;
 }
 
-export function DestinationInput({
-  ownStealthAddresses,
-  onConfirm,
-  onBack,
-}: DestinationInputProps) {
+/** Full 0x addresses validate instantly; everything else (ENS) waits a beat. */
+const looksLikeFullAddress = (v: string) => /^0x[0-9a-fA-F]{40}$/.test(v.trim());
+const looksLikeEns = (v: string) => /^[^\s]+\.[a-z]{2,}$/i.test(v.trim());
+
+export function DestinationInput({ ownStealthAddresses, onConfirm }: DestinationInputProps) {
   const [value, setValue] = useState("");
   const [resolving, setResolving] = useState(false);
   const [resolved, setResolved] = useState<ResolvedDestination | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Guards against out-of-order async results while the user keeps typing.
+  const requestSeq = useRef(0);
 
   const isOwnStealth =
     resolved !== null && ownStealthAddresses.has(resolved.address.toLowerCase());
 
-  const handleResolve = async () => {
-    setResolving(true);
-    setError(null);
+  useEffect(() => {
+    const input = value.trim();
     setResolved(null);
-    try {
-      const dest = await resolveDestination(value);
-      setResolved(dest);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resolve destination");
-    } finally {
+    setError(null);
+    if (!input || (!looksLikeFullAddress(input) && !looksLikeEns(input))) {
       setResolving(false);
+      return;
     }
-  };
+
+    const seq = ++requestSeq.current;
+    const run = async () => {
+      setResolving(true);
+      try {
+        const dest = await resolveDestination(input);
+        if (requestSeq.current === seq) setResolved(dest);
+      } catch (err) {
+        if (requestSeq.current === seq) {
+          setError(err instanceof Error ? err.message : "Could not resolve destination");
+        }
+      } finally {
+        if (requestSeq.current === seq) setResolving(false);
+      }
+    };
+
+    // Addresses are checked locally — instant. ENS needs a network lookup, so
+    // wait for the user to pause typing.
+    const delay = looksLikeFullAddress(input) ? 0 : 500;
+    const t = window.setTimeout(run, delay);
+    return () => window.clearTimeout(t);
+  }, [value]);
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Enter the wallet that should receive the funds — an address or an ENS
-        name.
+        The wallet that should receive the funds — an address or an ENS name.
       </p>
-      <div className="flex gap-2">
+      <div className="relative">
         <Input
           placeholder="0x… or alice.eth"
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setResolved(null);
-            setError(null);
-          }}
+          onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && value.trim() && !resolving) handleResolve();
+            if (e.key === "Enter" && resolved && !isOwnStealth) onConfirm(resolved);
           }}
-          className="font-mono text-xs flex-1"
+          className="font-mono text-xs pr-9"
           autoFocus
         />
-        <Button
-          variant="outline"
-          onClick={handleResolve}
-          disabled={!value.trim() || resolving}
-        >
-          {resolving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Check"}
-        </Button>
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+          {resolving ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary/70" />
+          ) : resolved && !isOwnStealth ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+          ) : null}
+        </span>
       </div>
 
       {error && (
@@ -80,17 +93,11 @@ export function DestinationInput({
         </div>
       )}
 
-      {resolved && (
+      {resolved && resolved.kind === "ens" && (
         <div className="specter-confirm">
           <CheckCircle2 className="h-3.5 w-3.5" />
           <span className="specter-confirm-text">
-            {resolved.kind === "ens" ? (
-              <>
-                {resolved.input} → <code className="font-mono">{resolved.address}</code>
-              </>
-            ) : (
-              <>Valid address</>
-            )}
+            {resolved.input} → <code className="font-mono">{resolved.address}</code>
           </span>
         </div>
       )}
@@ -106,17 +113,15 @@ export function DestinationInput({
         </div>
       )}
 
-      <div className="flex gap-2 pt-1">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          Back
-        </Button>
+      <div className="pt-1">
         <Button
           variant="quantum"
-          className="flex-1"
+          className="w-full"
           disabled={!resolved || isOwnStealth}
           onClick={() => resolved && onConfirm(resolved)}
         >
           Continue
+          <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
       </div>
     </div>

@@ -82,6 +82,40 @@ export function groupSweepHistory(rows: SweepRecordDto[]): SweepHistoryGroup[] {
 }
 
 /**
+ * Converts a just-built receipt into a history group so the UI can show it
+ * immediately, without waiting for (or racing) the best-effort server record.
+ */
+export function receiptToHistoryGroup(receipt: ClaimReceipt): SweepHistoryGroup {
+  const rows: SweepRecordDto[] = receipt.rows.map((r) => ({
+    id: r.id,
+    receipt_id: receipt.receiptId,
+    chain: receipt.backendChain,
+    destination: receipt.destination,
+    destination_input: receipt.destinationInput,
+    stealth_address: r.stealthAddress,
+    amount_base: r.amountBase,
+    fee_base: r.feeBase,
+    tx_hash: r.txHash,
+    status: r.status,
+    created_at: receipt.createdAt,
+  }));
+  return groupSweepHistory(rows)[0]!;
+}
+
+/**
+ * Prepends a receipt's group to existing history, dropping any group with the
+ * same receipt id (a server refetch that already contains it wins on identity,
+ * the local copy wins on recency).
+ */
+export function mergeReceiptIntoHistory(
+  groups: SweepHistoryGroup[],
+  receipt: ClaimReceipt,
+): SweepHistoryGroup[] {
+  const local = receiptToHistoryGroup(receipt);
+  return [local, ...groups.filter((g) => g.receiptId !== local.receiptId)];
+}
+
+/**
  * Fetches and groups an identity's claim history. Returns [] on any error —
  * history is an enhancement, never a blocker for scanning.
  */

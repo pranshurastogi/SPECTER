@@ -67,8 +67,7 @@ import { TooltipLabel } from "@/components/ui/specialized/tooltip-label";
 import { HeadingScramble } from "@/components/ui/animations/heading-scramble";
 import { PixelCanvas } from "@/components/ui/animations/pixel-canvas";
 import { AnimatedTicket } from "@/components/ui/specialized/ticket-confirmation-card";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import { saveTicketPdf, saveTicketPng } from "@/lib/receiptCapture";
 import {
   api,
   ApiError,
@@ -350,49 +349,10 @@ function getFundingUrl(chain: TxChain): string {
 export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {}) {
   const ticketRef = useRef<HTMLDivElement>(null);
 
-  const captureTicketCanvas = async () => {
-    const el = ticketRef.current;
-    if (!el) return null;
-
-    // Resolve the actual background colour so we never get a transparent canvas.
-    // html2canvas flattens CSS variables on its cloned document, but the card's
-    // bg-card class uses a CSS variable that resolves to a dark hsl value.
-    // Reading the computed style from the live element is the most reliable way.
-    const computedBg = window.getComputedStyle(el).backgroundColor;
-    const isTransparent = !computedBg || computedBg === "transparent" || computedBg === "rgba(0, 0, 0, 0)";
-    const backgroundColor = isTransparent ? "#0f0f0f" : computedBg;
-
-    return html2canvas(el, {
-      backgroundColor,
-      scale: 3,           // 3× for crisp text on retina and in PDF
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      // Explicitly set canvas dimensions to the element's full scroll size
-      // so nothing gets clipped if the ticket overflows its container.
-      width: el.scrollWidth,
-      height: el.scrollHeight,
-      windowWidth: el.scrollWidth,
-      windowHeight: el.scrollHeight,
-      onclone: (_doc, clonedEl) => {
-        // CSS variables (--card, --card-foreground, etc.) may not resolve
-        // inside the cloned iframe. Force the background and text colours
-        // explicitly so the capture always renders on a dark surface.
-        clonedEl.style.backgroundColor = backgroundColor;
-        clonedEl.style.color = window.getComputedStyle(el).color || "#ffffff";
-      },
-    });
-  };
-
   const handleSaveImage = async () => {
+    if (!ticketRef.current) return;
     try {
-      const canvas = await captureTicketCanvas();
-      if (!canvas) return;
-      const url = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "specter-receipt.png";
-      a.click();
+      await saveTicketPng(ticketRef.current, "specter-receipt");
       toast.success("Receipt saved as PNG");
     } catch {
       toast.error("Could not save image. Try again.");
@@ -400,25 +360,9 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
   };
 
   const handleSavePdf = async () => {
+    if (!ticketRef.current) return;
     try {
-      const canvas = await captureTicketCanvas();
-      if (!canvas) return;
-      const imgData = canvas.toDataURL("image/png");
-
-      // Canvas is 3× the CSS pixel size. Convert to mm at 96 DPI.
-      // 1 CSS px = 25.4 / 96 mm ≈ 0.2646 mm
-      const PX_TO_MM = 25.4 / 96;
-      const ticketWmm = (canvas.width / 3) * PX_TO_MM;
-      const ticketHmm = (canvas.height / 3) * PX_TO_MM;
-
-      // Page = ticket size + 12 mm margin on each side
-      const marginMm = 12;
-      const pageW = ticketWmm + marginMm * 2;
-      const pageH = ticketHmm + marginMm * 2;
-
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [pageW, pageH] });
-      pdf.addImage(imgData, "PNG", marginMm, marginMm, ticketWmm, ticketHmm);
-      pdf.save("specter-receipt.pdf");
+      await saveTicketPdf(ticketRef.current, "specter-receipt");
       toast.success("Receipt saved as PDF");
     } catch {
       toast.error("Could not save PDF. Try again.");

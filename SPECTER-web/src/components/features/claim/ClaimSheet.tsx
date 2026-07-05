@@ -272,9 +272,20 @@ export function ClaimSheet({
                       <Wallet className="h-4 w-4 text-primary shrink-0" />
                       <span className="truncate">{STEP_TITLES[step]}</span>
                       {cfg && step !== "chain" && (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-normal text-white/55 shrink-0">
+                        // Doubles as "change chain" while nothing is signing yet.
+                        <button
+                          type="button"
+                          disabled={step === "progress"}
+                          onClick={() => {
+                            setChain(null);
+                            setDestination(null);
+                            setStep("chain");
+                          }}
+                          className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-normal text-white/55 shrink-0 enabled:hover:border-primary/40 enabled:hover:text-white/85 transition-colors"
+                          title={step === "progress" ? undefined : "Change chain"}
+                        >
                           {cfg.shortLabel}
-                        </span>
+                        </button>
                       )}
                     </h3>
                     {canDismiss && (
@@ -310,7 +321,6 @@ export function ClaimSheet({
                 {step === "destination" && (
                   <DestinationInput
                     ownStealthAddresses={ownStealthAddresses}
-                    onBack={() => setStep("chain")}
                     onConfirm={(dest) => {
                       setDestination(dest);
                       setStep("confirm");

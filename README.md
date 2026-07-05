@@ -143,9 +143,9 @@ The sender resolves `alice.eth` → meta-address, derives a **fresh one-time add
 
 <div align="center"><img src="assets/send.png" alt="Send flow" width="72%"/></div>
 
-### ③ Receive — discover and spend
+### ③ Receive — discover and claim
 
-The recipient's wallet scans announcements, instantly skipping ~99.6% of them with a 1-byte tag, and recognizes the payments that are theirs — then derives a private key that imports into any standard wallet (MetaMask, Sui). **Discovery is view-only and can run anywhere; spending requires the secret key, which stays on the device.**
+The recipient's wallet scans announcements, instantly skipping ~99.6% of them with a 1-byte tag, and recognizes the payments that are theirs. From there, **claiming is one flow, in-app**: the wallet reads live balances for every discovered stealth address, and sweeps all funded ones to any address or ENS name the user chooses — each transfer signed locally on the device, no private-key export or wallet import required. The claim produces a downloadable receipt (PNG / PDF / JSON) and a per-identity claim history, so a recipient always knows what was claimed, where it went, and what is still sitting in stealth addresses. (Power users can still export a per-payment private key into MetaMask or a Sui wallet.) **Discovery is view-only and can run anywhere; spending requires the secret key, which stays on the device.**
 
 <div align="center"><img src="assets/receive.png" alt="Receive flow" width="72%"/></div>
 
@@ -261,7 +261,7 @@ Responsible disclosure: **hello@pranshurastogi.com**
 
 ## 11 · Traction & Status
 
-- **Live in production** at [specterpq.com](https://specterpq.com) — full setup → send → scan → recover flow.
+- **Live in production** at [specterpq.com](https://specterpq.com) — full setup → send → scan → claim flow, including in-app sweeping of discovered funds to any wallet or ENS name with receipts and claim history.
 - **Multi-chain:** Ethereum and Sui, with ENS and SuiNS name resolution.
 - **Developer SDK published** to npm as [`@specterpq/sdk`](https://www.npmjs.com/package/@specterpq/sdk) — browser-first, WASM-backed.
 - **Research-backed:** built on peer-reviewed post-quantum stealth-address research ([arXiv 2501.13733](https://arxiv.org/pdf/2501.13733v1)) and the NIST FIPS 203 standard.

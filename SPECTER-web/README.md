@@ -18,7 +18,7 @@ Requires the Rust backend running at `http://localhost:3001` (default). Set `VIT
 
 - **Setup** - Generate ML-KEM-768 keypairs, upload meta-address to IPFS, attach to ENS or SuiNS
 - **Send** - Resolve a recipient name, generate stealth address, send from wallet or manually, verify and publish
-- **Scan** - Scan announcements with viewing key, discover payments, export stealth private keys
+- **Scan & Claim** - Scan announcements with viewing key, discover payments, see live per-chain claimable balances, and claim in-app: sweep all funded stealth addresses to any address or ENS name (signed locally, no key import), with PNG/PDF/JSON receipts and per-identity claim history. Stealth private keys can still be exported per payment
 - **Yellow** - Private trading via Yellow Network state channels (create channels, fund, send payments, settle to stealth addresses)
 - **Use Cases** - Overview of SPECTER use cases and Yellow Network integration
 
@@ -39,11 +39,13 @@ src/
 ├── pages/
 │   ├── GenerateKeys.tsx    # Setup: keypair generation, IPFS upload, ENS/SuiNS attach
 │   ├── SendPayment.tsx     # Send: resolve name, stealth address, wallet/manual send
-│   ├── ScanPayments.tsx    # Scan: discover payments, export stealth keys
+│   ├── ScanPayments.tsx    # Scan & claim: discover payments, live balances, sweep to a wallet
 │   ├── YellowPage.tsx      # Yellow Network: channels, funding, payments, settlement
 │   └── UseCasesPage.tsx    # Use cases overview
 ├── lib/
 │   ├── api.ts              # Backend API client
+│   ├── claim/              # Claim flow: live balances, sweep engine, receipts, history
+│   ├── receiptCapture.ts   # Shared ticket→PNG/PDF capture (send + claim receipts)
 │   ├── verifyTx.ts         # On-chain tx verification (ETH + Sui)
 │   ├── ensSetText.ts       # ENS text record signing
 │   ├── suinsSetContent.ts  # SuiNS content hash signing
@@ -54,6 +56,7 @@ src/
 │   └── yellowBalances.ts   # Token balance fetching for Yellow channels
 ├── components/
 │   ├── ui/                 # Radix-based UI primitives
+│   ├── features/claim/     # Claim wizard: balance card, chain picker, destination, progress, receipt
 │   └── layout/             # Header, Footer
 └── main.tsx
 ```

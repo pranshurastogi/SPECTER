@@ -1,11 +1,13 @@
 /**
  * Step 5 of the claim flow: the receipt — the user's proof of what moved
- * where. Renders in-theme, downloads as JSON, and prints to PDF via a
- * clean dedicated print document.
+ * where. Renders as the same ticket card as the send flow and saves as
+ * PNG / PDF (a capture of the ticket itself) or raw JSON.
  */
+import { useRef } from "react";
 import { formatUnits } from "viem";
-import { Download, Printer, X } from "lucide-react";
+import { Download, FileDown, ImageDown, X } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
+import { toast } from "@/components/ui/base/sonner";
 import { formatCryptoAmount } from "@/lib/utils";
 import {
   getChainDecimals,
@@ -13,6 +15,7 @@ import {
   getSendChainConfig,
 } from "@/lib/blockchain/sendChains";
 import { AnimatedTicket } from "@/components/ui/specialized/ticket-confirmation-card";
+import { saveTicketPdf, saveTicketPng } from "@/lib/receiptCapture";
 import { downloadReceiptJson, type ClaimReceipt } from "@/lib/claim/receipt";
 
 interface ClaimReceiptViewProps {
@@ -23,68 +26,13 @@ interface ClaimReceiptViewProps {
   onClose: () => void;
 }
 
-/** Opens a minimal print document for the receipt and triggers print-to-PDF. */
-function printReceipt(receipt: ClaimReceipt, chainLabel: string, symbol: string, decimals: number) {
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const fmt = (wei: string) => {
-    try {
-      return `${formatUnits(BigInt(wei), decimals)} ${symbol}`;
-    } catch {
-      return `${wei} wei`;
-    }
-  };
-  const rows = receipt.rows
-    .map(
-      (r) => `<tr>
-        <td class="mono">${esc(r.stealthAddress)}</td>
-        <td>${esc(fmt(r.amountBase))}</td>
-        <td>${esc(fmt(r.feeBase))}</td>
-        <td class="mono">${esc(r.txHash || "—")}</td>
-        <td>${esc(r.status)}</td>
-      </tr>`,
-    )
-    .join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>SPECTER claim receipt ${esc(receipt.receiptId)}</title>
-    <style>
-      body { font-family: -apple-system, "Segoe UI", sans-serif; color: #111; margin: 40px; }
-      h1 { font-size: 18px; } h2 { font-size: 13px; color: #555; font-weight: normal; }
-      table { border-collapse: collapse; width: 100%; margin-top: 16px; font-size: 11px; }
-      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; word-break: break-all; }
-      th { background: #f5f5f5; }
-      .mono { font-family: ui-monospace, monospace; }
-      .meta { font-size: 12px; margin-top: 12px; line-height: 1.7; }
-    </style></head><body>
-    <h1>SPECTER — Claim receipt</h1>
-    <h2>Receipt ${esc(receipt.receiptId)} · ${new Date(receipt.createdAt * 1000).toLocaleString()}</h2>
-    <div class="meta">
-      <div><strong>Chain:</strong> ${esc(chainLabel)}</div>
-      <div><strong>Destination:</strong> <span class="mono">${esc(receipt.destination)}</span>${
-        receipt.destinationInput !== receipt.destination
-          ? ` (${esc(receipt.destinationInput)})`
-          : ""
-      }</div>
-      <div><strong>Total claimed:</strong> ${esc(fmt(receipt.totalAmountBase))} · <strong>Network fees:</strong> ${esc(fmt(receipt.totalFeeBase))}</div>
-      <div><strong>Result:</strong> ${receipt.confirmed} confirmed · ${receipt.failed} failed · ${receipt.skipped} skipped</div>
-    </div>
-    <table><thead><tr><th>Stealth address</th><th>Amount</th><th>Fee</th><th>Transaction</th><th>Status</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    </body></html>`;
-
-  const win = window.open("", "_blank", "width=900,height=700");
-  if (!win) return; // popup blocked — the JSON download still works
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  win.print();
-}
-
 export function ClaimReceiptView({
   receipt,
   recordedToServer,
   onRetryRecord,
   onClose,
 }: ClaimReceiptViewProps) {
+  const ticketRef = useRef<HTMLDivElement>(null);
   const cfg = getSendChainConfig(receipt.chain);
   const decimals = getChainDecimals(receipt.chain);
   const fmt = (wei: string) => {
@@ -92,6 +40,28 @@ export function ClaimReceiptView({
       return formatCryptoAmount(formatUnits(BigInt(wei), decimals));
     } catch {
       return wei;
+    }
+  };
+
+  const filename = `specter-claim-${receipt.receiptId.slice(0, 8)}`;
+
+  const handleSaveImage = async () => {
+    if (!ticketRef.current) return;
+    try {
+      await saveTicketPng(ticketRef.current, filename);
+      toast.success("Receipt saved as PNG");
+    } catch {
+      toast.error("Could not save image. Try again.");
+    }
+  };
+
+  const handleSavePdf = async () => {
+    if (!ticketRef.current) return;
+    try {
+      await saveTicketPdf(ticketRef.current, filename);
+      toast.success("Receipt saved as PDF");
+    } catch {
+      toast.error("Could not save PDF. Try again.");
     }
   };
 
@@ -135,6 +105,7 @@ export function ClaimReceiptView({
       </button>
 
       <AnimatedTicket
+        ref={ticketRef}
         title="Funds claimed"
         subtitle={subtitle}
         ticketId={receipt.receiptId.slice(0, 8)}
@@ -166,19 +137,23 @@ export function ClaimReceiptView({
         <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground text-center">
           Save receipt
         </p>
-        <div className="grid grid-cols-2 gap-2">
-          <Button variant="outline" size="default" className="w-full" onClick={() => downloadReceiptJson(receipt)}>
-            <Download className="h-4 w-4 mr-2" />
-            JSON
+        <div className="grid grid-cols-3 gap-2">
+          <Button variant="outline" size="default" className="w-full" onClick={handleSaveImage}>
+            <ImageDown className="h-4 w-4 mr-2" />
+            PNG
+          </Button>
+          <Button variant="outline" size="default" className="w-full" onClick={handleSavePdf}>
+            <FileDown className="h-4 w-4 mr-2" />
+            PDF
           </Button>
           <Button
             variant="outline"
             size="default"
             className="w-full"
-            onClick={() => printReceipt(receipt, cfg.label, cfg.currencySymbol, decimals)}
+            onClick={() => downloadReceiptJson(receipt)}
           >
-            <Printer className="h-4 w-4 mr-2" />
-            PDF
+            <Download className="h-4 w-4 mr-2" />
+            JSON
           </Button>
         </div>
         <Button variant="quantum" size="default" className="w-full" onClick={onClose}>

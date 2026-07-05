@@ -64,11 +64,11 @@ describe("claim balances math", () => {
     expect(sweepValue(gasCost - 1n, gasCost)).toBe(0n);
   });
 
-  it("dust threshold is exactly 0.0001 native and gates below/at correctly", () => {
-    expect(DUST_THRESHOLD_WEI).toBe(parseEther("0.0001"));
+  it("dust threshold is exactly 0.001 native and gates below/at correctly", () => {
+    expect(DUST_THRESHOLD_WEI).toBe(parseEther("0.001"));
     expect(isBelowDust(0n)).toBe(true);
-    expect(isBelowDust(DUST_THRESHOLD_WEI - 1n)).toBe(true); // 0.0000999… → empty
-    expect(isBelowDust(DUST_THRESHOLD_WEI)).toBe(false); // exactly 0.0001 → claimable
+    expect(isBelowDust(DUST_THRESHOLD_WEI - 1n)).toBe(true); // 0.000999… → empty
+    expect(isBelowDust(DUST_THRESHOLD_WEI)).toBe(false); // exactly 0.001 → claimable
     expect(isBelowDust(parseEther("0.5"))).toBe(false);
   });
 });
