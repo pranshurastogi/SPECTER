@@ -62,33 +62,57 @@ export function ClaimProgress({ chain, rows, running, onRetryFailed, onDone }: C
   const decimals = getChainDecimals(chain);
   const confirmed = rows.filter((r) => r.status === "confirmed");
   const failed = rows.filter((r) => r.status === "failed");
+  // A row counts toward progress once it reaches a terminal state.
+  const settled = rows.filter(
+    (r) => r.status === "confirmed" || r.status === "failed" || r.status === "skipped_dust",
+  );
   const totalSwept = confirmed.reduce((acc, r) => acc + r.amountWei, 0n);
   const done = !running;
+  const pct = rows.length ? Math.round((settled.length / rows.length) * 100) : 0;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
-          {running
-            ? "Signing each transfer in your browser — keys never leave this device."
-            : `${confirmed.length} of ${rows.length} claimed`}
-        </p>
-        <p className="text-xs font-mono text-emerald-400/90 tabular-nums">
-          {formatCryptoAmount(formatUnits(totalSwept, decimals))} {cfg.currencySymbol}
-        </p>
+    <div className="space-y-4">
+      {/* Overall progress: a single honest number + a filling bar. */}
+      <div className="rounded-xl border border-white/[0.07] bg-black/25 px-4 py-3.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm font-medium text-foreground">
+            {done ? "Claim complete" : "Claiming…"}
+          </span>
+          <span className="text-xs font-mono tabular-nums text-white/55">
+            {settled.length}/{rows.length}
+          </span>
+        </div>
+        <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+          <motion.div
+            className="h-full rounded-full bg-gradient-to-r from-primary/70 to-emerald-400/80"
+            initial={{ width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ type: "spring", stiffness: 120, damping: 20 }}
+          />
+        </div>
+        <div className="mt-2.5 flex items-baseline justify-between gap-2">
+          <span className="text-[11px] text-white/40">
+            {running ? "Signing on your device — keys never leave" : `${confirmed.length} confirmed`}
+          </span>
+          <span className="text-xs font-mono tabular-nums text-emerald-400/90">
+            {formatCryptoAmount(formatUnits(totalSwept, decimals))} {cfg.currencySymbol}
+          </span>
+        </div>
       </div>
 
-      <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1 [scrollbar-width:thin]">
+      <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1 [scrollbar-width:thin]">
         <AnimatePresence initial={false}>
           {rows.map((r) => (
             <motion.div
               key={r.id}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`p-2.5 rounded-lg border flex items-center gap-2.5 ${
+              className={`px-3 py-2.5 rounded-lg border flex items-center gap-2.5 ${
                 r.status === "failed"
                   ? "bg-destructive/10 border-destructive/30"
-                  : "bg-black/35 border-white/[0.08]"
+                  : r.status === "confirmed"
+                    ? "bg-emerald-400/[0.06] border-emerald-400/15"
+                    : "bg-black/30 border-white/[0.08]"
               }`}
             >
               <StatusIcon status={r.status} />
@@ -100,8 +124,8 @@ export function ClaimProgress({ chain, rows, running, onRetryFailed, onDone }: C
                   {r.status === "failed" && r.error ? r.error : STATUS_LABEL[r.status]}
                 </p>
               </div>
-              {r.amountWei > 0n && r.status === "confirmed" && (
-                <span className="text-[11px] font-mono text-white/70 shrink-0 tabular-nums">
+              {r.status === "confirmed" && (
+                <span className="text-xs font-mono text-emerald-400/90 shrink-0 tabular-nums">
                   {formatCryptoAmount(formatUnits(r.amountWei, decimals))}
                 </span>
               )}
@@ -111,14 +135,14 @@ export function ClaimProgress({ chain, rows, running, onRetryFailed, onDone }: C
       </div>
 
       {done && (
-        <div className="flex gap-2 pt-1">
+        <div className="flex gap-2">
           {failed.length > 0 && (
-            <Button variant="outline" size="sm" onClick={onRetryFailed} className="flex-1">
+            <Button variant="outline" size="default" onClick={onRetryFailed} className="flex-1">
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              Retry {failed.length} failed
+              Retry {failed.length}
             </Button>
           )}
-          <Button variant="quantum" size="sm" className="flex-1" onClick={onDone}>
+          <Button variant="quantum" size="default" className="flex-1" onClick={onDone}>
             View receipt
           </Button>
         </div>

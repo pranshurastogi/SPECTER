@@ -75,6 +75,7 @@ import {
   type SweepHistoryGroup,
 } from "@/lib/claim/claimApi";
 import { ClaimSheet } from "@/components/features/claim/ClaimSheet";
+import { ClaimHistory } from "@/components/features/claim/ClaimHistory";
 import type { ClaimableChainSummary } from "@/components/features/claim/ChainPicker";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
@@ -229,7 +230,6 @@ export default function ScanPayments() {
   const [showEmpty, setShowEmpty] = useState(false);
   const [claimOpen, setClaimOpen] = useState(false);
   const [sweepHistory, setSweepHistory] = useState<SweepHistoryGroup[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
   // Bumped after a claim finishes to re-read balances and history.
   const [refreshNonce, setRefreshNonce] = useState(0);
 
@@ -1188,84 +1188,7 @@ export default function ScanPayments() {
                     </div>
 
                     {/* Previously claimed — server-side history for this identity */}
-                    {sweepHistory.length > 0 && (
-                      <div className="rounded-lg border border-white/[0.07] bg-black/25">
-                        <button
-                          type="button"
-                          onClick={() => setHistoryOpen((v) => !v)}
-                          className="w-full flex items-center justify-between px-3 py-2.5 text-left"
-                        >
-                          <span className="flex items-center gap-1.5 font-display text-[10px] font-bold tracking-[0.16em] uppercase text-white/30">
-                            <Clock className="h-3 w-3 text-primary/70" />
-                            Previously claimed
-                          </span>
-                          <span className="text-[11px] text-white/45">
-                            {sweepHistory.length} claim{sweepHistory.length !== 1 ? "s" : ""}{" "}
-                            {historyOpen ? "▾" : "▸"}
-                          </span>
-                        </button>
-                        <AnimatePresence initial={false}>
-                          {historyOpen && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="overflow-hidden"
-                            >
-                              <div className="px-3 pb-3 space-y-2 max-h-[260px] overflow-y-auto [scrollbar-width:thin]">
-                                {sweepHistory.map((g) => {
-                                  const gChain = getTxChainFromBackendName(g.chain);
-                                  const gCfg = gChain ? getSendChainConfig(gChain) : null;
-                                  const gDecimals = gChain ? getChainDecimals(gChain) : 18;
-                                  return (
-                                    <div
-                                      key={g.receiptId}
-                                      className="p-2.5 rounded-lg bg-black/35 border border-white/[0.08] text-xs space-y-1.5"
-                                    >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="inline-flex items-center gap-1.5 text-white/70">
-                                          {chainIcon(gChain)}
-                                          {new Date(g.createdAt * 1000).toLocaleDateString()}
-                                        </span>
-                                        <span className="font-mono text-emerald-400/90 tabular-nums">
-                                          {formatCryptoAmount(
-                                            formatUnits(g.totalAmountBase, gDecimals),
-                                          )}{" "}
-                                          {gCfg?.currencySymbol ?? ""}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-2 text-[11px] text-white/40 min-w-0">
-                                        <span className="truncate">
-                                          {g.confirmedCount} address
-                                          {g.confirmedCount !== 1 ? "es" : ""} →{" "}
-                                          <span className="font-mono" title={g.destination}>
-                                            {g.destinationInput !== g.destination
-                                              ? g.destinationInput
-                                              : `${g.destination.slice(0, 8)}…${g.destination.slice(-4)}`}
-                                          </span>
-                                        </span>
-                                        {gChain &&
-                                          g.rows[0]?.tx_hash &&
-                                          getExplorerTxUrl(gChain, g.rows[0].tx_hash) && (
-                                            <a
-                                              href={getExplorerTxUrl(gChain, g.rows[0].tx_hash)}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="inline-flex items-center gap-1 text-primary hover:underline shrink-0"
-                                            >
-                                              <ExternalLink className="h-3 w-3" />
-                                            </a>
-                                          )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    )}
+                    <ClaimHistory groups={sweepHistory} />
                   </motion.div>
                 )}
               </AnimatePresence>

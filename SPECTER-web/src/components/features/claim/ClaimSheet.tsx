@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatUnits } from "viem";
-import { AlertTriangle, Info, Loader2, Wallet, X } from "lucide-react";
+import { AlertTriangle, Loader2, ShieldCheck, Wallet, X } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { Card, CardContent } from "@/components/ui/base/card";
 import { toast } from "@/components/ui/base/sonner";
@@ -45,6 +45,7 @@ import { ChainPicker, type ClaimableChainSummary } from "./ChainPicker";
 import { DestinationInput } from "./DestinationInput";
 import { ClaimProgress } from "./ClaimProgress";
 import { ClaimReceiptView } from "./ClaimReceiptView";
+import { InfoDot, StepDots, SummaryRow } from "./ClaimPrimitives";
 
 type ClaimStep = "chain" | "destination" | "confirm" | "progress" | "receipt";
 
@@ -229,6 +230,7 @@ export function ClaimSheet({
   const cfg = chain ? getSendChainConfig(chain) : null;
   const decimals = chain ? getChainDecimals(chain) : 18;
   const fmt = (wei: bigint) => formatCryptoAmount(formatUnits(wei, decimals));
+  const stepIndex = step === "chain" ? 0 : step === "destination" ? 1 : 2;
 
   // The sheet must not be dismissible mid-run (keys are signing).
   const canDismiss = !(step === "progress" && running);
@@ -252,25 +254,32 @@ export function ClaimSheet({
           >
             <Card className="border-border bg-card shadow-xl rounded-xl overflow-hidden">
               <CardContent className="p-6 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-display text-lg font-bold flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-primary" />
-                    {STEP_TITLES[step]}
-                    {cfg && step !== "chain" && (
-                      <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-normal text-white/55">
-                        {cfg.shortLabel}
-                      </span>
+                <div className="mb-5">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="font-display text-lg font-bold flex items-center gap-2 min-w-0">
+                      <Wallet className="h-4 w-4 text-primary shrink-0" />
+                      <span className="truncate">{STEP_TITLES[step]}</span>
+                      {cfg && step !== "chain" && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-normal text-white/55 shrink-0">
+                          {cfg.shortLabel}
+                        </span>
+                      )}
+                    </h3>
+                    {canDismiss && (
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-white/40 hover:text-white/80 transition-colors shrink-0"
+                        aria-label="Close"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     )}
-                  </h3>
-                  {canDismiss && (
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="text-white/40 hover:text-white/80 transition-colors"
-                      aria-label="Close"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
+                  </div>
+                  {step !== "receipt" && (
+                    <div className="mt-3">
+                      <StepDots steps={["Chain", "Destination", "Review"]} current={stepIndex} />
+                    </div>
                   )}
                 </div>
 
@@ -298,47 +307,55 @@ export function ClaimSheet({
                 )}
 
                 {step === "confirm" && (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {feeError ? (
-                      <div className="p-3 rounded-lg border text-xs bg-destructive/10 border-destructive/30 text-destructive flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4 shrink-0" />
-                        {feeError}
+                      <div className="p-3 rounded-lg border text-xs bg-destructive/10 border-destructive/30 text-destructive flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium">Couldn't estimate network fees</p>
+                          <p className="text-destructive/80 mt-0.5">{feeError}</p>
+                        </div>
                       </div>
                     ) : !plan ? (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground py-4 justify-center">
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                      <div className="flex flex-col items-center gap-2 text-xs text-muted-foreground py-8">
+                        <Loader2 className="h-5 w-5 animate-spin text-primary/70" />
                         Estimating network fees…
                       </div>
                     ) : (
                       <>
-                        <div className="relative overflow-hidden rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2.5 space-y-1.5 text-xs">
-                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-                          <div className="flex justify-between gap-2">
-                            <span className="text-white/35">Addresses to claim</span>
-                            <span className="text-white/70">{plan.claimable.length}</span>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <span className="text-white/35">Total balance</span>
-                            <span className="font-mono text-white/70">
-                              {fmt(plan.total)} {cfg?.currencySymbol}
+                        {/* Hero: what actually lands in the wallet. */}
+                        <div className="relative overflow-hidden rounded-xl border border-primary/20 bg-primary/[0.04] px-4 py-4 text-center">
+                          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
+                            Destination receives
+                          </p>
+                          <p className="mt-1.5 font-mono text-2xl font-semibold text-emerald-400/95 tabular-nums">
+                            ≈ {fmt(plan.receives)}{" "}
+                            <span className="text-base text-emerald-400/70">{cfg?.currencySymbol}</span>
+                          </p>
+                          <p className="mt-1 text-[11px] text-white/40">
+                            from {plan.claimable.length} stealth address
+                            {plan.claimable.length !== 1 ? "es" : ""}
+                          </p>
+                        </div>
+
+                        {/* Aligned breakdown — no placeholder dashes; every row has a real value. */}
+                        <div className="rounded-lg border border-white/[0.07] bg-black/25 px-3.5 py-3 space-y-2">
+                          <SummaryRow
+                            label="Total balance"
+                            value={`${fmt(plan.total)} ${cfg?.currencySymbol ?? ""}`}
+                          />
+                          <SummaryRow
+                            label="Network fee (est.)"
+                            value={`${feeCtx ? fmt(feeCtx.gasCostWei * BigInt(plan.claimable.length || 1)) : fmt(0n)} ${cfg?.currencySymbol ?? ""}`}
+                          />
+                          <div className="h-px bg-white/[0.06]" />
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span className="text-xs text-white/40 shrink-0 flex items-center gap-1">
+                              To
                             </span>
-                          </div>
-                          <div className="flex justify-between gap-2">
-                            <span className="text-white/35">Est. network fee / address</span>
-                            <span className="font-mono text-white/70">
-                              {feeCtx ? fmt(feeCtx.gasCostWei) : "—"} {cfg?.currencySymbol}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-2 pt-1 border-t border-white/[0.06]">
-                            <span className="text-white/50">Destination receives</span>
-                            <span className="font-mono text-emerald-400/90">
-                              ≈ {fmt(plan.receives)} {cfg?.currencySymbol}
-                            </span>
-                          </div>
-                          <div className="flex justify-between gap-2 min-w-0">
-                            <span className="text-white/35 shrink-0">To</span>
                             <span
-                              className="font-mono text-white/70 truncate"
+                              className="min-w-0 truncate text-right text-xs font-mono text-white/75"
                               title={destination?.address}
                             >
                               {destination?.kind === "ens"
@@ -348,39 +365,53 @@ export function ClaimSheet({
                           </div>
                         </div>
 
-                        {plan.dust > 0 && (
-                          <p className="text-[11px] text-white/40 flex items-center gap-1.5">
-                            <Info className="h-3 w-3 shrink-0" />
-                            {plan.dust} address{plan.dust !== 1 ? "es" : ""} skipped — balance
-                            too small to cover its own network fee.
-                          </p>
-                        )}
-
-                        <div className="p-3 rounded-lg bg-muted/40 border border-border">
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">
-                            Claiming sends each stealth balance on-chain to your
-                            destination — those transfers become publicly linked,
-                            like any withdrawal. Discovery of your payments stays
-                            private (post-quantum) either way.
-                          </p>
+                        {/* One quiet line + an info dot instead of a paragraph wall. */}
+                        <div className="flex items-center justify-between gap-2 px-0.5">
+                          <span className="text-[11px] text-white/40 flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5 text-primary/60 shrink-0" />
+                            Signed on your device
+                            <InfoDot label="What claiming does">
+                              Each stealth balance is sent on-chain to your destination and
+                              becomes publicly linked, like any withdrawal. Your keys are
+                              signed locally and never leave this device. Discovery of your
+                              payments stays post-quantum private either way.
+                            </InfoDot>
+                          </span>
+                          {plan.dust > 0 && (
+                            <span className="text-[11px] text-white/35 flex items-center gap-1">
+                              {plan.dust} skipped (dust)
+                              <InfoDot label="Skipped addresses">
+                                {plan.dust} address{plan.dust !== 1 ? "es" : ""} hold too
+                                little to cover their own network fee, so they can't be
+                                claimed right now.
+                              </InfoDot>
+                            </span>
+                          )}
                         </div>
 
-                        <div className="flex gap-2 pt-1">
-                          <Button variant="ghost" size="sm" onClick={() => setStep("destination")}>
-                            Back
-                          </Button>
+                        <div className="space-y-2 pt-1">
+                          <div className="flex gap-2">
+                            <Button variant="ghost" size="default" onClick={() => setStep("destination")}>
+                              Back
+                            </Button>
+                            <Button
+                              variant="quantum"
+                              className="flex-1"
+                              disabled={plan.claimable.length === 0}
+                              onClick={handleClaimAll}
+                            >
+                              Claim {fmt(plan.receives)} {cfg?.currencySymbol}
+                            </Button>
+                          </div>
                           <Button
-                            variant="quantum"
-                            className="flex-1"
-                            disabled={plan.claimable.length === 0}
-                            onClick={handleClaimAll}
+                            variant="outline"
+                            size="sm"
+                            className="w-full opacity-45 cursor-not-allowed"
+                            disabled
                           >
-                            Claim all to this wallet
+                            Choose a custom amount · coming soon
                           </Button>
                         </div>
-                        <Button variant="outline" size="sm" className="w-full opacity-50" disabled>
-                          Custom amount — Coming soon
-                        </Button>
                       </>
                     )}
                   </div>
