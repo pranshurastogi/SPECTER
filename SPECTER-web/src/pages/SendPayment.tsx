@@ -1426,6 +1426,14 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
   }, [publishPhase]);
 
   const showStickyFailure = publishPhase === "sent_unpublished_failure";
+  // A rate-limited RPC is a "come back in a few seconds" state, not a hard
+  // failure — soften the sticky panel so it doesn't read as data loss.
+  // Derived from the message text so it survives reloads (the persisted
+  // `last_publish_error` is only a string).
+  const publishErrorText = sendError ?? activePending?.last_publish_error ?? "";
+  const publishRateLimited = /rate.?limit|too many requests|429|network is busy/i.test(
+    publishErrorText,
+  );
   const isWalletBusy =
     isSending || isPublishing || ACTIVE_FLOW_PHASES.includes(publishPhase);
 
@@ -1836,26 +1844,42 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
 
                       {/* Sticky failure panel — sent on-chain but publish failed */}
                       {showStickyFailure && (
-                        <div className="rounded-xl border border-red-500/40 bg-red-500/[0.08] p-4 shadow-[inset_0_1px_0_rgba(248,113,113,0.08)]">
+                        <div
+                          className={
+                            publishRateLimited
+                              ? "rounded-xl border border-amber-500/40 bg-amber-500/[0.07] p-4 shadow-[inset_0_1px_0_rgba(251,191,36,0.08)]"
+                              : "rounded-xl border border-red-500/40 bg-red-500/[0.08] p-4 shadow-[inset_0_1px_0_rgba(248,113,113,0.08)]"
+                          }
+                        >
                           <div className="flex items-start gap-3">
-                            <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 shrink-0" />
+                            {publishRateLimited ? (
+                              <Loader2 className="h-5 w-5 text-amber-400 mt-0.5 shrink-0 animate-spin" />
+                            ) : (
+                              <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 shrink-0" />
+                            )}
                             <div className="flex-1 min-w-0">
-                              <p className="font-display text-xs font-bold tracking-[0.16em] uppercase text-red-400">
-                                Funds sent — announcement not published
+                              <p
+                                className={`font-display text-xs font-bold tracking-[0.16em] uppercase ${
+                                  publishRateLimited ? "text-amber-400" : "text-red-400"
+                                }`}
+                              >
+                                {publishRateLimited
+                                  ? "Almost there — the network is busy"
+                                  : "Funds sent — announcement not published"}
                               </p>
                               <p className="text-[12px] text-white/60 mt-1">
-                                On-chain transaction is confirmed but the SPECTER registry rejected
-                                the publish call. The recipient cannot discover this payment until
-                                publish succeeds. Funds are safe — just need one more click.
+                                {publishRateLimited
+                                  ? "Your payment is sent and safe on-chain. The chain's RPC is rate-limited right now, so we couldn't confirm it to finish publishing. Wait a few seconds and retry — no funds are at risk."
+                                  : "On-chain transaction is confirmed but the SPECTER registry rejected the publish call. The recipient cannot discover this payment until publish succeeds. Funds are safe — just need one more click."}
                               </p>
                               {pendingTxHash && (
                                 <p className="font-mono text-[11px] text-white/45 mt-2 break-all">
                                   tx: {pendingTxHash}
                                 </p>
                               )}
-                              {!showFlowLoader && (sendError ?? activePending?.last_publish_error) && (
+                              {!showFlowLoader && publishErrorText && !publishRateLimited && (
                                 <p className="text-[11px] text-red-300/80 mt-1.5">
-                                  {sendError ?? activePending?.last_publish_error}
+                                  {publishErrorText}
                                 </p>
                               )}
                               {activePending && activePending.publish_attempts > 0 && (
