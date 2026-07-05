@@ -190,6 +190,11 @@ const EVM_FALLBACK_RPCS: Partial<Record<EvmTxChain, string[]>> = {
     "https://sepolia-rollup.arbitrum.io/rpc",
     "https://arbitrum-sepolia-rpc.publicnode.com",
   ],
+  // The Alchemy Monad endpoint rate-limits (429) under the claim flow's
+  // batched balance reads; without a fallback those reads fail and funded
+  // Monad addresses silently drop out of the claimable set. The public
+  // Monad testnet RPC needs no API key.
+  monad: ["https://testnet-rpc.monad.xyz"],
 };
 
 const evmClients = new Map<EvmTxChain, PublicClient>();
