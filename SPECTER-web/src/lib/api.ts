@@ -325,6 +325,58 @@ export interface RegistryStatsResponse {
   view_tag_distribution: ViewTagCount[];
 }
 
+// ── sweep records (claim-flow history) ─────────────────────────────────────
+
+/** One swept stealth address inside a claim operation. */
+export interface SweepRowDto {
+  /** Client-generated UUID for this row (idempotency key). */
+  id: string;
+  stealth_address: string;
+  /** Amount transferred, base units (wei) as a decimal string. */
+  amount_base: string;
+  /** Network fee deducted, base units (wei) as a decimal string. */
+  fee_base: string;
+  /** Broadcast tx hash (empty string for skipped rows). */
+  tx_hash: string;
+  status: "confirmed" | "failed" | "skipped_dust";
+}
+
+export interface RecordSweepsRequest {
+  receipt_id: string;
+  /** SHA-256 of the meta-address bytes, lowercase hex (64 chars). */
+  identity_hash: string;
+  /** Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet"). */
+  chain: string;
+  /** Resolved destination address (0x…). */
+  destination: string;
+  /** What the user typed (ENS name or the address itself). */
+  destination_input: string;
+  records: SweepRowDto[];
+}
+
+export interface RecordSweepsResponse {
+  inserted: number;
+}
+
+export interface SweepRecordDto {
+  id: string;
+  receipt_id: string;
+  chain: string;
+  stealth_address: string;
+  destination: string;
+  destination_input: string;
+  amount_base: string;
+  fee_base: string;
+  tx_hash: string;
+  status: string;
+  created_at: number;
+}
+
+export interface ListSweepsResponse {
+  sweeps: SweepRecordDto[];
+  total: number;
+}
+
 export const api = {
   getBaseUrl,
 
@@ -400,6 +452,21 @@ export const api = {
 
   async getRegistryStats(): Promise<RegistryStatsResponse> {
     return request<RegistryStatsResponse>("/api/v1/registry/stats");
+  },
+
+  /** Records the rows of a completed claim (idempotent per row id). */
+  async recordSweeps(body: RecordSweepsRequest): Promise<RecordSweepsResponse> {
+    return request<RecordSweepsResponse>("/api/v1/sweeps", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Sweep history for an identity (pre-hashed client-side), newest first. */
+  async listSweeps(identityHash: string): Promise<ListSweepsResponse> {
+    return request<ListSweepsResponse>(
+      `/api/v1/sweeps/${encodeURIComponent(identityHash)}`
+    );
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

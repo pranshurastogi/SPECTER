@@ -57,9 +57,20 @@ import {
   getSendChainConfig,
   getTxChainFromBackendName,
   getTxChainFromSourceChainId,
+  type EvmTxChain,
   type TxChain,
 } from "@/lib/blockchain/sendChains";
 import { PayLinkFab } from "@/components/features/pay/PayLinkFab";
+import { balanceKey, fetchEvmBalances, type BalanceMap } from "@/lib/claim/balances";
+import type { SweepPlanItem } from "@/lib/claim/sweep";
+import { identityHashFromMetaAddress } from "@/lib/claim/receipt";
+import {
+  claimedAddressSet,
+  fetchSweepHistory,
+  type SweepHistoryGroup,
+} from "@/lib/claim/claimApi";
+import { ClaimSheet } from "@/components/features/claim/ClaimSheet";
+import type { ClaimableChainSummary } from "@/components/features/claim/ChainPicker";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 type KeySource = "vault" | "file" | "paste";
@@ -68,8 +79,10 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
-  viewing_pk: string;
-  meta_address: string;
+  /** Present only for complete backups / vault keys. */
+  viewing_pk?: string;
+  /** Present only for complete backups / vault keys — enables claim history. */
+  meta_address?: string;
 }
 
 /**
@@ -205,6 +218,16 @@ export default function ScanPayments() {
   const [registryTotal, setRegistryTotal] = useState<number | null>(null);
   const stageTimersRef = useRef<number[]>([]);
 
+  // Claim flow: live balances, empty-address visibility, claim sheet, history.
+  const [balances, setBalances] = useState<BalanceMap | null>(null);
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const [showEmpty, setShowEmpty] = useState(false);
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [sweepHistory, setSweepHistory] = useState<SweepHistoryGroup[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // Bumped after a claim finishes to re-read balances and history.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
   const clearStageTimers = useCallback(() => {
     for (const t of stageTimersRef.current) window.clearTimeout(t);
     stageTimersRef.current = [];
@@ -276,6 +299,144 @@ export default function ScanPayments() {
   useEffect(() => {
     setPage(0);
   }, [discoveries.length, chainFilter]);
+
+  // ── claim flow: live balances + history ─────────────────────────────────
+
+  const scanComplete = scanState === "complete";
+
+  // Live native balances for all discovered EVM addresses. Runs after every
+  // completed scan and again after a claim (refreshNonce) so claimed
+  // addresses immediately read as empty.
+  useEffect(() => {
+    if (!scanComplete || discoveries.length === 0) {
+      setBalances(null);
+      setShowEmpty(false);
+      return;
+    }
+    let cancelled = false;
+    setBalancesLoading(true);
+    const targets = discoveries.flatMap((d) => {
+      const c = resolveDiscoveryChain(d);
+      return c && c !== "sui" ? [{ chain: c, address: d.stealth_address }] : [];
+    });
+    fetchEvmBalances(targets)
+      .then((map) => {
+        if (!cancelled) setBalances(map);
+      })
+      .finally(() => {
+        if (!cancelled) setBalancesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanComplete, discoveries, refreshNonce]);
+
+  // "Previously claimed" history, keyed by the hashed identity. Best-effort:
+  // failures just leave the section hidden.
+  const historyMetaAddress = fullKeySet?.meta_address ?? keys?.meta_address ?? null;
+  useEffect(() => {
+    if (!scanComplete || !historyMetaAddress) {
+      setSweepHistory([]);
+      return;
+    }
+    let cancelled = false;
+    identityHashFromMetaAddress(historyMetaAddress)
+      .then(fetchSweepHistory)
+      .then((groups) => {
+        if (!cancelled) setSweepHistory(groups);
+      })
+      .catch(() => {
+        /* history is an enhancement — never block the scan UI */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanComplete, historyMetaAddress, refreshNonce]);
+
+  const claimedSet = useMemo(() => claimedAddressSet(sweepHistory), [sweepHistory]);
+
+  /** Live balance of a discovery, or null when unknown (Sui / RPC miss). */
+  const liveBalanceOf = useCallback(
+    (d: DiscoveryDto): bigint | null => {
+      const c = resolveDiscoveryChain(d);
+      if (!c || c === "sui" || !balances) return null;
+      return balances.get(balanceKey(c, d.stealth_address)) ?? null;
+    },
+    [balances],
+  );
+
+  /** Funded EVM chains (live totals) offered by the claim sheet. */
+  const claimChains = useMemo<ClaimableChainSummary[]>(() => {
+    if (!balances) return [];
+    const per = new Map<EvmTxChain, { totalWei: bigint; count: number }>();
+    const seen = new Set<string>();
+    for (const d of discoveries) {
+      const c = resolveDiscoveryChain(d);
+      if (!c || c === "sui" || !d.eth_private_key) continue;
+      const key = balanceKey(c, d.stealth_address);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const b = balances.get(key);
+      if (!b || b <= 0n) continue;
+      const cur = per.get(c) ?? { totalWei: 0n, count: 0 };
+      cur.totalWei += b;
+      cur.count += 1;
+      per.set(c, cur);
+    }
+    return [...per.entries()].map(([chain, v]) => ({ chain, ...v }));
+  }, [discoveries, balances]);
+
+  const suiDiscovered = useMemo(
+    () => discoveries.some((d) => resolveDiscoveryChain(d) === "sui"),
+    [discoveries],
+  );
+
+  /** Sweep candidates for one chain: funded addresses + their derived keys. */
+  const getClaimItems = useCallback(
+    (chain: EvmTxChain): SweepPlanItem[] => {
+      if (!balances) return [];
+      const items: SweepPlanItem[] = [];
+      const seen = new Set<string>();
+      for (const d of discoveries) {
+        if (resolveDiscoveryChain(d) !== chain || !d.eth_private_key) continue;
+        const key = d.stealth_address.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const b = balances.get(balanceKey(chain, d.stealth_address));
+        if (!b || b <= 0n) continue;
+        items.push({
+          address: d.stealth_address,
+          privateKey: d.eth_private_key,
+          balanceWei: b,
+        });
+      }
+      return items;
+    },
+    [discoveries, balances],
+  );
+
+  const ownStealthAddresses = useMemo(
+    () => new Set(discoveries.map((d) => d.stealth_address.toLowerCase())),
+    [discoveries],
+  );
+
+  // Empty = balances are loaded and this EVM address reads exactly zero.
+  // Sui/unknown rows are never hidden (their live balance is unknown here).
+  const isEmptyDiscovery = useCallback(
+    (d: DiscoveryDto) => liveBalanceOf(d) === 0n,
+    [liveBalanceOf],
+  );
+  const emptyCount = useMemo(
+    () => (balances ? filteredDiscoveries.filter(isEmptyDiscovery).length : 0),
+    [balances, filteredDiscoveries, isEmptyDiscovery],
+  );
+  const visibleDiscoveries = useMemo(
+    () =>
+      balances && !showEmpty
+        ? filteredDiscoveries.filter((d) => !isEmptyDiscovery(d))
+        : filteredDiscoveries,
+    [balances, showEmpty, filteredDiscoveries, isEmptyDiscovery],
+  );
 
   useEffect(() => {
     if (selectedPayment && revealedPk) {
@@ -855,6 +1016,59 @@ export default function ScanPayments() {
                           })}
                       </div>
                     )}
+                    {/* Live balances → Claim funds */}
+                    {discoveries.length > 0 && (
+                      <AnimatePresence mode="wait">
+                        {balancesLoading ? (
+                          <motion.div
+                            key="balances-loading"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-black/25 px-3 py-2.5 text-xs text-muted-foreground"
+                          >
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary/70" />
+                            Checking live balances on-chain…
+                          </motion.div>
+                        ) : balances && claimChains.length > 0 ? (
+                          <motion.div
+                            key="claim-cta"
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0 }}
+                          >
+                            <Button
+                              variant="quantum"
+                              size="lg"
+                              className="w-full"
+                              onClick={() => setClaimOpen(true)}
+                            >
+                              <Wallet className="h-4 w-4 mr-2" />
+                              Claim funds
+                            </Button>
+                            <p className="text-[11px] text-white/40 text-center mt-1.5">
+                              {claimChains.reduce((n, c) => n + c.count, 0)} funded address
+                              {claimChains.reduce((n, c) => n + c.count, 0) !== 1 ? "es" : ""} across{" "}
+                              {claimChains.length} chain{claimChains.length !== 1 ? "s" : ""} — transfer
+                              everything to a wallet you control, no key imports needed.
+                            </p>
+                          </motion.div>
+                        ) : balances ? (
+                          <motion.div
+                            key="all-claimed"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="flex items-center gap-2 rounded-lg border border-white/[0.07] bg-black/25 px-3 py-2.5 text-xs text-muted-foreground"
+                          >
+                            <Info className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+                            No claimable balance right now — these payments were already claimed or
+                            are on chains where claiming is coming soon.
+                          </motion.div>
+                        ) : null}
+                      </AnimatePresence>
+                    )}
+
                     <div className="flex flex-wrap gap-2">
                       {chainFilters.map((filter) => {
                         const active = chainFilter === filter;
@@ -876,13 +1090,34 @@ export default function ScanPayments() {
                         );
                       })}
                     </div>
+                    {/* Empty addresses stay hidden by default to keep the list short. */}
+                    {balances && emptyCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowEmpty((v) => !v)}
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-1.5 text-[11px] text-white/45 hover:text-white/75 hover:bg-white/[0.04] transition-colors"
+                      >
+                        {showEmpty ? (
+                          <EyeOff className="h-3 w-3" />
+                        ) : (
+                          <Eye className="h-3 w-3" />
+                        )}
+                        {showEmpty
+                          ? `Hide ${emptyCount} empty address${emptyCount !== 1 ? "es" : ""}`
+                          : `Show ${emptyCount} empty address${emptyCount !== 1 ? "es" : ""}`}
+                      </button>
+                    )}
+
                     <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb:hover]:bg-white/20">
-                      {filteredDiscoveries.map((d, i) => {
+                      {visibleDiscoveries.map((d, i) => {
                         const mappedChain = resolveDiscoveryChain(d);
                         const addr = mappedChain === "sui" ? d.stealth_sui_address : d.stealth_address;
                         const shortAddr = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr;
                         const chainCfg = mappedChain ? getSendChainConfig(mappedChain) : null;
                         const amount = describeDiscoveryAmount(d, mappedChain);
+                        const liveBalance = liveBalanceOf(d);
+                        const isClaimed =
+                          liveBalance === 0n && claimedSet.has(d.stealth_address.toLowerCase());
                         return (
                           <motion.div
                             key={`${d.stealth_address}-${d.announcement_id}`}
@@ -912,6 +1147,25 @@ export default function ScanPayments() {
                                     {amount.display} {discoveryCurrencySymbol(d, mappedChain)}
                                   </span>
                                 )}
+                                {liveBalance !== null && liveBalance > 0n && mappedChain && (
+                                  <span className="inline-flex items-center rounded-full border border-emerald-400/25 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-400/90">
+                                    {formatCryptoAmount(
+                                      formatUnits(liveBalance, getChainDecimals(mappedChain)),
+                                    )}{" "}
+                                    {chainCfg?.currencySymbol} available
+                                  </span>
+                                )}
+                                {isClaimed && (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/50">
+                                    <Check className="h-2.5 w-2.5" />
+                                    Claimed
+                                  </span>
+                                )}
+                                {liveBalance === 0n && !isClaimed && (
+                                  <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/40">
+                                    Empty
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
                                 <Clock className="h-3 w-3" />
@@ -922,6 +1176,86 @@ export default function ScanPayments() {
                         );
                       })}
                     </div>
+
+                    {/* Previously claimed — server-side history for this identity */}
+                    {sweepHistory.length > 0 && (
+                      <div className="rounded-lg border border-white/[0.07] bg-black/25">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryOpen((v) => !v)}
+                          className="w-full flex items-center justify-between px-3 py-2.5 text-left"
+                        >
+                          <span className="flex items-center gap-1.5 font-display text-[10px] font-bold tracking-[0.16em] uppercase text-white/30">
+                            <Clock className="h-3 w-3 text-primary/70" />
+                            Previously claimed
+                          </span>
+                          <span className="text-[11px] text-white/45">
+                            {sweepHistory.length} claim{sweepHistory.length !== 1 ? "s" : ""}{" "}
+                            {historyOpen ? "▾" : "▸"}
+                          </span>
+                        </button>
+                        <AnimatePresence initial={false}>
+                          {historyOpen && (
+                            <motion.div
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="overflow-hidden"
+                            >
+                              <div className="px-3 pb-3 space-y-2 max-h-[260px] overflow-y-auto [scrollbar-width:thin]">
+                                {sweepHistory.map((g) => {
+                                  const gChain = getTxChainFromBackendName(g.chain);
+                                  const gCfg = gChain ? getSendChainConfig(gChain) : null;
+                                  const gDecimals = gChain ? getChainDecimals(gChain) : 18;
+                                  return (
+                                    <div
+                                      key={g.receiptId}
+                                      className="p-2.5 rounded-lg bg-black/35 border border-white/[0.08] text-xs space-y-1.5"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="inline-flex items-center gap-1.5 text-white/70">
+                                          {chainIcon(gChain)}
+                                          {new Date(g.createdAt * 1000).toLocaleDateString()}
+                                        </span>
+                                        <span className="font-mono text-emerald-400/90 tabular-nums">
+                                          {formatCryptoAmount(
+                                            formatUnits(g.totalAmountBase, gDecimals),
+                                          )}{" "}
+                                          {gCfg?.currencySymbol ?? ""}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between gap-2 text-[11px] text-white/40 min-w-0">
+                                        <span className="truncate">
+                                          {g.confirmedCount} address
+                                          {g.confirmedCount !== 1 ? "es" : ""} →{" "}
+                                          <span className="font-mono" title={g.destination}>
+                                            {g.destinationInput !== g.destination
+                                              ? g.destinationInput
+                                              : `${g.destination.slice(0, 8)}…${g.destination.slice(-4)}`}
+                                          </span>
+                                        </span>
+                                        {gChain &&
+                                          g.rows[0]?.tx_hash &&
+                                          getExplorerTxUrl(gChain, g.rows[0].tx_hash) && (
+                                            <a
+                                              href={getExplorerTxUrl(gChain, g.rows[0].tx_hash)}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1 text-primary hover:underline shrink-0"
+                                            >
+                                              <ExternalLink className="h-3 w-3" />
+                                            </a>
+                                          )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -934,6 +1268,18 @@ export default function ScanPayments() {
 
       {/* Floating pay-link launcher (keeps scanning as the page's hero) */}
       <PayLinkFab />
+
+      {/* Claim funds — sweep funded stealth addresses to a wallet, in-browser */}
+      <ClaimSheet
+        open={claimOpen}
+        onClose={() => setClaimOpen(false)}
+        chains={claimChains}
+        suiFunded={suiDiscovered}
+        getItems={getClaimItems}
+        ownStealthAddresses={ownStealthAddresses}
+        metaAddress={historyMetaAddress}
+        onClaimed={() => setRefreshNonce((n) => n + 1)}
+      />
 
       {/* Payment detail modal */}
       <AnimatePresence>

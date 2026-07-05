@@ -379,6 +379,88 @@ pub struct ViewTagCount {
     pub count: u64,
 }
 
+// ── sweep records (claim-flow history) ─────────────────────────────────────
+
+/// One swept stealth address inside a claim operation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SweepRowDto {
+    /// Client-generated UUID for this row (idempotency key).
+    pub id: String,
+    /// Swept stealth address (0x…).
+    pub stealth_address: String,
+    /// Amount transferred, base units (wei) as a decimal string.
+    pub amount_base: String,
+    /// Network fee paid, base units (wei) as a decimal string.
+    pub fee_base: String,
+    /// Broadcast tx hash (empty string for skipped rows).
+    pub tx_hash: String,
+    /// "confirmed" | "failed" | "skipped_dust".
+    pub status: String,
+}
+
+/// Request to record a completed claim operation.
+///
+/// Contains only public-after-broadcast data plus a pre-hashed identity key.
+/// Recording is best-effort on the client: rejection never blocks a claim.
+#[derive(Debug, Deserialize)]
+pub struct RecordSweepsRequest {
+    /// Groups these rows into one receipt (client UUID).
+    pub receipt_id: String,
+    /// SHA-256 of the meta-address bytes, lowercase hex (64 chars).
+    pub identity_hash: String,
+    /// Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet").
+    pub chain: String,
+    /// Resolved destination address (0x…).
+    pub destination: String,
+    /// What the user typed (ENS name or the address itself).
+    pub destination_input: String,
+    /// Per-address rows (at least one, at most 200).
+    pub records: Vec<SweepRowDto>,
+}
+
+/// Response for recording sweeps.
+#[derive(Debug, Serialize)]
+pub struct RecordSweepsResponse {
+    /// Rows newly inserted (idempotent re-posts insert 0).
+    pub inserted: u64,
+}
+
+/// One stored sweep row, as returned by the list endpoint.
+#[derive(Debug, Serialize)]
+pub struct SweepRecordDto {
+    /// Row id.
+    pub id: String,
+    /// Receipt this row belongs to.
+    pub receipt_id: String,
+    /// Backend chain name.
+    pub chain: String,
+    /// Swept stealth address.
+    pub stealth_address: String,
+    /// Resolved destination address.
+    pub destination: String,
+    /// What the user typed (ENS name or address).
+    pub destination_input: String,
+    /// Amount transferred (wei, decimal string).
+    pub amount_base: String,
+    /// Network fee paid (wei, decimal string).
+    pub fee_base: String,
+    /// Broadcast tx hash.
+    pub tx_hash: String,
+    /// "confirmed" | "failed" | "skipped_dust".
+    pub status: String,
+    /// Unix seconds when recorded.
+    pub created_at: i64,
+}
+
+/// Response for listing an identity's sweep history.
+#[derive(Debug, Serialize)]
+pub struct ListSweepsResponse {
+    /// Sweep rows, newest first.
+    pub sweeps: Vec<SweepRecordDto>,
+    /// Number of rows returned.
+    pub total: u64,
+}
+
 /// Health check response.
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {

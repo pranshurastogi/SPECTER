@@ -7,7 +7,9 @@ pub mod pending;
 pub mod registry;
 pub mod scan;
 pub mod schema;
+pub mod sweeps;
 
 pub use pending::PendingStore;
 pub use registry::TursoRegistry;
 pub use scan::ScanPositionStore;
+pub use sweeps::{SweepRecord, SweepStore};

@@ -30,6 +30,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(handlers::publish_announcement),
         )
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
+        .route("/api/v1/sweeps", post(handlers::record_sweeps))
+        .route("/api/v1/sweeps/:identity_hash", get(handlers::list_sweeps))
         .with_state(state)
 }
 
@@ -294,6 +296,96 @@ mod tests {
             StatusCode::BAD_REQUEST,
             "loose view_tag must no longer be accepted"
         );
+    }
+
+    /// Sweep recording rejects malformed payloads before touching any store.
+    #[tokio::test]
+    async fn test_record_sweeps_validates_payload() {
+        let app = test_app();
+
+        // identity_hash is not 64-char lowercase hex → 422.
+        let bad = r#"{
+            "receipt_id":"rcpt-1",
+            "identity_hash":"NOT-A-HASH",
+            "chain":"sepolia",
+            "destination":"0x2222222222222222222222222222222222222222",
+            "destination_input":"alice.eth",
+            "records":[{
+                "id":"row-1",
+                "stealth_address":"0x1111111111111111111111111111111111111111",
+                "amount_base":"1000",
+                "fee_base":"21",
+                "tx_hash":"",
+                "status":"confirmed"
+            }]
+        }"#;
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sweeps")
+                    .header("content-type", "application/json")
+                    .body(Body::from(bad))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// A valid sweep payload on the memory backend reports 503 (Turso required).
+    #[tokio::test]
+    async fn test_record_sweeps_requires_turso() {
+        let app = test_app();
+
+        let ok = format!(
+            r#"{{
+            "receipt_id":"rcpt-1",
+            "identity_hash":"{}",
+            "chain":"sepolia",
+            "destination":"0x2222222222222222222222222222222222222222",
+            "destination_input":"alice.eth",
+            "records":[{{
+                "id":"row-1",
+                "stealth_address":"0x1111111111111111111111111111111111111111",
+                "amount_base":"1000000000000000",
+                "fee_base":"31500000000000",
+                "tx_hash":"0x{}",
+                "status":"confirmed"
+            }}]
+        }}"#,
+            "ab".repeat(32),
+            "cd".repeat(32),
+        );
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sweeps")
+                    .header("content-type", "application/json")
+                    .body(Body::from(ok))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// Sweep listing validates the identity hash path parameter.
+    #[tokio::test]
+    async fn test_list_sweeps_validates_identity_hash() {
+        let app = test_app();
+
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v1/sweeps/not-a-hash")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
