@@ -116,6 +116,15 @@ const ConfettiExplosion = () => {
 
 // --- Main Ticket Component ---
 
+/** One line in the optional "Claimed addresses" breakdown. */
+export interface TicketAddressRow {
+  address: string;
+  /** Pre-formatted amount string (e.g. "0.1074"). */
+  amount: string;
+  /** Explorer URL for this address's transaction. */
+  url?: string;
+}
+
 export interface TicketProps extends React.HTMLAttributes<HTMLDivElement> {
   ticketId: string;
   amount: number;
@@ -140,6 +149,20 @@ export interface TicketProps extends React.HTMLAttributes<HTMLDivElement> {
   monadTxHash?: string;
   /** Explorer URL for monadTxHash. */
   monadTxUrl?: string;
+  /** Heading (default "Thank you!"). */
+  title?: string;
+  /** Sub-heading (default "Your ticket has been issued successfully"). */
+  subtitle?: string;
+  /** Label above the cardholder line (hidden when unset). */
+  holderLabel?: string;
+  /** Label above the ticket id (default "Ticket ID"). */
+  ticketIdLabel?: string;
+  /** Label above the amount (default "Amount"). */
+  amountLabel?: string;
+  /** Optional per-address breakdown (used by the claim receipt). */
+  addresses?: TicketAddressRow[];
+  /** Show the falling-confetti celebration (default true). */
+  confetti?: boolean;
 }
 
 const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
@@ -160,6 +183,13 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
       txUrl,
       monadTxHash,
       monadTxUrl,
+      title = "Thank you!",
+      subtitle = "Your ticket has been issued successfully",
+      holderLabel,
+      ticketIdLabel = "Ticket ID",
+      amountLabel = "Amount",
+      addresses,
+      confetti = true,
       ...props
     },
     ref
@@ -167,13 +197,14 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
     const [showConfetti, setShowConfetti] = React.useState(false);
 
     React.useEffect(() => {
+      if (!confetti) return;
       const mountTimer = setTimeout(() => setShowConfetti(true), 100);
       const unmountTimer = setTimeout(() => setShowConfetti(false), 6000);
       return () => {
         clearTimeout(mountTimer);
         clearTimeout(unmountTimer);
       };
-    }, []);
+    }, [confetti]);
 
     const isCrypto = currency === "ETH" || currency === "SUI";
     const formattedAmount = isCrypto
@@ -214,27 +245,25 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
             <div className="p-3 bg-primary/10 rounded-full animate-in zoom-in-50 delay-300 duration-500">
               <CheckCircle2 className="w-10 h-10 text-primary animate-in zoom-in-75 delay-500 duration-500" />
             </div>
-            <h1 className="text-2xl font-semibold mt-4">Thank you!</h1>
-            <p className="text-muted-foreground mt-1">
-              Your ticket has been issued successfully
-            </p>
+            <h1 className="text-2xl font-semibold mt-4">{title}</h1>
+            <p className="text-muted-foreground mt-1">{subtitle}</p>
           </div>
 
           <div className="px-8 pb-8 space-y-6">
             <DashedLine />
 
             <div className="grid grid-cols-2 gap-4 text-left">
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs text-muted-foreground uppercase">
-                  Ticket ID
+                  {ticketIdLabel}
                 </p>
-                <p className="font-mono font-medium">{ticketId}</p>
+                <p className="font-mono font-medium truncate" title={ticketId}>{ticketId}</p>
               </div>
-              <div className="text-right">
+              <div className="text-right min-w-0">
                 <p className="text-xs text-muted-foreground uppercase">
-                  Amount
+                  {amountLabel}
                 </p>
-                <p className="font-semibold text-lg">
+                <p className="font-semibold text-lg truncate">
                   {isCrypto ? `${formattedAmount} ${currency}` : formattedAmount}
                 </p>
               </div>
@@ -247,9 +276,47 @@ const AnimatedTicket = React.forwardRef<HTMLDivElement, TicketProps>(
               <p className="font-medium">{formattedDate}</p>
             </div>
 
+            {holderLabel && (
+              <p className="text-xs text-muted-foreground uppercase -mb-4">{holderLabel}</p>
+            )}
             <div className="bg-muted/50 p-4 rounded-lg">
-              <p className="font-semibold">{cardHolder}</p>
+              <p className="font-semibold font-mono truncate" title={cardHolder}>{cardHolder}</p>
             </div>
+
+            {/* Optional per-address breakdown (claim receipt). */}
+            {addresses && addresses.length > 0 && (
+              <>
+                <DashedLine />
+                <div className="space-y-1.5 text-left">
+                  <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground">
+                    Claimed addresses
+                  </p>
+                  {addresses.map((a) => (
+                    <div
+                      key={a.address}
+                      className="flex items-center gap-2 py-1.5 px-2.5 rounded-lg bg-muted/40 text-xs"
+                    >
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                      <span className="font-mono text-muted-foreground truncate flex-1" title={a.address}>
+                        {a.address.slice(0, 8)}…{a.address.slice(-6)}
+                      </span>
+                      <span className="font-mono tabular-nums shrink-0">{a.amount}</span>
+                      {a.url && (
+                        <a
+                          href={a.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-primary/60 hover:text-primary transition-colors"
+                          aria-label="View transaction in explorer"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             <DashedLine />
 

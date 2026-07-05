@@ -252,6 +252,18 @@ export function ClaimSheet({
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-md"
           >
+            {/* Receipt is its own ticket-style card — the plain sheet chrome
+                (header + bordered card) would double up on it. */}
+            {step === "receipt" && receipt ? (
+              <div className="max-h-[90vh] overflow-y-auto px-1 py-2">
+                <ClaimReceiptView
+                  receipt={receipt}
+                  recordedToServer={recorded}
+                  onRetryRecord={() => void recordReceipt(receipt)}
+                  onClose={onClose}
+                />
+              </div>
+            ) : (
             <Card className="border-border bg-card shadow-xl rounded-xl overflow-hidden">
               <CardContent className="p-6 max-h-[90vh] overflow-y-auto">
                 <div className="mb-5">
@@ -427,16 +439,9 @@ export function ClaimSheet({
                   />
                 )}
 
-                {step === "receipt" && receipt && (
-                  <ClaimReceiptView
-                    receipt={receipt}
-                    recordedToServer={recorded}
-                    onRetryRecord={() => void recordReceipt(receipt)}
-                    onClose={onClose}
-                  />
-                )}
               </CardContent>
             </Card>
+            )}
           </motion.div>
         </motion.div>
       )}

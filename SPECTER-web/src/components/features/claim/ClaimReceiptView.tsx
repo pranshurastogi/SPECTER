@@ -3,9 +3,8 @@
  * where. Renders in-theme, downloads as JSON, and prints to PDF via a
  * clean dedicated print document.
  */
-import { motion } from "framer-motion";
 import { formatUnits } from "viem";
-import { CheckCircle2, Download, ExternalLink, Printer } from "lucide-react";
+import { Download, Printer, X } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { formatCryptoAmount } from "@/lib/utils";
 import {
@@ -13,6 +12,7 @@ import {
   getExplorerTxUrl,
   getSendChainConfig,
 } from "@/lib/blockchain/sendChains";
+import { AnimatedTicket } from "@/components/ui/specialized/ticket-confirmation-card";
 import { downloadReceiptJson, type ClaimReceipt } from "@/lib/claim/receipt";
 
 interface ClaimReceiptViewProps {
@@ -95,119 +95,93 @@ export function ClaimReceiptView({
     }
   };
 
+  const totalReceived = (() => {
+    try {
+      return Number(formatUnits(BigInt(receipt.totalAmountBase), decimals));
+    } catch {
+      return 0;
+    }
+  })();
+
+  // Only confirmed rows go on the ticket breakdown.
+  const ticketAddresses = receipt.rows
+    .filter((r) => r.status === "confirmed")
+    .map((r) => ({
+      address: r.stealthAddress,
+      amount: fmt(r.amountBase),
+      url: r.txHash ? getExplorerTxUrl(receipt.chain, r.txHash) || undefined : undefined,
+    }));
+
+  const destShort =
+    receipt.destinationInput !== receipt.destination
+      ? receipt.destinationInput
+      : `${receipt.destination.slice(0, 10)}…${receipt.destination.slice(-6)}`;
+
+  const subtitle =
+    receipt.failed > 0
+      ? `${receipt.confirmed} of ${receipt.rows.length} claimed · ${receipt.failed} failed`
+      : `${receipt.confirmed} stealth address${receipt.confirmed !== 1 ? "es" : ""} swept to your wallet`;
+
   return (
-    <div className="space-y-4">
-      <motion.div
-        className="specter-confirm"
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
+    <div className="flex flex-col items-center">
+      {/* Close (the modal's own header is hidden on this step) */}
+      <button
+        type="button"
+        onClick={onClose}
+        className="self-end -mt-1 -mr-1 mb-1 text-white/40 hover:text-white/80 transition-colors"
+        aria-label="Close"
       >
-        <CheckCircle2 className="h-3.5 w-3.5" />
-        <span className="specter-confirm-text">
-          {receipt.confirmed} of {receipt.rows.length} claimed —{" "}
-          {fmt(receipt.totalAmountBase)} {cfg.currencySymbol} sent
-        </span>
-      </motion.div>
+        <X className="h-4 w-4" />
+      </button>
 
-      <div className="relative overflow-hidden rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2.5">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
-        <div className="space-y-1.5 text-xs">
-          <div className="flex justify-between gap-2">
-            <span className="text-white/35">Receipt</span>
-            <span className="font-mono text-white/70">{receipt.receiptId.slice(0, 8)}</span>
-          </div>
-          <div className="flex justify-between gap-2">
-            <span className="text-white/35">Chain</span>
-            <span className="text-white/70">{cfg.label}</span>
-          </div>
-          <div className="flex justify-between gap-2 min-w-0">
-            <span className="text-white/35 shrink-0">Destination</span>
-            <span className="font-mono text-white/70 truncate" title={receipt.destination}>
-              {receipt.destinationInput !== receipt.destination
-                ? receipt.destinationInput
-                : `${receipt.destination.slice(0, 10)}…${receipt.destination.slice(-6)}`}
-            </span>
-          </div>
-          <div className="flex justify-between gap-2">
-            <span className="text-white/35">Network fees</span>
-            <span className="font-mono text-white/70">
-              {fmt(receipt.totalFeeBase)} {cfg.currencySymbol}
-            </span>
-          </div>
-        </div>
-      </div>
+      <AnimatedTicket
+        title="Funds claimed"
+        subtitle={subtitle}
+        ticketId={receipt.receiptId.slice(0, 8)}
+        ticketIdLabel="Receipt"
+        amount={totalReceived}
+        amountLabel="Claimed"
+        currency={cfg.currencySymbol}
+        date={new Date(receipt.createdAt * 1000)}
+        holderLabel="Sent to"
+        cardHolder={destShort}
+        last4Digits={receipt.destination.replace(/^0x/, "").slice(-4)}
+        barcodeValue={receipt.receiptId.replace(/-/g, "").slice(0, 12).toUpperCase()}
+        chainLabel={cfg.label}
+        addresses={ticketAddresses}
+      />
 
-      <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1 [scrollbar-width:thin]">
-        {receipt.rows.map((r) => {
-          const explorer = r.txHash ? getExplorerTxUrl(receipt.chain, r.txHash) : "";
-          return (
-            <div
-              key={r.id}
-              className="p-2.5 rounded-lg bg-black/35 border border-white/[0.08] flex items-center gap-2.5 text-xs"
-            >
-              <span
-                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                  r.status === "confirmed"
-                    ? "bg-emerald-400"
-                    : r.status === "skipped_dust"
-                      ? "bg-white/25"
-                      : "bg-destructive"
-                }`}
-              />
-              <span className="font-mono truncate flex-1" title={r.stealthAddress}>
-                {r.stealthAddress.slice(0, 10)}…{r.stealthAddress.slice(-6)}
-              </span>
-              {r.status === "confirmed" && (
-                <span className="font-mono text-white/70 tabular-nums shrink-0">
-                  {fmt(r.amountBase)}
-                </span>
-              )}
-              {explorer && (
-                <a
-                  href={explorer}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline shrink-0 inline-flex items-center gap-1"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <div className="w-full max-w-sm mt-6 space-y-2">
+        {recordedToServer === false && (
+          <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Claimed on-chain, but saving to your history failed.
+            </p>
+            <Button variant="outline" size="sm" onClick={onRetryRecord}>
+              Retry
+            </Button>
+          </div>
+        )}
 
-      {recordedToServer === false && (
-        <div className="p-3 rounded-lg bg-warning/10 border border-warning/20 flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">
-            Claim succeeded, but saving it to your history failed.
-          </p>
-          <Button variant="outline" size="sm" onClick={onRetryRecord}>
-            Retry
+        <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-muted-foreground text-center">
+          Save receipt
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" size="default" className="w-full" onClick={() => downloadReceiptJson(receipt)}>
+            <Download className="h-4 w-4 mr-2" />
+            JSON
+          </Button>
+          <Button
+            variant="outline"
+            size="default"
+            className="w-full"
+            onClick={() => printReceipt(receipt, cfg.label, cfg.currencySymbol, decimals)}
+          >
+            <Printer className="h-4 w-4 mr-2" />
+            PDF
           </Button>
         </div>
-      )}
-
-      <div className="flex gap-2 flex-wrap">
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1 min-w-[120px]"
-          onClick={() => downloadReceiptJson(receipt)}
-        >
-          <Download className="h-3.5 w-3.5 mr-1.5" />
-          Download JSON
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1 min-w-[120px]"
-          onClick={() => printReceipt(receipt, cfg.label, cfg.currencySymbol, decimals)}
-        >
-          <Printer className="h-3.5 w-3.5 mr-1.5" />
-          Save PDF
-        </Button>
-        <Button variant="quantum" size="sm" className="flex-1 min-w-[120px]" onClick={onClose}>
+        <Button variant="quantum" size="default" className="w-full" onClick={onClose}>
           Done
         </Button>
       </div>
