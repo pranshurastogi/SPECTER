@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use alloy::signers::local::PrivateKeySigner;
 use specter_ens::{ResolverConfig, SpecterResolver};
-use specter_registry::turso::{ScanPositionStore, TursoRegistry};
+use specter_registry::turso::{ScanPositionStore, SweepStore, TursoRegistry};
 use specter_registry::MemoryRegistry;
 use specter_suins::{SuinsResolver, SuinsResolverConfig};
 use tracing::info;
@@ -423,6 +423,15 @@ impl RegistryBackend {
         }
     }
 
+    /// Releases an un-finalized reservation after a failed relay/finalize so
+    /// the same payment can be re-published. Never touches finalized rows.
+    pub async fn release_reservation(&self, id: u64, view_tag: u8) -> Result<()> {
+        match self {
+            Self::Memory(m) => m.release_reservation(id, view_tag).await,
+            Self::Turso(t) => t.release_reservation(id, view_tag).await,
+        }
+    }
+
     /// Writes an internal telemetry event. No-op for the memory backend.
     // Mirrors the registry telemetry signature; one parameter per telemetry column.
     #[allow(clippy::too_many_arguments)]
@@ -504,6 +513,8 @@ pub struct AppState {
     pub registry: RegistryBackend,
     /// Scanner checkpoint persistence (only when using Turso).
     pub scan_store: Option<Arc<ScanPositionStore>>,
+    /// Claim-flow sweep history (only when using Turso).
+    pub sweep_store: Option<Arc<SweepStore>>,
     /// ENS resolver (Ethereum).
     pub resolver: SpecterResolver,
     /// SuiNS resolver (Sui).
@@ -537,7 +548,7 @@ impl AppState {
 
         // `Some(db)` only on the Turso backend — used to build the durable
         // pending-payment store after `db_keys` is loaded below.
-        let (registry, scan_store, turso_db) = if backend == "turso" {
+        let (registry, scan_store, sweep_store, turso_db) = if backend == "turso" {
             let url = std::env::var("TURSO_DATABASE_URL")
                 .expect("REGISTRY_BACKEND=turso requires TURSO_DATABASE_URL");
             let token = std::env::var("TURSO_AUTH_TOKEN")
@@ -552,11 +563,22 @@ impl AppState {
             // Grab the shared DB handle BEFORE moving `turso` into the backend.
             let db = turso.database();
             let scan = Arc::new(ScanPositionStore::new(db.clone()));
+            let sweeps = Arc::new(SweepStore::new(db.clone()));
 
-            (RegistryBackend::Turso(turso), Some(scan), Some(db))
+            (
+                RegistryBackend::Turso(turso),
+                Some(scan),
+                Some(sweeps),
+                Some(db),
+            )
         } else {
             info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
-            (RegistryBackend::Memory(MemoryRegistry::new()), None, None)
+            (
+                RegistryBackend::Memory(MemoryRegistry::new()),
+                None,
+                None,
+                None,
+            )
         };
 
         // Load chain configuration
@@ -626,6 +648,7 @@ impl AppState {
             config: config.clone(),
             registry,
             scan_store,
+            sweep_store,
             resolver: build_resolver(&config),
             suins_resolver: build_suins_resolver(&config),
             pending_payments: Arc::new(pending_payments),
@@ -643,6 +666,7 @@ impl AppState {
             config,
             registry: RegistryBackend::Memory(MemoryRegistry::new()),
             scan_store: None,
+            sweep_store: None,
             pending_payments: Arc::new(PendingPaymentStore::memory(Duration::from_secs(24 * 3600))),
             chain_config: ChainConfig {
                 rpc_url: String::new(),

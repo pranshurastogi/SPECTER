@@ -386,29 +386,44 @@ pub async fn publish_announcement(
     };
 
     // ── 7. Relay (or accept dev-mode tx_hash) using the SAME blob ─────────────
-    let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
-        relay_announcement(&announcement, relayer, &metadata_blob).await?
+    // Any failure from here on releases the reservation: otherwise the row
+    // (on_chain = 0, tx_hash = NULL) would keep occupying the dedup UNIQUE
+    // index and every retry of this payment would 409 as a false duplicate.
+    let relay_result = if let Some(relayer) = &state.relayer_config {
+        relay_announcement(&announcement, relayer, &metadata_blob).await
     } else {
         // Dev mode: client must supply tx_hash directly
         req.tx_hash
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+            .map(str::to_string)
             .ok_or_else(|| {
                 ApiError::bad_request(
                     "tx_hash is required when the relayer is not configured (dev mode). \
                      Set RELAYER_PRIVATE_KEY to enable server-side relay.",
                 )
-            })?
-            .to_string()
+            })
+    };
+    let monad_tx_hash = match relay_result {
+        Ok(hash) => hash,
+        Err(e) => {
+            release_reservation_best_effort(&state, reserved_id, view_tag).await;
+            return Err(e);
+        }
     };
 
     // ── 8. Finalize the reserved row ──────────────────────────────────────────
-    state
+    if let Err(e) = state
         .registry
         .finalize_announcement(reserved_id, view_tag, &monad_tx_hash)
         .await
-        .map_err(|e| ApiError::internal(format!("finalize failed: {e}")))?;
+    {
+        // The relay tx is already out; releasing here would allow a duplicate
+        // announce. Keep the reservation (it will age into reclaimable state
+        // only if genuinely abandoned) and surface the error.
+        return Err(ApiError::internal(format!("finalize failed: {e}")));
+    }
     let id = reserved_id;
     announcement.tx_hash = Some(monad_tx_hash.clone());
 
@@ -521,6 +536,181 @@ pub async fn get_registry_stats(
     }))
 }
 
+// ── sweep records (claim-flow history) ─────────────────────────────────────────
+
+const MAX_SWEEP_ROWS: usize = 200;
+const SWEEP_LIST_LIMIT: u64 = 500;
+
+fn is_lower_hex_64(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn is_decimal_amount(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn is_tx_hash_or_empty(s: &str) -> bool {
+    s.is_empty()
+        || (s.len() == 66 && s.starts_with("0x") && s[2..].bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn validate_sweep_request(req: &RecordSweepsRequest) -> Result<()> {
+    if req.receipt_id.is_empty() || req.receipt_id.len() > 64 {
+        return Err(ApiError::validation("receipt_id must be 1–64 chars"));
+    }
+    if !is_lower_hex_64(&req.identity_hash) {
+        return Err(ApiError::validation(
+            "identity_hash must be 64 lowercase hex chars (SHA-256)",
+        ));
+    }
+    if req.chain.is_empty() || req.chain.len() > 32 {
+        return Err(ApiError::validation("chain must be 1–32 chars"));
+    }
+    if req.destination.parse::<Address>().is_err() {
+        return Err(ApiError::validation(
+            "destination must be a valid EVM address",
+        ));
+    }
+    if req.destination_input.is_empty() || req.destination_input.len() > 256 {
+        return Err(ApiError::validation(
+            "destination_input must be 1–256 chars",
+        ));
+    }
+    if req.records.is_empty() || req.records.len() > MAX_SWEEP_ROWS {
+        return Err(ApiError::validation(format!(
+            "records must contain 1–{MAX_SWEEP_ROWS} rows"
+        )));
+    }
+    for r in &req.records {
+        if r.id.is_empty() || r.id.len() > 64 {
+            return Err(ApiError::validation("record id must be 1–64 chars"));
+        }
+        if r.stealth_address.parse::<Address>().is_err() {
+            return Err(ApiError::validation(
+                "record stealth_address must be a valid EVM address",
+            ));
+        }
+        if !is_decimal_amount(&r.amount_base) || !is_decimal_amount(&r.fee_base) {
+            return Err(ApiError::validation(
+                "amount_base and fee_base must be decimal base-unit strings",
+            ));
+        }
+        if !is_tx_hash_or_empty(&r.tx_hash) {
+            return Err(ApiError::validation(
+                "record tx_hash must be a 0x-prefixed 32-byte hash or empty",
+            ));
+        }
+        if !matches!(r.status.as_str(), "confirmed" | "failed" | "skipped_dust") {
+            return Err(ApiError::validation(
+                "record status must be confirmed | failed | skipped_dust",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// POST /api/v1/sweeps
+///
+/// Records the rows of a completed claim operation. Idempotent per row id.
+/// Requires the Turso backend; recording is best-effort on the client, so a
+/// 503 here never blocks a user's claim.
+pub async fn record_sweeps(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RecordSweepsRequest>,
+) -> Result<Json<RecordSweepsResponse>> {
+    validate_sweep_request(&req)?;
+
+    let Some(store) = state.sweep_store.as_ref() else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "sweep records require the Turso backend",
+            "SWEEPS_UNAVAILABLE",
+        ));
+    };
+
+    let rows: Vec<specter_registry::turso::SweepRecord> = req
+        .records
+        .iter()
+        .map(|r| specter_registry::turso::SweepRecord {
+            id: r.id.clone(),
+            receipt_id: req.receipt_id.clone(),
+            identity_hash: req.identity_hash.clone(),
+            chain: req.chain.clone(),
+            stealth_address: r.stealth_address.clone(),
+            destination: req.destination.clone(),
+            destination_input: req.destination_input.clone(),
+            amount_base: r.amount_base.clone(),
+            fee_base: r.fee_base.clone(),
+            tx_hash: r.tx_hash.clone(),
+            status: r.status.clone(),
+            created_at: 0,
+        })
+        .collect();
+
+    let inserted = store
+        .insert_batch(&rows)
+        .await
+        .map_err(|e| ApiError::internal(format!("sweep insert failed: {e}")))?;
+
+    info!(
+        receipt_id = %req.receipt_id,
+        rows = rows.len(),
+        inserted,
+        "sweep records stored"
+    );
+    Ok(Json(RecordSweepsResponse { inserted }))
+}
+
+/// GET /api/v1/sweeps/:identity_hash
+///
+/// Returns an identity's sweep history, newest first. The identity hash is
+/// computed client-side (SHA-256 of the meta-address bytes).
+pub async fn list_sweeps(
+    State(state): State<Arc<AppState>>,
+    Path(identity_hash): Path<String>,
+) -> Result<Json<ListSweepsResponse>> {
+    if !is_lower_hex_64(&identity_hash) {
+        return Err(ApiError::validation(
+            "identity_hash must be 64 lowercase hex chars (SHA-256)",
+        ));
+    }
+
+    let Some(store) = state.sweep_store.as_ref() else {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "sweep records require the Turso backend",
+            "SWEEPS_UNAVAILABLE",
+        ));
+    };
+
+    let rows = store
+        .list_by_identity(&identity_hash, SWEEP_LIST_LIMIT)
+        .await
+        .map_err(|e| ApiError::internal(format!("sweep list failed: {e}")))?;
+
+    let sweeps: Vec<SweepRecordDto> = rows
+        .into_iter()
+        .map(|r| SweepRecordDto {
+            id: r.id,
+            receipt_id: r.receipt_id,
+            chain: r.chain,
+            stealth_address: r.stealth_address,
+            destination: r.destination,
+            destination_input: r.destination_input,
+            amount_base: r.amount_base,
+            fee_base: r.fee_base,
+            tx_hash: r.tx_hash,
+            status: r.status,
+            created_at: r.created_at,
+        })
+        .collect();
+
+    let total = sweeps.len() as u64;
+    Ok(Json(ListSweepsResponse { sweeps, total }))
+}
+
 // ── health ─────────────────────────────────────────────────────────────────────
 
 static START_TIME: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -554,6 +744,18 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
 }
 
 // ── private helpers ────────────────────────────────────────────────────────────
+
+/// Releases a reservation after a failed relay, logging instead of masking the
+/// original error if the cleanup itself fails (the stale-reservation reclaim
+/// in `reserve_announcement` is the fallback for rows this misses).
+async fn release_reservation_best_effort(state: &AppState, id: u64, view_tag: u8) {
+    if let Err(e) = state.registry.release_reservation(id, view_tag).await {
+        warn!(
+            id,
+            "failed to release reservation after publish failure: {e}"
+        );
+    }
+}
 
 fn strip_hex_prefix(s: &str) -> &str {
     let s = s.trim();

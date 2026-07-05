@@ -162,6 +162,8 @@ signing_key*
 # Local Development Data
 registry.json
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # Agent planning docs (specs/plans) — kept locally for agents, not uploaded

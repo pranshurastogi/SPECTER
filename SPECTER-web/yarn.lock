@@ -2592,10 +2592,10 @@
     rpc-websockets "^9.0.2"
     superstruct "^2.0.2"
 
-"@specterpq/sdk@1.0.1":
-  version "1.0.1"
-  resolved "https://registry.npmjs.org/@specterpq/sdk/-/sdk-1.0.1.tgz"
-  integrity sha512-7fwYq9t6Y/tqjU8LyPEI/rMlAcTCAmKROPGCAaWvSzhIln/Y1ulOFatZL2GbqpAUO4lThCpOP4YIfD241M0RAg==
+"@specterpq/sdk@2.0.0":
+  version "2.0.0"
+  resolved "https://registry.npmjs.org/@specterpq/sdk/-/sdk-2.0.0.tgz"
+  integrity sha512-A1Pvqzh1dMQBBNmL74s7NuieXp+YcuLgNyOJT9/k3lyN/Y4OmyNxnUc7zv1q3fLY637kbnceEepRionwa/7Ulw==
   dependencies:
     zod "^3.24.1"
 

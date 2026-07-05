@@ -18,6 +18,13 @@ use specter_core::types::{Announcement, AnnouncementStats};
 
 use super::schema;
 
+/// Age (seconds) after which an un-finalized reservation (`on_chain = 0`,
+/// `tx_hash IS NULL`) is considered abandoned and may be reclaimed by a retry
+/// of the same payment. Must comfortably exceed the longest relay+finalize
+/// path (client publish timeout is 120 s) so an in-flight publish is never
+/// hijacked by a concurrent retry.
+const STALE_RESERVATION_SECS: i64 = 900;
+
 // ── migration helpers ──────────────────────────────────────────────────────
 
 /// Returns true for errors that mean "this DDL statement is already applied
@@ -441,7 +448,15 @@ impl TursoRegistry {
 
     /// Reserves a dedup slot: inserts the (encrypted) announcement with
     /// `on_chain = 0` and `tx_hash = NULL`. A duplicate `payment_tx_hash_hmac`
-    /// hits the UNIQUE index → `SpecterError::DuplicatePayment`.
+    /// hits the UNIQUE index → the conflicting row is inspected:
+    ///
+    /// - **Finalized** (`tx_hash` set / `on_chain = 1`): the payment really was
+    ///   announced → `SpecterError::DuplicatePayment`.
+    /// - **Stale un-finalized reservation** (a previous publish reserved the
+    ///   slot but the relay/finalize step failed and cleanup never ran, e.g. a
+    ///   crash): the abandoned row is reclaimed in place so the retry can
+    ///   proceed. "Stale" = older than [`STALE_RESERVATION_SECS`], so an
+    ///   in-flight concurrent publish is never hijacked.
     pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
         match self.insert_announcement_inner(ann, false, "api").await {
             Ok(id) => {
@@ -451,10 +466,95 @@ impl TursoRegistry {
             Err(SpecterError::RegistryError(m))
                 if m.to_lowercase().contains("unique constraint") =>
             {
-                Err(SpecterError::DuplicatePayment)
+                self.reclaim_stale_reservation(ann).await
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Attempts to take over an abandoned reservation for the same payment.
+    /// Returns the reclaimed row id, or `DuplicatePayment` when the existing
+    /// row is finalized or still fresh (possibly mid-relay elsewhere).
+    async fn reclaim_stale_reservation(&self, ann: &Announcement) -> Result<u64> {
+        let Some(hmac) = ann.payment_tx_hash_hmac.clone() else {
+            // The UNIQUE index only covers payment_tx_hash_hmac; a conflict
+            // without one is unexpected — surface it as a duplicate.
+            return Err(SpecterError::DuplicatePayment);
+        };
+
+        let conn = self.conn()?;
+        let mut rows = conn
+            .query(
+                "SELECT id FROM announcements \
+                 WHERE payment_tx_hash_hmac = ?1 AND on_chain = 0 AND tx_hash IS NULL \
+                   AND created_at <= strftime('%s','now') - ?2",
+                params![Value::Blob(hmac), STALE_RESERVATION_SECS],
+            )
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("reclaim lookup: {e}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| SpecterError::RegistryError(format!("reclaim row: {e}")))?
+        else {
+            return Err(SpecterError::DuplicatePayment);
+        };
+        let id = match row.get_value(0) {
+            Ok(Value::Integer(i)) => i,
+            _ => return Err(SpecterError::DuplicatePayment),
+        };
+
+        // Overwrite the abandoned row with the fresh announcement content. The
+        // WHERE clause re-checks un-finalized state so a concurrent finalize
+        // between SELECT and UPDATE loses nothing (0 rows changed → duplicate).
+        conn.execute(
+            "UPDATE announcements SET \
+                 view_tag = ?1, timestamp = ?2, ephemeral_key = ?3, \
+                 ephemeral_key_hash = ?4, metadata_blob = ?5, block_number = ?6, \
+                 chain = ?7, stealth_address = ?8, record_source = 'api', \
+                 created_at = strftime('%s','now') \
+             WHERE id = ?9 AND on_chain = 0 AND tx_hash IS NULL",
+            vec![
+                Value::Integer(ann.view_tag as i64),
+                Value::Integer(ann.timestamp as i64),
+                Value::Blob(ann.ephemeral_key.clone()),
+                ann.ephemeral_key_hash
+                    .clone()
+                    .map(Value::Blob)
+                    .unwrap_or(Value::Null),
+                ann.metadata_blob
+                    .clone()
+                    .map(Value::Blob)
+                    .unwrap_or(Value::Null),
+                opt_int(ann.block_number.map(|b| b as i64)),
+                opt_text(ann.chain.clone()),
+                opt_text(ann.stealth_address.clone()),
+                Value::Integer(id),
+            ],
+        )
+        .await
+        .map_err(|e| SpecterError::RegistryError(format!("reclaim update: {e}")))?;
+        if conn.changes() != 1 {
+            return Err(SpecterError::DuplicatePayment);
+        }
+
+        warn!(id, "Reclaimed stale un-finalized announcement reservation");
+        self.cache.write().await.pop(&ann.view_tag);
+        Ok(id as u64)
+    }
+
+    /// Deletes an un-finalized reservation (relay/finalize failed) so the
+    /// payment can be re-published later. A finalized row is never touched.
+    pub async fn release_reservation(&self, id: u64, view_tag: u8) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM announcements WHERE id = ?1 AND on_chain = 0 AND tx_hash IS NULL",
+            params![id as i64],
+        )
+        .await
+        .map_err(|e| SpecterError::RegistryError(format!("release: {e}")))?;
+        self.cache.write().await.pop(&view_tag);
+        Ok(())
     }
 
     /// Finalizes a reserved announcement after the relay tx is broadcast.
@@ -749,6 +849,113 @@ mod tests {
 
     async fn setup() -> TursoRegistry {
         TursoRegistry::new_test().await
+    }
+
+    fn make_reserved_ann(view_tag: u8, hmac_byte: u8) -> Announcement {
+        let mut ann = make_ann(view_tag);
+        ann.payment_tx_hash_hmac = Some(vec![hmac_byte; 32]);
+        ann
+    }
+
+    /// Backdates a reservation so it reads as abandoned (older than
+    /// STALE_RESERVATION_SECS).
+    async fn backdate_row(reg: &TursoRegistry, id: u64) {
+        let conn = reg.conn().unwrap();
+        conn.execute(
+            "UPDATE announcements SET created_at = strftime('%s','now') - 100000 WHERE id = ?1",
+            params![id as i64],
+        )
+        .await
+        .unwrap();
+    }
+
+    /// A fresh un-finalized reservation must still dedup: it may belong to a
+    /// concurrent publish that is mid-relay.
+    #[tokio::test]
+    async fn reserve_blocks_fresh_unfinalized_duplicate() {
+        let reg = setup().await;
+        reg.reserve_announcement(&make_reserved_ann(0x11, 0xAA))
+            .await
+            .unwrap();
+        let err = reg
+            .reserve_announcement(&make_reserved_ann(0x11, 0xAA))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SpecterError::DuplicatePayment));
+    }
+
+    /// The bug: a failed relay used to leave the reservation stuck forever
+    /// (on_chain = 0, tx_hash NULL) and every retry 409'd as a duplicate.
+    /// A stale reservation must now be reclaimed by the retry.
+    #[tokio::test]
+    async fn reserve_reclaims_stale_unfinalized_reservation() {
+        let reg = setup().await;
+        let id = reg
+            .reserve_announcement(&make_reserved_ann(0x22, 0xBB))
+            .await
+            .unwrap();
+        backdate_row(&reg, id).await;
+
+        let mut retry = make_reserved_ann(0x33, 0xBB);
+        retry.timestamp = 12345;
+        let reclaimed = reg.reserve_announcement(&retry).await.unwrap();
+        assert_eq!(reclaimed, id, "retry must take over the abandoned row");
+
+        let row = reg.get_by_id(id).await.unwrap().unwrap();
+        assert_eq!(row.view_tag, 0x33, "row content refreshed by the retry");
+        assert_eq!(row.timestamp, 12345);
+        assert!(row.tx_hash.is_none(), "still un-finalized until relay");
+    }
+
+    /// A finalized (actually announced) payment is never reclaimed, however old.
+    #[tokio::test]
+    async fn reserve_never_reclaims_finalized_row() {
+        let reg = setup().await;
+        let id = reg
+            .reserve_announcement(&make_reserved_ann(0x44, 0xCC))
+            .await
+            .unwrap();
+        reg.finalize_announcement(id, 0x44, "0xrelayed")
+            .await
+            .unwrap();
+        backdate_row(&reg, id).await;
+
+        let err = reg
+            .reserve_announcement(&make_reserved_ann(0x44, 0xCC))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SpecterError::DuplicatePayment));
+    }
+
+    /// Releasing after a failed relay frees the dedup slot immediately.
+    #[tokio::test]
+    async fn release_reservation_allows_immediate_retry() {
+        let reg = setup().await;
+        let id = reg
+            .reserve_announcement(&make_reserved_ann(0x55, 0xDD))
+            .await
+            .unwrap();
+        reg.release_reservation(id, 0x55).await.unwrap();
+        assert!(reg.get_by_id(id).await.unwrap().is_none(), "row deleted");
+
+        // Retry succeeds without waiting for the stale threshold.
+        reg.reserve_announcement(&make_reserved_ann(0x55, 0xDD))
+            .await
+            .unwrap();
+    }
+
+    /// Release must never delete a finalized announcement.
+    #[tokio::test]
+    async fn release_reservation_never_touches_finalized_row() {
+        let reg = setup().await;
+        let id = reg
+            .reserve_announcement(&make_reserved_ann(0x66, 0xEE))
+            .await
+            .unwrap();
+        reg.finalize_announcement(id, 0x66, "0xdone").await.unwrap();
+        reg.release_reservation(id, 0x66).await.unwrap();
+        let row = reg.get_by_id(id).await.unwrap();
+        assert!(row.is_some(), "finalized row must survive release");
     }
 
     #[tokio::test]
