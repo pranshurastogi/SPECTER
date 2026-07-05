@@ -61,7 +61,12 @@ import {
   type TxChain,
 } from "@/lib/blockchain/sendChains";
 import { PayLinkFab } from "@/components/features/pay/PayLinkFab";
-import { balanceKey, fetchEvmBalances, type BalanceMap } from "@/lib/claim/balances";
+import {
+  balanceKey,
+  fetchEvmBalances,
+  isBelowDust,
+  type BalanceMap,
+} from "@/lib/claim/balances";
 import type { SweepPlanItem } from "@/lib/claim/sweep";
 import { identityHashFromMetaAddress } from "@/lib/claim/receipt";
 import {
@@ -377,7 +382,7 @@ export default function ScanPayments() {
       if (seen.has(key)) continue;
       seen.add(key);
       const b = balances.get(key);
-      if (!b || b <= 0n) continue;
+      if (!b || isBelowDust(b)) continue;
       const cur = per.get(c) ?? { totalWei: 0n, count: 0 };
       cur.totalWei += b;
       cur.count += 1;
@@ -403,7 +408,7 @@ export default function ScanPayments() {
         if (seen.has(key)) continue;
         seen.add(key);
         const b = balances.get(balanceKey(chain, d.stealth_address));
-        if (!b || b <= 0n) continue;
+        if (!b || isBelowDust(b)) continue;
         items.push({
           address: d.stealth_address,
           privateKey: d.eth_private_key,
@@ -420,10 +425,14 @@ export default function ScanPayments() {
     [discoveries],
   );
 
-  // Empty = balances are loaded and this EVM address reads exactly zero.
+  // Empty = balances are loaded and this EVM address reads below the dust
+  // threshold (0.0001 native — zero or leftover crumbs from a past claim).
   // Sui/unknown rows are never hidden (their live balance is unknown here).
   const isEmptyDiscovery = useCallback(
-    (d: DiscoveryDto) => liveBalanceOf(d) === 0n,
+    (d: DiscoveryDto) => {
+      const b = liveBalanceOf(d);
+      return b !== null && isBelowDust(b);
+    },
     [liveBalanceOf],
   );
   const emptyCount = useMemo(
@@ -1116,8 +1125,9 @@ export default function ScanPayments() {
                         const chainCfg = mappedChain ? getSendChainConfig(mappedChain) : null;
                         const amount = describeDiscoveryAmount(d, mappedChain);
                         const liveBalance = liveBalanceOf(d);
+                        const isDustBalance = liveBalance !== null && isBelowDust(liveBalance);
                         const isClaimed =
-                          liveBalance === 0n && claimedSet.has(d.stealth_address.toLowerCase());
+                          isDustBalance && claimedSet.has(d.stealth_address.toLowerCase());
                         return (
                           <motion.div
                             key={`${d.stealth_address}-${d.announcement_id}`}
@@ -1147,7 +1157,7 @@ export default function ScanPayments() {
                                     {amount.display} {discoveryCurrencySymbol(d, mappedChain)}
                                   </span>
                                 )}
-                                {liveBalance !== null && liveBalance > 0n && mappedChain && (
+                                {liveBalance !== null && !isDustBalance && mappedChain && (
                                   <span className="inline-flex items-center rounded-full border border-emerald-400/25 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] text-emerald-400/90">
                                     {formatCryptoAmount(
                                       formatUnits(liveBalance, getChainDecimals(mappedChain)),
@@ -1161,7 +1171,7 @@ export default function ScanPayments() {
                                     Claimed
                                   </span>
                                 )}
-                                {liveBalance === 0n && !isClaimed && (
+                                {isDustBalance && !isClaimed && (
                                   <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/40">
                                     Empty
                                   </span>

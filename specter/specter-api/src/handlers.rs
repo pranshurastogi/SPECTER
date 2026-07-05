@@ -386,29 +386,44 @@ pub async fn publish_announcement(
     };
 
     // ── 7. Relay (or accept dev-mode tx_hash) using the SAME blob ─────────────
-    let monad_tx_hash = if let Some(relayer) = &state.relayer_config {
-        relay_announcement(&announcement, relayer, &metadata_blob).await?
+    // Any failure from here on releases the reservation: otherwise the row
+    // (on_chain = 0, tx_hash = NULL) would keep occupying the dedup UNIQUE
+    // index and every retry of this payment would 409 as a false duplicate.
+    let relay_result = if let Some(relayer) = &state.relayer_config {
+        relay_announcement(&announcement, relayer, &metadata_blob).await
     } else {
         // Dev mode: client must supply tx_hash directly
         req.tx_hash
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+            .map(str::to_string)
             .ok_or_else(|| {
                 ApiError::bad_request(
                     "tx_hash is required when the relayer is not configured (dev mode). \
                      Set RELAYER_PRIVATE_KEY to enable server-side relay.",
                 )
-            })?
-            .to_string()
+            })
+    };
+    let monad_tx_hash = match relay_result {
+        Ok(hash) => hash,
+        Err(e) => {
+            release_reservation_best_effort(&state, reserved_id, view_tag).await;
+            return Err(e);
+        }
     };
 
     // ── 8. Finalize the reserved row ──────────────────────────────────────────
-    state
+    if let Err(e) = state
         .registry
         .finalize_announcement(reserved_id, view_tag, &monad_tx_hash)
         .await
-        .map_err(|e| ApiError::internal(format!("finalize failed: {e}")))?;
+    {
+        // The relay tx is already out; releasing here would allow a duplicate
+        // announce. Keep the reservation (it will age into reclaimable state
+        // only if genuinely abandoned) and surface the error.
+        return Err(ApiError::internal(format!("finalize failed: {e}")));
+    }
     let id = reserved_id;
     announcement.tx_hash = Some(monad_tx_hash.clone());
 
@@ -729,6 +744,18 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
 }
 
 // ── private helpers ────────────────────────────────────────────────────────────
+
+/// Releases a reservation after a failed relay, logging instead of masking the
+/// original error if the cleanup itself fails (the stale-reservation reclaim
+/// in `reserve_announcement` is the fallback for rows this misses).
+async fn release_reservation_best_effort(state: &AppState, id: u64, view_tag: u8) {
+    if let Err(e) = state.registry.release_reservation(id, view_tag).await {
+        warn!(
+            id,
+            "failed to release reservation after publish failure: {e}"
+        );
+    }
+}
 
 fn strip_hex_prefix(s: &str) -> &str {
     let s = s.trim();

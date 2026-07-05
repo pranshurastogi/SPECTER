@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   balanceKey,
+  isBelowDust,
   isClaimable,
   sweepValue,
+  DUST_THRESHOLD_WEI,
   NATIVE_TRANSFER_GAS,
 } from "@/lib/claim/balances";
+import { parseEther } from "viem";
 import { summarize, type SweepRowResult } from "@/lib/claim/sweep";
 import { buildReceipt, identityHashFromMetaAddress } from "@/lib/claim/receipt";
 import { groupSweepHistory, claimedAddressSet } from "@/lib/claim/claimApi";
@@ -59,6 +62,14 @@ describe("claim balances math", () => {
     const gasCost = NATIVE_TRANSFER_GAS * (2n * GWEI);
     expect(sweepValue(gasCost + 5n, gasCost)).toBe(5n);
     expect(sweepValue(gasCost - 1n, gasCost)).toBe(0n);
+  });
+
+  it("dust threshold is exactly 0.0001 native and gates below/at correctly", () => {
+    expect(DUST_THRESHOLD_WEI).toBe(parseEther("0.0001"));
+    expect(isBelowDust(0n)).toBe(true);
+    expect(isBelowDust(DUST_THRESHOLD_WEI - 1n)).toBe(true); // 0.0000999… → empty
+    expect(isBelowDust(DUST_THRESHOLD_WEI)).toBe(false); // exactly 0.0001 → claimable
+    expect(isBelowDust(parseEther("0.5"))).toBe(false);
   });
 });
 

@@ -423,6 +423,15 @@ impl RegistryBackend {
         }
     }
 
+    /// Releases an un-finalized reservation after a failed relay/finalize so
+    /// the same payment can be re-published. Never touches finalized rows.
+    pub async fn release_reservation(&self, id: u64, view_tag: u8) -> Result<()> {
+        match self {
+            Self::Memory(m) => m.release_reservation(id, view_tag).await,
+            Self::Turso(t) => t.release_reservation(id, view_tag).await,
+        }
+    }
+
     /// Writes an internal telemetry event. No-op for the memory backend.
     // Mirrors the registry telemetry signature; one parameter per telemetry column.
     #[allow(clippy::too_many_arguments)]

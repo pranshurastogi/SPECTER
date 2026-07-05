@@ -14,6 +14,20 @@ import {
 /** Gas limit of a plain native transfer. */
 export const NATIVE_TRANSFER_GAS = 21_000n;
 
+/**
+ * Display/claim dust threshold: 0.0001 native units (1e14 wei — all supported
+ * EVM chains use 18 decimals, incl. Sepolia ETH, Arbitrum ETH, and MON).
+ * Balances below this are treated as empty: hidden behind the "show empty"
+ * toggle and never offered for claiming. Independent of the dynamic gas
+ * check, which additionally skips anything that can't pay its own transfer.
+ */
+export const DUST_THRESHOLD_WEI = 100_000_000_000_000n;
+
+/** True when a live balance is too small to be worth showing or claiming. */
+export function isBelowDust(balanceWei: bigint): boolean {
+  return balanceWei < DUST_THRESHOLD_WEI;
+}
+
 /** Concurrent balance reads per chain (keeps public RPCs happy). */
 const BALANCE_CONCURRENCY = 8;
 

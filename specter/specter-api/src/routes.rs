@@ -298,6 +298,102 @@ mod tests {
         );
     }
 
+    /// Regression (false "duplicate detected"): a publish that fails AFTER the
+    /// dedup slot is reserved (here: dev mode with tx_hash missing) must not
+    /// leave the reservation behind — retrying the same payment used to 409
+    /// forever with on_chain = 0 in the DB and nothing on the contract.
+    #[tokio::test]
+    async fn test_failed_publish_releases_reservation_so_retry_succeeds() {
+        // db_keys enable the payment_tx_hash_hmac dedup path (the one that leaked).
+        let mut state = AppState::new_sync(ApiConfig::default());
+        state.db_keys = Some(std::sync::Arc::new(specter_crypto::DbKeys::from_master(
+            &[7u8; 32],
+        )));
+        let state = Arc::new(state);
+        let app = create_router(state.clone());
+
+        let keys_res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/keys/generate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(keys_res.into_body(), usize::MAX).await.unwrap();
+        let keys: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let meta_address = keys["meta_address"].as_str().unwrap().to_string();
+
+        let create = |app: Router| {
+            let meta = meta_address.clone();
+            async move {
+                let res = app
+                    .oneshot(
+                        axum::http::Request::builder()
+                            .method("POST")
+                            .uri("/api/v1/stealth/create")
+                            .header("content-type", "application/json")
+                            .body(Body::from(format!(r#"{{"meta_address":"{meta}"}}"#)))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+                let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                v["payment_id"].as_str().unwrap().to_string()
+            }
+        };
+
+        // Attempt 1: same source payment, but tx_hash omitted → 400 in dev
+        // mode. This failure happens AFTER the reservation is taken.
+        let pid1 = create(app.clone()).await;
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{pid1}","payment_tx_hash":"0xsamepayment"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "dev mode needs tx_hash"
+        );
+
+        // Attempt 2: retry the SAME source payment properly. Before the fix
+        // this returned 409 CONFLICT (stuck reservation); it must succeed.
+        let pid2 = create(app.clone()).await;
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{pid2}","tx_hash":"0xretry-ok","payment_tx_hash":"0xsamepayment"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "retry after a failed publish must not be treated as a duplicate"
+        );
+    }
+
     /// Sweep recording rejects malformed payloads before touching any store.
     #[tokio::test]
     async fn test_record_sweeps_validates_payload() {
