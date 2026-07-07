@@ -31,7 +31,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/registry/stats", get(handlers::get_registry_stats))
         .route("/api/v1/sweeps", post(handlers::record_sweeps))
-        .route("/api/v1/sweeps/:identity_hash", get(handlers::list_sweeps))
+        .route("/api/v1/sweeps/history", post(handlers::list_sweeps))
         .with_state(state)
 }
 
@@ -467,7 +467,30 @@ mod tests {
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    /// Sweep listing validates the identity hash path parameter.
+    /// Sweep history is a POST with the identity hash in the JSON body, not a
+    /// GET with the hash in the URL — keeps this bearer-equivalent value out
+    /// of server access logs, CDN logs, and browser history.
+    #[tokio::test]
+    async fn test_sweep_history_is_post_not_get() {
+        let app = test_app();
+
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/api/v1/sweeps/{}", "ab".repeat(32)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::NOT_FOUND,
+            "the old GET :identity_hash path must no longer be routable"
+        );
+    }
+
+    /// Sweep history listing validates the identity hash in the JSON body.
     #[tokio::test]
     async fn test_list_sweeps_validates_identity_hash() {
         let app = test_app();
@@ -475,8 +498,10 @@ mod tests {
         let res = app
             .oneshot(
                 axum::http::Request::builder()
-                    .uri("/api/v1/sweeps/not-a-hash")
-                    .body(Body::empty())
+                    .method("POST")
+                    .uri("/api/v1/sweeps/history")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"identity_hash":"not-a-hash"}"#))
                     .unwrap(),
             )
             .await
@@ -499,5 +524,261 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── whole-flow tests ────────────────────────────────────────────────────
+    // These exercise multi-step user journeys end to end through the real
+    // router, not individual handlers in isolation — so a change that breaks
+    // the seam between two endpoints (not just one endpoint's own contract)
+    // shows up here.
+
+    /// Generate → create a stealth payment → publish it → scan with the same
+    /// keys and confirm the payment is discovered. This is the core "does a
+    /// payment actually reach its recipient" journey.
+    #[tokio::test]
+    async fn test_whole_flow_generate_create_publish_scan_discovers_payment() {
+        let state = Arc::new(AppState::new_sync(ApiConfig::default()));
+        let app = create_router(state);
+
+        // 1. Generate keys.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/keys/generate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let keys: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let meta_address = keys["meta_address"].as_str().unwrap().to_string();
+        let viewing_sk = keys["viewing_sk"].as_str().unwrap().to_string();
+        let spending_pub = keys["spending_pub"].as_str().unwrap().to_string();
+
+        // 2. Create a stealth payment to that meta-address (a sender's flow).
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stealth/create")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"meta_address":"{meta_address}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let create: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let payment_id = create["payment_id"].as_str().unwrap().to_string();
+        let expected_stealth_address = create["stealth_address"].as_str().unwrap().to_string();
+
+        // 3. Publish it (dev mode: client supplies tx_hash).
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{payment_id}","tx_hash":"0xdeadbeef"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "publish must succeed");
+
+        // 4. Scan with the recipient's own keys — the payment must be found.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stealth/scan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"viewing_sk":"{viewing_sk}","spending_pub":"{spending_pub}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let scan: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let discoveries = scan["discoveries"].as_array().unwrap();
+        assert_eq!(
+            discoveries.len(),
+            1,
+            "the published payment must be discovered"
+        );
+        assert_eq!(
+            discoveries[0]["stealth_address"].as_str().unwrap(),
+            expected_stealth_address,
+            "the discovered address must match the one the sender paid"
+        );
+    }
+
+    /// Generate → create → publish → record a claim's sweep rows → fetch
+    /// history back via the new POST /api/v1/sweeps/history route, keyed by
+    /// the HMAC-based identity hash (not the old public meta-address hash).
+    /// Exercises the exact seam the identity-hash security fix touched.
+    #[tokio::test]
+    async fn test_whole_flow_claim_history_roundtrip_with_new_identity_hash() {
+        let reg = specter_registry::turso::TursoRegistry::new_test().await;
+        let sweep_store = Arc::new(specter_registry::turso::SweepStore::new(reg.database()));
+        let mut state = AppState::new_sync(ApiConfig::default());
+        state.sweep_store = Some(sweep_store);
+        let state = Arc::new(state);
+        let app = create_router(state);
+
+        // 1. Generate keys, create + publish a stealth payment (same as above).
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/keys/generate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let keys: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let meta_address = keys["meta_address"].as_str().unwrap().to_string();
+
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stealth/create")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"meta_address":"{meta_address}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let create: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let payment_id = create["payment_id"].as_str().unwrap().to_string();
+        let stealth_address = create["stealth_address"].as_str().unwrap().to_string();
+
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{payment_id}","tx_hash":"0xdeadbeef"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // 2. Record a claim (as the frontend would after a real sweep) — the
+        // identity_hash here stands in for HMAC-SHA256(viewing_sk, ...), which
+        // is computed client-side; the API only validates its shape.
+        let identity_hash = "ab".repeat(32);
+        let record_body = format!(
+            r#"{{
+                "receipt_id":"rcpt-1",
+                "identity_hash":"{identity_hash}",
+                "chain":"sepolia",
+                "destination":"0x2222222222222222222222222222222222222222",
+                "destination_input":"alice.eth",
+                "records":[{{
+                    "id":"row-1",
+                    "stealth_address":"{stealth_address}",
+                    "amount_base":"1000000000000000",
+                    "fee_base":"31500000000000",
+                    "tx_hash":"0x{}",
+                    "status":"confirmed"
+                }}]
+            }}"#,
+            "cd".repeat(32)
+        );
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sweeps")
+                    .header("content-type", "application/json")
+                    .body(Body::from(record_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "sweep record must be accepted"
+        );
+
+        // 3. Fetch it back via the new POST route, keyed by the same hash.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sweeps/history")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"identity_hash":"{identity_hash}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let history: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let sweeps = history["sweeps"].as_array().unwrap();
+        assert_eq!(sweeps.len(), 1, "the recorded claim row must come back");
+        assert_eq!(
+            sweeps[0]["stealth_address"].as_str().unwrap(),
+            stealth_address
+        );
+        assert_eq!(sweeps[0]["receipt_id"].as_str().unwrap(), "rcpt-1");
+
+        // 4. A different identity hash must see nothing — history is scoped
+        // per-identity, exactly the property the security fix depends on.
+        let other_hash = "ef".repeat(32);
+        let res = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sweeps/history")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"identity_hash":"{other_hash}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let history: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            history["sweeps"].as_array().unwrap().len(),
+            0,
+            "an unrelated identity hash must not see this claim's history"
+        );
     }
 }

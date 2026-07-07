@@ -539,7 +539,12 @@ impl AppState {
     ///
     /// Registry backend is selected via `REGISTRY_BACKEND` env var:
     /// - `"turso"` — durable Turso cloud DB (requires `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`)
-    /// - anything else — ephemeral in-memory (default, for local dev)
+    /// - `"memory"` — ephemeral in-memory, for local dev only (must be set explicitly)
+    ///
+    /// Any other value (including unset) is treated as a misconfiguration and
+    /// panics on startup rather than silently degrading to the ephemeral
+    /// backend — a mistyped or missing `REGISTRY_BACKEND` in production must
+    /// never fall through unnoticed to a backend without durable dedup.
     ///
     /// If `ANNOUNCEMENT_SOURCE=chain`, spawns a background ChainIndexer task
     /// that polls SPECTERAnnouncer events and publishes to the registry.
@@ -571,14 +576,21 @@ impl AppState {
                 Some(sweeps),
                 Some(db),
             )
-        } else {
-            info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
+        } else if backend == "memory" {
+            info!("Initializing in-memory registry (ephemeral — REGISTRY_BACKEND=memory set explicitly)");
             (
                 RegistryBackend::Memory(MemoryRegistry::new()),
                 None,
                 None,
                 None,
             )
+        } else {
+            panic!(
+                "REGISTRY_BACKEND must be set to \"turso\" or \"memory\" (got {backend:?}). \
+                 Refusing to silently fall back to the ephemeral in-memory registry — an \
+                 unset or mistyped REGISTRY_BACKEND in production would otherwise disable \
+                 durable payment dedup without any error."
+            );
         };
 
         // Load chain configuration
@@ -746,8 +758,16 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
 mod tests {
     use super::*;
 
+    /// `ChainConfig::from_env` reads process-global env vars, and `#[test]`
+    /// functions run concurrently on separate threads by default — without
+    /// this lock, the env-var-mutating tests below race and stomp on each
+    /// other's `ANNOUNCEMENT_SOURCE`/`MONAD_RPC_URL`/etc, causing flaky
+    /// failures unrelated to the actual `ChainConfig` logic.
+    static CHAIN_CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_chain_config_disabled_by_default() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         // ANNOUNCEMENT_SOURCE not set, should disable chain indexing
         std::env::remove_var("ANNOUNCEMENT_SOURCE");
         std::env::remove_var("MONAD_RPC_URL");
@@ -760,6 +780,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_enabled_requires_env_vars() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::remove_var("MONAD_RPC_URL");
         std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
@@ -776,6 +797,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_with_valid_env_vars() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
         std::env::set_var(
@@ -801,6 +823,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_invalid_deploy_block() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
         std::env::set_var(

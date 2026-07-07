@@ -9,7 +9,7 @@ description = "Announcement registry storage for SPECTER"
 [features]
 default = []
 turso = ["libsql", "lru", "hex"]
-test-utils = ["turso", "libsql/core"]  # exposes new_test() and local SQLite setup
+test-utils = ["turso", "libsql/core", "tempfile"]  # exposes new_test() and local SQLite setup
 
 [dependencies]
 specter-core = { path = "../specter-core" }
@@ -38,6 +38,10 @@ chrono = { workspace = true }
 libsql = { workspace = true, optional = true }
 lru = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+# Generates collision-free paths for new_test()'s local SQLite file, needed
+# whenever a downstream crate compiles us with "test-utils" (its own
+# dev-dependencies don't apply to us, so this can't live in [dev-dependencies]).
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

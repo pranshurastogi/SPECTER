@@ -98,20 +98,29 @@ export function buildReceipt(input: {
 }
 
 /**
- * SHA-256 of the meta-address bytes, lowercase hex — the server-side lookup
- * key for sweep history. Hashing keeps the registry DB unable to map sweep
- * rows back to an identity it doesn't already know.
+ * HMAC-SHA256(key = viewing_sk, msg = "specter-sweep-history-v1"), lowercase
+ * hex — the server-side lookup key for sweep history.
+ *
+ * Deliberately keyed on the *secret* viewing key, not on `meta_address`:
+ * meta_address is public by design (it's exactly what a sender resolves via
+ * ENS/SuiNS to pay you), so hashing it alone would let anyone who knows your
+ * ENS name compute this lookup key themselves and pull your full claim
+ * history. Only someone who holds `viewing_sk` — the same secret already
+ * required to scan for incoming payments — can compute this value.
  */
-export async function identityHashFromMetaAddress(metaAddressHex: string): Promise<string> {
-  const clean = metaAddressHex.trim().toLowerCase().replace(/^0x/, "");
+export async function identityHashFromViewingKey(viewingSkHex: string): Promise<string> {
+  const clean = viewingSkHex.trim().toLowerCase().replace(/^0x/, "");
   if (clean.length === 0 || clean.length % 2 !== 0 || /[^0-9a-f]/.test(clean)) {
-    throw new Error("Invalid meta-address hex");
+    throw new Error("Invalid viewing-key hex");
   }
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   }
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const key = await crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("specter-sweep-history-v1"));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 

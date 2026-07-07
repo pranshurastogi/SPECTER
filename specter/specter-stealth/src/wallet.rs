@@ -287,19 +287,30 @@ mod tests {
     #[test]
     fn test_wallet_try_discover_wrong_key() {
         let wallet1 = SpecterWallet::generate().unwrap();
-        let wallet2 = SpecterWallet::generate().unwrap();
 
         // Payment for wallet1 (encapsulate to wallet1's viewing key)
         let (ciphertext, shared_secret) = encapsulate(wallet1.viewing_public_key()).unwrap();
         let view_tag = compute_view_tag(&shared_secret);
 
-        // Wallet2 tries to discover - should fail (different shared secret)
-        let result = wallet2
-            .try_discover(ciphertext.as_bytes(), view_tag)
-            .unwrap();
-        // Note: This will return None because the view tag won't match
-        // (decapsulation with wrong key produces random shared secret)
-        assert!(result.is_none());
+        // Wallet2 tries to discover - should fail (different shared secret).
+        // ML-KEM's implicit rejection means decapsulating with the wrong key
+        // never errors — it returns a pseudorandom secret, which has a
+        // ~1/256 chance of coincidentally hashing to the same view_tag.
+        // Retry with a fresh wallet2 on that rare coincidence instead of
+        // asserting something the protocol doesn't actually guarantee for a
+        // single trial.
+        for _ in 0..8 {
+            let wallet2 = SpecterWallet::generate().unwrap();
+            let result = wallet2
+                .try_discover(ciphertext.as_bytes(), view_tag)
+                .unwrap();
+            if result.is_none() {
+                return;
+            }
+        }
+        panic!(
+            "wrong-key discovery matched 8 times in a row — implausible, check compute_view_tag"
+        );
     }
 
     #[test]

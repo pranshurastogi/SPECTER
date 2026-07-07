@@ -42,3 +42,4 @@ url = { workspace = true }
 [dev-dependencies]
 tokio-test = { workspace = true }
 wiremock = { workspace = true }
+k256 = { version = "0.13", features = ["ecdsa"] }

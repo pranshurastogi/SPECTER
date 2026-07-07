@@ -607,6 +607,11 @@ fn validate_sweep_request(req: &RecordSweepsRequest) -> Result<()> {
                 "record status must be confirmed | failed | skipped_dust",
             ));
         }
+        if r.status == "confirmed" && r.tx_hash.is_empty() {
+            return Err(ApiError::validation(
+                "record tx_hash is required when status is confirmed",
+            ));
+        }
     }
     Ok(())
 }
@@ -663,17 +668,21 @@ pub async fn record_sweeps(
     Ok(Json(RecordSweepsResponse { inserted }))
 }
 
-/// GET /api/v1/sweeps/:identity_hash
+/// POST /api/v1/sweeps/history
 ///
 /// Returns an identity's sweep history, newest first. The identity hash is
-/// computed client-side (SHA-256 of the meta-address bytes).
+/// computed client-side (HMAC-SHA256 keyed on the secret viewing key — see
+/// [`RecordSweepsRequest::identity_hash`]). This is a POST with the hash in
+/// the JSON body, not a GET with the hash in the URL path, so this
+/// bearer-equivalent value never lands in server access logs, CDN logs, or
+/// browser history.
 pub async fn list_sweeps(
     State(state): State<Arc<AppState>>,
-    Path(identity_hash): Path<String>,
+    Json(req): Json<ListSweepsRequest>,
 ) -> Result<Json<ListSweepsResponse>> {
-    if !is_lower_hex_64(&identity_hash) {
+    if !is_lower_hex_64(&req.identity_hash) {
         return Err(ApiError::validation(
-            "identity_hash must be 64 lowercase hex chars (SHA-256)",
+            "identity_hash must be 64 lowercase hex chars (HMAC-SHA256)",
         ));
     }
 
@@ -686,7 +695,7 @@ pub async fn list_sweeps(
     };
 
     let rows = store
-        .list_by_identity(&identity_hash, SWEEP_LIST_LIMIT)
+        .list_by_identity(&req.identity_hash, SWEEP_LIST_LIMIT)
         .await
         .map_err(|e| ApiError::internal(format!("sweep list failed: {e}")))?;
 

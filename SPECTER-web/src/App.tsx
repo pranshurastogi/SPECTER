@@ -19,6 +19,8 @@ import UseCasesPage from "./pages/UseCasesPage";
 import InsightsPage from "./pages/InsightsPage";
 import NotFound from "./pages/NotFound";
 import PayPage from "./pages/PayPage";
+import TrustlessRecovery from "./pages/TrustlessRecovery";
+import SelfHost from "./pages/SelfHost";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -57,6 +59,8 @@ const App = () => (
                 <Route path="/usecases" element={<UseCasesPage />} />
                 <Route path="/insights" element={<InsightsPage />} />
                 <Route path="/pay/:name" element={<PayPage />} />
+                <Route path="/i-dont-trust-specter" element={<TrustlessRecovery />} />
+                <Route path="/self-host" element={<SelfHost />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

@@ -88,9 +88,12 @@ pub const SCHEMA_STATEMENTS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_payments(expires_at)",
 
     // ── sweep_records (claim-flow history; one row per swept address) ───────
-    // Public-after-broadcast data only. `identity_hash` is SHA-256 of the
-    // meta-address bytes — the server cannot map it back to an identity
-    // unless it already knows the meta-address.
+    // Public-after-broadcast data only. `identity_hash` is an HMAC-SHA256
+    // keyed on the client's secret viewing key (not a bare hash of the
+    // public meta-address — that would let anyone who knows a user's ENS
+    // name compute the lookup key and pull their full claim history). The
+    // server treats this column as an opaque, format-checked string; it
+    // never recomputes or verifies it.
     "CREATE TABLE IF NOT EXISTS sweep_records (
         id                 TEXT    PRIMARY KEY,
         receipt_id         TEXT    NOT NULL,

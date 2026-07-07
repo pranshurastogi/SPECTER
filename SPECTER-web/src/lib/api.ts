@@ -343,7 +343,10 @@ export interface SweepRowDto {
 
 export interface RecordSweepsRequest {
   receipt_id: string;
-  /** SHA-256 of the meta-address bytes, lowercase hex (64 chars). */
+  /**
+   * HMAC-SHA256 keyed on the client's secret viewing key, lowercase hex (64
+   * chars) — never derivable from the public meta-address alone.
+   */
   identity_hash: string;
   /** Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet"). */
   chain: string;
@@ -462,11 +465,16 @@ export const api = {
     });
   },
 
-  /** Sweep history for an identity (pre-hashed client-side), newest first. */
+  /**
+   * Sweep history for an identity (pre-hashed client-side), newest first.
+   * POSTed rather than a GET path param so the hash never lands in server
+   * access logs, CDN logs, or browser history.
+   */
   async listSweeps(identityHash: string): Promise<ListSweepsResponse> {
-    return request<ListSweepsResponse>(
-      `/api/v1/sweeps/${encodeURIComponent(identityHash)}`
-    );
+    return request<ListSweepsResponse>("/api/v1/sweeps/history", {
+      method: "POST",
+      body: JSON.stringify({ identity_hash: identityHash }),
+    });
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

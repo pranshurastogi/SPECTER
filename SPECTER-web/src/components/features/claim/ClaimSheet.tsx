@@ -36,7 +36,7 @@ import {
 } from "@/lib/claim/sweep";
 import {
   buildReceipt,
-  identityHashFromMetaAddress,
+  identityHashFromViewingKey,
   type ClaimReceipt,
 } from "@/lib/claim/receipt";
 import { recordReceiptBestEffort } from "@/lib/claim/claimApi";
@@ -60,8 +60,8 @@ export interface ClaimSheetProps {
   getItems: (chain: EvmTxChain) => SweepPlanItem[];
   /** All discovered stealth addresses, lowercased (self-send guard). */
   ownStealthAddresses: Set<string>;
-  /** Identity meta-address (hex) — enables server-side claim history. */
-  metaAddress: string | null;
+  /** Identity viewing key (hex) — enables server-side claim history. Never sent to the server as-is; only an HMAC derived from it is. */
+  viewingSk: string | null;
   /** Fired once a claim run finishes, with the confirmed addresses. */
   onClaimed: (receipt: ClaimReceipt) => void;
 }
@@ -81,7 +81,7 @@ export function ClaimSheet({
   suiFunded,
   getItems,
   ownStealthAddresses,
-  metaAddress,
+  viewingSk,
   onClaimed,
 }: ClaimSheetProps) {
   const [step, setStep] = useState<ClaimStep>("chain");
@@ -197,18 +197,18 @@ export function ClaimSheet({
 
   const recordReceipt = useCallback(
     async (r: ClaimReceipt) => {
-      if (!metaAddress) {
+      if (!viewingSk) {
         setRecorded(null);
         return;
       }
       try {
-        const hash = await identityHashFromMetaAddress(metaAddress);
+        const hash = await identityHashFromViewingKey(viewingSk);
         setRecorded(await recordReceiptBestEffort(r, hash));
       } catch {
         setRecorded(false);
       }
     },
-    [metaAddress],
+    [viewingSk],
   );
 
   const handleShowReceipt = useCallback(() => {
