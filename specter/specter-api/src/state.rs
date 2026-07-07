@@ -758,8 +758,16 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
 mod tests {
     use super::*;
 
+    /// `ChainConfig::from_env` reads process-global env vars, and `#[test]`
+    /// functions run concurrently on separate threads by default — without
+    /// this lock, the env-var-mutating tests below race and stomp on each
+    /// other's `ANNOUNCEMENT_SOURCE`/`MONAD_RPC_URL`/etc, causing flaky
+    /// failures unrelated to the actual `ChainConfig` logic.
+    static CHAIN_CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_chain_config_disabled_by_default() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         // ANNOUNCEMENT_SOURCE not set, should disable chain indexing
         std::env::remove_var("ANNOUNCEMENT_SOURCE");
         std::env::remove_var("MONAD_RPC_URL");
@@ -772,6 +780,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_enabled_requires_env_vars() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::remove_var("MONAD_RPC_URL");
         std::env::remove_var("SPECTER_ANNOUNCER_ADDRESS");
@@ -788,6 +797,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_with_valid_env_vars() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
         std::env::set_var(
@@ -813,6 +823,7 @@ mod tests {
 
     #[test]
     fn test_chain_config_invalid_deploy_block() {
+        let _guard = CHAIN_CONFIG_ENV_LOCK.lock().unwrap();
         std::env::set_var("ANNOUNCEMENT_SOURCE", "chain");
         std::env::set_var("MONAD_RPC_URL", "https://testnet-rpc.monad.xyz");
         std::env::set_var(
