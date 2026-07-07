@@ -3,6 +3,7 @@ import { EthereumWalletConnectors } from '@dynamic-labs/ethereum';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SuiWalletProvider } from './SuiWalletProvider';
 import { chain } from '@/lib/blockchain/chainConfig';
+import { analytics } from '@/lib/analytics';
 import {
   mainnet,
   sepolia,
@@ -248,6 +249,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         walletConnectors: [EthereumWalletConnectors],
         appName: 'SPECTER',
         evmNetworks: buildEvmNetworks(),
+        eventsCallbacks: {
+          onAuthSuccess: () => analytics.walletConnectClicked('ethereum'),
+          onLogout: () => analytics.walletDisconnectClicked('ethereum'),
+        },
       }}
     >
       <QueryClientProvider client={queryClient}>

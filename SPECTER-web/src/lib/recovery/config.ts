@@ -27,19 +27,23 @@ export const ANNOUNCER_DEPLOY_BLOCK = 37571591n;
  * Public, key-less Monad testnet RPC. Used as the default; the user may
  * paste their own endpoint (e.g. a private node) on the page. Anyone can run
  * recovery against any RPC that serves the announcer's logs.
+ *
+ * Deliberately NOT a keyed provider (e.g. Alchemy) — this page's whole point
+ * is working when SPECTER's own infra (including its keyed RPC providers) is
+ * unavailable, so the default must be a no-signup public node.
  */
 export const DEFAULT_MONAD_RPC_URL =
   (import.meta.env.VITE_MONAD_TESTNET_RPC_URL as string | undefined) ||
-  "https://testnet-rpc.monad.xyz";
+  "https://rpc-testnet.monadinfra.com";
 
 /**
  * Initial block window for chunked `getLogs`. Public RPCs cap the range per
- * request: Monad's public endpoint (`testnet-rpc.monad.xyz`) hard-caps
- * `eth_getLogs` at **100 blocks**, so 100 is the zero-friction default. The
+ * request: Monad's public endpoints have historically hard-capped
+ * `eth_getLogs` around **100 blocks**, so 100 is the zero-friction default. The
  * sweep adapts DOWN automatically if an RPC enforces an even smaller cap (it
  * parses the limit from the error, or halves), so 100 stays correct everywhere
  * — a more permissive RPC simply does more (still-correct) requests. The fast
- * path is the indexer; this is the fully-trustless fallback.
+ * path is the registry; this is the fully-trustless fallback.
  */
 export const LOG_SCAN_CHUNK = 100n;
 

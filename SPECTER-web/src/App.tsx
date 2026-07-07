@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/base/toaster";
 import { Toaster as Sonner } from "@/components/ui/base/sonner";
 import { TooltipProvider } from "@/components/ui/base/tooltip";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { WalletProvider } from "@/components/features/wallet/WalletProvider";
 import { usePageTracking } from "@/hooks/usePageTracking";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
@@ -10,6 +10,8 @@ import { Analytics } from "@vercel/analytics/react";
 import { WalkthroughVideoPrompt } from "@/components/features/WalkthroughVideoPrompt";
 import { FeedbackBubble } from "@/components/features/FeedbackBubble";
 import { ErrorBoundary } from "@/components/features/ErrorBoundary";
+import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
+import { identifyWalletUser, resetPostHogUser } from "@/lib/analytics";
 import Index from "./pages/Index";
 import GenerateKeys from "./pages/GenerateKeys";
 import SendPayment from "./pages/SendPayment";
@@ -33,12 +35,42 @@ function RouteTracker() {
   return null;
 }
 
+function WalletIdentityTracker() {
+  const { primaryWallet } = useDynamicContext();
+  const lastWalletAddressRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const walletAddress = primaryWallet?.address?.toLowerCase() ?? null;
+
+    if (!walletAddress) {
+      if (lastWalletAddressRef.current) {
+        resetPostHogUser();
+      }
+      lastWalletAddressRef.current = null;
+      return;
+    }
+
+    if (lastWalletAddressRef.current === walletAddress) {
+      return;
+    }
+
+    identifyWalletUser(`wallet:${walletAddress}`, {
+      wallet_connected: true,
+      wallet_provider_present: Boolean(primaryWallet?.connector),
+    });
+    lastWalletAddressRef.current = walletAddress;
+  }, [primaryWallet]);
+
+  return null;
+}
+
 const App = () => (
   <WalletProvider>
     <TooltipProvider delayDuration={300}>
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <WalletIdentityTracker />
         <div className="relative min-h-screen bg-background">
           <AnimatedGridPattern
             numSquares={124}

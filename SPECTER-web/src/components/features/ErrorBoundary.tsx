@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { ErrorScreen } from "@/components/features/ErrorScreen";
+import { captureClientException } from "@/lib/analytics";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -22,6 +23,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("App crashed:", error, info.componentStack);
+    captureClientException(error, {
+      boundary_name: "app_error_boundary",
+      component_stack_present: Boolean(info.componentStack),
+    });
   }
 
   private handleReload = () => {
