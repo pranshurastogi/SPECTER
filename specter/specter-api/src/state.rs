@@ -539,7 +539,12 @@ impl AppState {
     ///
     /// Registry backend is selected via `REGISTRY_BACKEND` env var:
     /// - `"turso"` — durable Turso cloud DB (requires `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`)
-    /// - anything else — ephemeral in-memory (default, for local dev)
+    /// - `"memory"` — ephemeral in-memory, for local dev only (must be set explicitly)
+    ///
+    /// Any other value (including unset) is treated as a misconfiguration and
+    /// panics on startup rather than silently degrading to the ephemeral
+    /// backend — a mistyped or missing `REGISTRY_BACKEND` in production must
+    /// never fall through unnoticed to a backend without durable dedup.
     ///
     /// If `ANNOUNCEMENT_SOURCE=chain`, spawns a background ChainIndexer task
     /// that polls SPECTERAnnouncer events and publishes to the registry.
@@ -571,14 +576,21 @@ impl AppState {
                 Some(sweeps),
                 Some(db),
             )
-        } else {
-            info!("Initializing in-memory registry (ephemeral — set REGISTRY_BACKEND=turso for production)");
+        } else if backend == "memory" {
+            info!("Initializing in-memory registry (ephemeral — REGISTRY_BACKEND=memory set explicitly)");
             (
                 RegistryBackend::Memory(MemoryRegistry::new()),
                 None,
                 None,
                 None,
             )
+        } else {
+            panic!(
+                "REGISTRY_BACKEND must be set to \"turso\" or \"memory\" (got {backend:?}). \
+                 Refusing to silently fall back to the ephemeral in-memory registry — an \
+                 unset or mistyped REGISTRY_BACKEND in production would otherwise disable \
+                 durable payment dedup without any error."
+            );
         };
 
         // Load chain configuration

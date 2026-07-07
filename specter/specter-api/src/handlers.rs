@@ -607,6 +607,11 @@ fn validate_sweep_request(req: &RecordSweepsRequest) -> Result<()> {
                 "record status must be confirmed | failed | skipped_dust",
             ));
         }
+        if r.status == "confirmed" && r.tx_hash.is_empty() {
+            return Err(ApiError::validation(
+                "record tx_hash is required when status is confirmed",
+            ));
+        }
     }
     Ok(())
 }
