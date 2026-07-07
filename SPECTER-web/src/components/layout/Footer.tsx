@@ -7,6 +7,7 @@ import {
   MessageSquarePlus,
   CalendarClock,
   Presentation,
+  ShieldQuestion,
 } from "lucide-react";
 import { Button } from "@/components/ui/base/button";
 import { XLogo } from "@/components/features/insights/XLogo";
@@ -95,6 +96,10 @@ export function Footer() {
               <Presentation className="h-4 w-4 shrink-0" />
               <span>Pitch deck</span>
             </a>
+            <Link to="/i-dont-trust-specter" className={devLinkClass}>
+              <ShieldQuestion className="h-4 w-4 shrink-0" />
+              <span>I don't trust SPECTER</span>
+            </Link>
           </div>
 
           {/* Talk to us — centered, quiet, but always reachable */}
