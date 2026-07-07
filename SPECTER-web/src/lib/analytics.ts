@@ -1,7 +1,12 @@
 // Production-grade GA4 analytics for SPECTER
 // All calls are no-ops if gtag isn't available (ad-blockers, dev without GA, SSR).
 
+import posthog from "posthog-js";
+
 const GA_ID = "G-5KHLBQDNHJ";
+const POSTHOG_KEY = import.meta.env.VITE_PUBLIC_POSTHOG_KEY;
+const POSTHOG_HOST = import.meta.env.VITE_PUBLIC_POSTHOG_HOST;
+let posthogInitialized = false;
 
 declare global {
   interface Window {
@@ -14,6 +19,63 @@ function gtag(...args: unknown[]) {
   if (typeof window !== "undefined" && typeof window.gtag === "function") {
     window.gtag(...args);
   }
+}
+
+function isPostHogEnabled(): boolean {
+  return typeof window !== "undefined" && Boolean(POSTHOG_KEY && POSTHOG_HOST);
+}
+
+function sanitizePostHogParams(params?: EventParams): EventParams | undefined {
+  if (!params) return undefined;
+
+  const blockedKeys = new Set([
+    "ens_name",
+    "suins_name",
+    "recipient_name",
+    "destination",
+    "label",
+    "ref",
+    "error_message",
+  ]);
+
+  const next = Object.fromEntries(
+    Object.entries(params).filter(([key]) => !blockedKeys.has(key))
+  );
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+// ── PostHog bootstrap ───────────────────────────────────────────────────────
+
+export function initPostHog() {
+  if (!isPostHogEnabled() || posthogInitialized) {
+    return;
+  }
+
+  posthog.init(POSTHOG_KEY!, {
+    api_host: POSTHOG_HOST,
+    person_profiles: "identified_only",
+    capture_pageview: true,
+    persistence: "localStorage+cookie",
+  });
+  posthogInitialized = true;
+}
+
+export function identifyWalletUser(distinctId: string, properties?: EventParams) {
+  if (!isPostHogEnabled()) return;
+
+  posthog.identify(distinctId, sanitizePostHogParams(properties));
+}
+
+export function resetPostHogUser() {
+  if (!isPostHogEnabled()) return;
+  posthog.reset();
+}
+
+export function captureClientException(error: unknown, extra?: EventParams) {
+  if (!isPostHogEnabled()) return;
+
+  posthog.captureException(error, sanitizePostHogParams(extra));
 }
 
 // ── Page views ───────────────────────────────────────────────────────────────
@@ -33,6 +95,10 @@ export type AnalyticsChain = "ethereum" | "arbitrum" | "monad" | "sui" | "unknow
 
 export function trackEvent(eventName: string, params?: EventParams) {
   gtag("event", eventName, { send_to: GA_ID, ...params });
+
+  if (!isPostHogEnabled()) return;
+
+  posthog.capture(eventName, sanitizePostHogParams(params));
 }
 
 // ── Setup / Key Generation ───────────────────────────────────────────────────

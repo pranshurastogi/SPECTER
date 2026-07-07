@@ -338,6 +338,16 @@ Base URL: `https://backend.specterpq.com` · local: `http://localhost:3001`
 
 > Key generation and scanning are performed **client-side in the SDK** — the API deliberately exposes no endpoint that receives a secret key. Full schemas and a Postman collection: [`specter/SPECTER_API.postman_collection.json`](specter/SPECTER_API.postman_collection.json) · [docs.specterpq.com](https://docs.specterpq.com).
 
+### Ecosystem repositories
+
+| Repo | What's in it |
+|---|---|
+| [specter-sdk](https://github.com/specter-privacy/specter-sdk) | Source for `@specterpq/sdk` — the browser-first, WASM-backed client SDK |
+| [specter-contracts](https://github.com/specter-privacy/specter-contracts) | On-chain announcer contracts |
+| [playground](https://github.com/specter-privacy/playground) | Interactive demo / sandbox for trying the protocol end-to-end |
+
+**Deployed announcer contract (Monad Testnet):** [`0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC`](https://testnet.monadexplorer.com/address/0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC)
+
 ---
 
 ## 14 · Testing
@@ -375,6 +385,8 @@ cd SPECTER-web && npm test                                # frontend (vitest)
   <a href="https://docs.specterpq.com">Docs</a>
   &nbsp;·&nbsp;
   <a href="https://www.npmjs.com/package/@specterpq/sdk">SDK</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/specter-privacy/playground">Playground</a>
   &nbsp;·&nbsp;
   <a href="https://arxiv.org/pdf/2501.13733v1">Research</a>
   <br /><br />
