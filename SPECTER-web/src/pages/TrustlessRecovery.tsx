@@ -51,26 +51,31 @@ function shortAddress(addr?: string): string {
   return addr.length > 20 ? `${addr.slice(0, 10)}…${addr.slice(-8)}` : addr;
 }
 
-/** The minimal key subset recovery needs. */
+/** The key subset recovery needs. */
 interface RecoveryInput {
   viewing_pk: string;
   viewing_sk: string;
   spending_pk: string;
+  spending_sk: string;
 }
 
 type Phase = "idle" | "scanning" | "done" | "cancelled" | "error";
 
-/** Extract the three fields recovery needs from a pasted/uploaded backup. */
+/** Extract the fields recovery needs from a pasted/uploaded backup. */
 function ingest(text: string): RecoveryInput {
   const data = JSON.parse(text) as Record<string, unknown>;
   const str = (k: string) => (typeof data[k] === "string" ? (data[k] as string).trim() : "");
   const viewing_pk = str("viewing_pk");
   const viewing_sk = str("viewing_sk");
   const spending_pk = str("spending_pk");
-  if (!viewing_pk || !viewing_sk || !spending_pk) {
-    throw new Error("Keys must contain viewing_pk, viewing_sk and spending_pk");
+  const spending_sk = str("spending_sk");
+  // The spending secret is required: since the V2 protocol the spendable
+  // stealth key is derived from it (the public spend key alone only detects
+  // the address). A full specter-keys.json backup always contains it.
+  if (!viewing_pk || !viewing_sk || !spending_pk || !spending_sk) {
+    throw new Error("Keys must contain viewing_pk, viewing_sk, spending_pk and spending_sk");
   }
-  return { viewing_pk, viewing_sk, spending_pk };
+  return { viewing_pk, viewing_sk, spending_pk, spending_sk };
 }
 
 /** One recovered payment with its own reveal/verify state. */
@@ -213,7 +218,12 @@ export default function TrustlessRecovery() {
 
   const onVaultUnlock = (dk: DecryptedKeys) => {
     setLoadError(null);
-    setKeys({ viewing_pk: dk.viewing_pk, viewing_sk: dk.viewing_sk, spending_pk: dk.spending_pk });
+    setKeys({
+      viewing_pk: dk.viewing_pk,
+      viewing_sk: dk.viewing_sk,
+      spending_pk: dk.spending_pk,
+      spending_sk: dk.spending_sk,
+    });
     setPaste("");
     toast.success("Keys unlocked");
   };
@@ -456,7 +466,7 @@ export default function TrustlessRecovery() {
                 </Button>
                 <div className="flex gap-2">
                   <Input
-                    placeholder='{"viewing_pk":"...","viewing_sk":"...","spending_pk":"..."}'
+                    placeholder='{"viewing_pk":"...","viewing_sk":"...","spending_pk":"...","spending_sk":"..."}'
                     value={paste}
                     onChange={(e) => setPaste(e.target.value)}
                     className="font-mono text-xs flex-1"
