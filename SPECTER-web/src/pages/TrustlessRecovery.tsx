@@ -20,6 +20,8 @@ import {
   Zap,
   ArrowDown,
   ArrowUp,
+  Terminal,
+  ArrowRight,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -29,6 +31,7 @@ import { Card, CardContent } from "@/components/ui/base/card";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import { toast } from "@/components/ui/base/sonner";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
+import { RecoveryScriptBlock } from "@/components/features/RecoveryScriptBlock";
 import type { DecryptedKeys } from "@/lib/crypto/keyVault";
 import { formatCryptoAmount } from "@/lib/utils";
 import { DEFAULT_MONAD_RPC_URL } from "@/lib/recovery/config";
@@ -51,26 +54,31 @@ function shortAddress(addr?: string): string {
   return addr.length > 20 ? `${addr.slice(0, 10)}…${addr.slice(-8)}` : addr;
 }
 
-/** The minimal key subset recovery needs. */
+/** The key subset recovery needs. */
 interface RecoveryInput {
   viewing_pk: string;
   viewing_sk: string;
   spending_pk: string;
+  spending_sk: string;
 }
 
 type Phase = "idle" | "scanning" | "done" | "cancelled" | "error";
 
-/** Extract the three fields recovery needs from a pasted/uploaded backup. */
+/** Extract the fields recovery needs from a pasted/uploaded backup. */
 function ingest(text: string): RecoveryInput {
   const data = JSON.parse(text) as Record<string, unknown>;
   const str = (k: string) => (typeof data[k] === "string" ? (data[k] as string).trim() : "");
   const viewing_pk = str("viewing_pk");
   const viewing_sk = str("viewing_sk");
   const spending_pk = str("spending_pk");
-  if (!viewing_pk || !viewing_sk || !spending_pk) {
-    throw new Error("Keys must contain viewing_pk, viewing_sk and spending_pk");
+  const spending_sk = str("spending_sk");
+  // The spending secret is required: since the V2 protocol the spendable
+  // stealth key is derived from it (the public spend key alone only detects
+  // the address). A full specter-keys.json backup always contains it.
+  if (!viewing_pk || !viewing_sk || !spending_pk || !spending_sk) {
+    throw new Error("Keys must contain viewing_pk, viewing_sk, spending_pk and spending_sk");
   }
-  return { viewing_pk, viewing_sk, spending_pk };
+  return { viewing_pk, viewing_sk, spending_pk, spending_sk };
 }
 
 /** One recovered payment with its own reveal/verify state. */
@@ -213,7 +221,12 @@ export default function TrustlessRecovery() {
 
   const onVaultUnlock = (dk: DecryptedKeys) => {
     setLoadError(null);
-    setKeys({ viewing_pk: dk.viewing_pk, viewing_sk: dk.viewing_sk, spending_pk: dk.spending_pk });
+    setKeys({
+      viewing_pk: dk.viewing_pk,
+      viewing_sk: dk.viewing_sk,
+      spending_pk: dk.spending_pk,
+      spending_sk: dk.spending_sk,
+    });
     setPaste("");
     toast.success("Keys unlocked");
   };
@@ -456,7 +469,7 @@ export default function TrustlessRecovery() {
                 </Button>
                 <div className="flex gap-2">
                   <Input
-                    placeholder='{"viewing_pk":"...","viewing_sk":"...","spending_pk":"..."}'
+                    placeholder='{"viewing_pk":"...","viewing_sk":"...","spending_pk":"...","spending_sk":"..."}'
                     value={paste}
                     onChange={(e) => setPaste(e.target.value)}
                     className="font-mono text-xs flex-1"
@@ -644,6 +657,61 @@ export default function TrustlessRecovery() {
               )}
             </CardContent>
           </Card>
+
+          {/* The exact recovery logic as a headless, self-runnable script. */}
+          <RecoveryScriptBlock />
+
+          {/* Self-host escape hatch: this page still has to be *served* from
+              somewhere. If SPECTER's hosting is down too, run it yourself. */}
+          <div className="mt-6 rounded-xl border border-white/[0.08] bg-card/30 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 text-primary" />
+              <h2 className="font-display font-semibold text-foreground text-sm">
+                SPECTER is down? Run it yourself.
+              </h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              SPECTER is open source. Clone it and this exact recovery tool runs on your machine —
+              against a public Monad RPC, with zero SPECTER calls.
+            </p>
+            <div className="relative">
+              <pre className="text-[11px] font-mono leading-relaxed block bg-background/80 p-3 pr-12 rounded-lg border border-white/[0.08] overflow-x-auto">
+                <code>
+                  {[
+                    "git clone https://github.com/pranshurastogi/SPECTER.git",
+                    "cd SPECTER/SPECTER-web && cp .env.example .env",
+                    "npm install && npm run dev",
+                  ].map((line) => (
+                    <span key={line} className="block">
+                      <span className="select-none text-muted-foreground/60">$ </span>
+                      {line}
+                    </span>
+                  ))}
+                </code>
+              </pre>
+              <div className="absolute top-1.5 right-1.5">
+                <CopyButton
+                  text={
+                    "git clone https://github.com/pranshurastogi/SPECTER.git\n" +
+                    "cd SPECTER/SPECTER-web && cp .env.example .env\n" +
+                    "npm install && npm run dev"
+                  }
+                  showLabel={false}
+                  variant="ghost"
+                  size="icon"
+                  successMessage="Commands copied"
+                  tooltip="Copy commands"
+                />
+              </div>
+            </div>
+            <Link
+              to="/self-host"
+              className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+            >
+              Full self-host guide
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
         </div>
       </main>
 

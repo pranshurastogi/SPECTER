@@ -41,8 +41,15 @@ export interface RecoveryKeys {
   readonly viewing_pk: string;
   /** Viewing secret key (2400B hex) — decapsulates announcements. */
   readonly viewing_sk: string;
-  /** Spending public key (1184B hex) — mixed into stealth derivation. */
+  /** Spending public key (33B hex) — derives the funded stealth address. */
   readonly spending_pk: string;
+  /**
+   * Spending secret key (32B hex). Required to derive the *spendable*
+   * secp256k1 stealth private key: since the V2 (backend-aligned) protocol the
+   * stealth key is the spending secret tweaked by the ML-KEM shared secret, so
+   * the public spend key alone can only detect the address, not spend it.
+   */
+  readonly spending_sk: string;
 }
 
 /**
@@ -128,19 +135,24 @@ function matchAnnouncement(
   ann: ChainAnnouncement,
   viewingKeys: ViewingKeys,
   spendingPk: `0x${string}`,
+  spendingSk: `0x${string}`,
 ): RecoveredPayment | null {
   let result: ReturnType<typeof scanAnnouncement>;
   try {
+    // Pass the spending *secret* key so the SDK derives the spendable stealth
+    // private key (and internally verifies it controls the detected address).
+    // Without it a match yields `stealthKeys: undefined` — detection only.
     result = scanAnnouncement(
       { ephemeralCiphertext: ann.ephemeralCiphertext, viewTag: ann.viewTag },
       viewingKeys,
       spendingPk,
+      spendingSk,
     );
   } catch {
     // A malformed announcement should never abort the whole scan.
     return null;
   }
-  if (!result.isMatch) return null;
+  if (!result.isMatch || !result.stealthKeys) return null;
 
   const { ethAddress, ethPrivateKey } = result.stealthKeys;
 
@@ -209,6 +221,7 @@ export async function recoverPayments(
     secretKey: ensure0x(keys.viewing_sk),
   } as ViewingKeys;
   const spendingPk = ensure0x(keys.spending_pk);
+  const spendingSk = ensure0x(keys.spending_sk);
 
   const source = opts.source ?? "registry";
   const registryUrl = opts.registryUrl ?? SPECTER_API_BASE_URL;
@@ -225,7 +238,7 @@ export async function recoverPayments(
     signal: opts.signal,
     direction: opts.direction,
     onAnnouncement: (ann: ChainAnnouncement) => {
-      const payment = matchAnnouncement(ann, viewingKeys, spendingPk);
+      const payment = matchAnnouncement(ann, viewingKeys, spendingPk, spendingSk);
       if (payment) {
         recovered.push(payment);
         opts.onMatch?.(payment);
