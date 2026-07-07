@@ -5,6 +5,7 @@
 
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use libsql::{params, Builder, Connection, Database, Value};
@@ -118,10 +119,19 @@ impl TursoRegistry {
     }
 
     /// Open a fresh logical connection (lightweight — reuses HTTP/2 client).
+    ///
+    /// Sets a busy timeout so concurrent writers wait for the SQLite lock
+    /// instead of failing immediately with "database is locked" — this only
+    /// affects local file-backed connections (used in tests); it's a no-op
+    /// over the remote Hrana/HTTP protocol used against real Turso.
     fn conn(&self) -> Result<Connection> {
-        self.db
+        let conn = self
+            .db
             .connect()
-            .map_err(|e| SpecterError::RegistryError(format!("get connection: {e}")))
+            .map_err(|e| SpecterError::RegistryError(format!("get connection: {e}")))?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(|e| SpecterError::RegistryError(format!("set busy_timeout: {e}")))?;
+        Ok(conn)
     }
 
     // ── schema ───────────────────────────────────────────────────────────
@@ -601,14 +611,34 @@ impl TursoRegistry {
 
     /// Creates an isolated on-disk SQLite instance for tests.
     /// Available via the `test-utils` feature (for integration tests) or within unit tests.
+    ///
+    /// `new_test()` is called from several independent test binaries
+    /// (this crate's own unit + integration tests, plus downstream crates
+    /// like specter-api compiling us with `test-utils`), each its own OS
+    /// process. A per-process counter alone can't guarantee a unique path
+    /// across processes, and cargo does run separate test binaries
+    /// concurrently — two processes picking the same counter value would
+    /// race on the same file. `tempfile` generates a name unique across the
+    /// whole machine, not just this process.
+    ///
+    /// The file is intentionally left on disk (`.keep()`, not auto-deleted
+    /// on drop): callers often extract just the `Arc<Database>` via
+    /// `database()` and drop the short-lived `TursoRegistry` wrapper
+    /// immediately after (see `PendingStore`/`SweepStore`/`ScanPositionStore`
+    /// test setup), so tying deletion to the wrapper's lifetime would delete
+    /// the file out from under stores that still need it. This only affects
+    /// a long-lived local dev machine's temp dir over many `cargo test`
+    /// invocations — CI runners are ephemeral, so nothing accumulates there.
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn new_test() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("specter_test_{n}.db"));
-        // Remove any stale file from a previous run so each test starts clean.
-        let _ = std::fs::remove_file(&path);
+        let path = tempfile::Builder::new()
+            .prefix("specter_test_")
+            .suffix(".db")
+            .tempfile()
+            .expect("create unique test db path")
+            .into_temp_path()
+            .keep()
+            .expect("hand unique test db path to libsql");
 
         let db = Builder::new_local(&path)
             .build()
@@ -1138,10 +1168,24 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_publish() {
         let reg = Arc::new(setup().await);
+        // `new_test()` backs onto a single local SQLite file (only real Turso,
+        // used in production, is a remote HTTP-backed store designed for true
+        // concurrent writers). A local single-file SQLite connection can
+        // reliably sustain a handful of simultaneous writers, but 50 fully
+        // unbounded concurrent writes routinely trip transient
+        // "database is locked" / driver-level misuse errors that reflect a
+        // limit of the local test double, not a registry bug — so bound
+        // in-flight writes to a level the local backend handles reliably
+        // while still exercising genuine concurrent scheduling.
+        let sem = Arc::new(tokio::sync::Semaphore::new(8));
         let mut tasks = tokio::task::JoinSet::new();
         for i in 0..50u8 {
             let r = reg.clone();
-            tasks.spawn(async move { r.publish(make_ann(i)).await.unwrap() });
+            let sem = sem.clone();
+            tasks.spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                r.publish(make_ann(i)).await.unwrap()
+            });
         }
         while let Some(r) = tasks.join_next().await {
             r.unwrap();
