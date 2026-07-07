@@ -16,7 +16,7 @@
 //! use specter_registry::MemoryRegistry;
 //!
 //! // Create scanner with wallet keys
-//! let scanner = Scanner::new(wallet.viewing_sk(), wallet.spending_pk(), wallet.spending_sk());
+//! let scanner = Scanner::new(wallet.viewing_sk(), wallet.spending_pub());
 //!
 //! // Scan all announcements
 //! let discoveries = scanner.scan_all(&registry).await?;
@@ -210,13 +210,16 @@ impl ScanPosition {
 }
 
 /// Main scanner for discovering payments.
+///
+/// Detection is **view-only**: it needs the ML-KEM viewing secret key and the
+/// secp256k1 spending *public* key. It never touches the spending secret key —
+/// deriving the spend key is a separate, device-local step
+/// ([`specter_stealth::discovery::derive_spend_keys`]).
 pub struct Scanner {
-    /// Viewing secret key (for decapsulation)
+    /// Viewing secret key (ML-KEM, for decapsulation)
     viewing_sk: Vec<u8>,
-    /// Spending public key (for address derivation)
-    spending_pk: Vec<u8>,
-    /// Spending secret key (for private key derivation)
-    spending_sk: Vec<u8>,
+    /// Spending public key (secp256k1 compressed, 33 bytes, for address derivation)
+    spending_pub: Vec<u8>,
     /// Current scan position
     position: RwLock<ScanPosition>,
     /// Scan statistics
@@ -224,18 +227,16 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    /// Creates a new scanner with the given keys.
+    /// Creates a new view-only scanner.
     ///
     /// # Arguments
     ///
-    /// * `viewing_sk` - The viewing secret key (2400 bytes)
-    /// * `spending_pk` - The spending public key (1184 bytes)
-    /// * `spending_sk` - The spending secret key (2400 bytes)
-    pub fn new(viewing_sk: Vec<u8>, spending_pk: Vec<u8>, spending_sk: Vec<u8>) -> Self {
+    /// * `viewing_sk` - The ML-KEM viewing secret key (2400 bytes)
+    /// * `spending_pub` - The secp256k1 spending public key (33 bytes compressed)
+    pub fn new(viewing_sk: Vec<u8>, spending_pub: Vec<u8>) -> Self {
         Self {
             viewing_sk,
-            spending_pk,
-            spending_sk,
+            spending_pub,
             position: RwLock::new(ScanPosition::new()),
             stats: RwLock::new(ScanStats::new()),
         }
@@ -342,12 +343,7 @@ impl Scanner {
                 }
 
                 // Scan the announcement
-                let result = scan_announcement(
-                    &announcement,
-                    &self.viewing_sk,
-                    &self.spending_pk,
-                    &self.spending_sk,
-                );
+                let result = scan_announcement(&announcement, &self.viewing_sk, &self.spending_pub);
 
                 // Record stats
                 self.stats.write().record(&result);
@@ -449,12 +445,7 @@ impl Scanner {
                 }
 
                 // Scan
-                let result = scan_announcement(
-                    &announcement,
-                    &self.viewing_sk,
-                    &self.spending_pk,
-                    &self.spending_sk,
-                );
+                let result = scan_announcement(&announcement, &self.viewing_sk, &self.spending_pub);
 
                 self.stats.write().record(&result);
                 scanned += 1;
@@ -492,12 +483,7 @@ impl Scanner {
 
     /// Scans a single announcement.
     pub fn scan_one(&self, announcement: &Announcement) -> ScanResult {
-        let result = scan_announcement(
-            announcement,
-            &self.viewing_sk,
-            &self.spending_pk,
-            &self.spending_sk,
-        );
+        let result = scan_announcement(announcement, &self.viewing_sk, &self.spending_pub);
 
         self.stats.write().record(&result);
         result
@@ -545,7 +531,9 @@ mod tests {
     use async_trait::async_trait;
     use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
     use specter_core::resolver::EphemeralKeyResolver;
-    use specter_crypto::{compute_view_tag, encapsulate, generate_keypair};
+    use specter_crypto::{
+        compute_view_tag, encapsulate, generate_keypair, generate_spending_keypair,
+    };
     use specter_registry::MemoryRegistry;
 
     struct StubResolver {
@@ -563,13 +551,12 @@ mod tests {
     }
 
     fn setup_scanner_and_registry() -> (Scanner, MemoryRegistry, Vec<u8>) {
-        let spending = generate_keypair();
+        let spending = generate_spending_keypair();
         let viewing = generate_keypair();
 
         let scanner = Scanner::new(
             viewing.secret.as_bytes().to_vec(),
             spending.public.as_bytes().to_vec(),
-            spending.secret.as_bytes().to_vec(),
         );
 
         let registry = MemoryRegistry::new();

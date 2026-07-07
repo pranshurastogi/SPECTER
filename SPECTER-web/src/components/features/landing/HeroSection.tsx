@@ -1,8 +1,11 @@
 import { motion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
-import { Link } from "react-router-dom";
+import { BookOpen, CalendarDays } from "lucide-react";
 import { SpiralAnimation } from "@/components/ui/spiral-animation";
 import { AnimatedGridPattern } from "@/components/ui/animations/animated-grid-pattern";
+import { Button } from "@/components/ui/base/button";
+import { SCHEDULE_CALL_URL } from "@/lib/feedback";
+
+const DOCS_URL = "https://docs.specterpq.com/";
 
 export function HeroSection() {
   return (
@@ -41,7 +44,7 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.5 }}
-            className="text-white/70 text-lg md:text-xl lg:text-2xl mb-10 max-w-2xl mx-auto"
+            className="text-white/70 text-lg md:text-xl lg:text-2xl mb-16 sm:mb-24 max-w-2xl mx-auto"
             style={{ textShadow: "0 0 30px rgba(0,0,0,0.8)" }}
           >
             Send to anyone. Know no one.
@@ -51,14 +54,33 @@ export function HeroSection() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4, duration: 0.5 }}
+            className="flex flex-wrap items-center justify-center gap-4"
           >
-            <Link
-              to="/setup"
-              className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-full border border-white/20 bg-white/5 backdrop-blur-sm text-white text-lg font-display font-medium tracking-wide transition-all duration-500 hover:border-white/40 hover:bg-white/10 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] hover:scale-105"
+            {/* Primary CTA — dark "quantum" glass with a restrained brand-purple edge. */}
+            <Button
+              asChild
+              variant="quantum"
+              size="lg"
+              className="rounded-full px-6 border-primary/25 hover:border-primary/45 hover:shadow-[0_0_28px_-8px_hsl(263_70%_52%/0.55)]"
             >
-              Enter the Void
-              <ArrowRight className="h-5 w-5 transition-transform duration-300 group-hover:translate-x-1" />
-            </Link>
+              <a href={DOCS_URL} target="_blank" rel="noopener noreferrer">
+                <BookOpen className="h-4 w-4" />
+                Read the Docs
+              </a>
+            </Button>
+
+            {/* Secondary CTA — frosted purple outline, same pill silhouette. */}
+            <Button
+              asChild
+              variant="outline"
+              size="lg"
+              className="rounded-full px-6 bg-white/[0.02] backdrop-blur-sm hover:bg-primary/10"
+            >
+              <a href={SCHEDULE_CALL_URL} target="_blank" rel="noopener noreferrer">
+                <CalendarDays className="h-4 w-4" />
+                Talk to Us
+              </a>
+            </Button>
           </motion.div>
         </motion.div>
       </div>

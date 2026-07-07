@@ -158,11 +158,39 @@ impl MemoryRegistry {
 
     /// Reserves a dedup slot (parity with the Turso reserve flow). Inserts the
     /// announcement with `tx_hash = None`; a duplicate `payment_tx_hash_hmac`
-    /// returns `SpecterError::DuplicatePayment`.
+    /// returns `SpecterError::DuplicatePayment` — unless the existing row is
+    /// an un-finalized leftover from a failed publish, which is reclaimed so
+    /// the retry can proceed (parity with the Turso stale-reservation reclaim;
+    /// no age check here because this backend is single-process dev/test).
     pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
         if let Some(hmac) = &ann.payment_tx_hash_hmac {
-            if self.payment_hmac_index.contains_key(hmac) {
-                return Err(SpecterError::DuplicatePayment);
+            if let Some(existing_id) = self.payment_hmac_index.get(hmac).map(|e| *e.value()) {
+                let finalized = self
+                    .announcements
+                    .get(&existing_id)
+                    .map(|a| a.tx_hash.is_some())
+                    .unwrap_or(false);
+                if finalized {
+                    return Err(SpecterError::DuplicatePayment);
+                }
+                // Reclaim: overwrite the abandoned reservation in place.
+                let mut stored = ann.clone();
+                stored.id = existing_id;
+                stored.tx_hash = None;
+                if let Some(old) = self.announcements.insert(existing_id, stored.clone()) {
+                    self.stats.write().remove(&old);
+                    if old.view_tag != stored.view_tag {
+                        if let Some(mut bucket) = self.view_tag_index.get_mut(&old.view_tag) {
+                            bucket.retain(|&i| i != existing_id);
+                        }
+                        self.view_tag_index
+                            .entry(stored.view_tag)
+                            .or_default()
+                            .push(existing_id);
+                    }
+                }
+                self.stats.write().add(&stored);
+                return Ok(existing_id);
             }
         }
 
@@ -199,6 +227,29 @@ impl MemoryRegistry {
             }
             None => Err(SpecterError::AnnouncementNotFound(id.to_string())),
         }
+    }
+
+    /// Deletes an un-finalized reservation (relay/finalize failed) so the
+    /// payment can be re-published later. A finalized row is never touched.
+    pub async fn release_reservation(&self, id: u64, _view_tag: u8) -> Result<()> {
+        let finalized = self
+            .announcements
+            .get(&id)
+            .map(|a| a.tx_hash.is_some())
+            .unwrap_or(true); // missing row → nothing to release
+        if finalized {
+            return Ok(());
+        }
+        if let Some((_, old)) = self.announcements.remove(&id) {
+            if let Some(mut bucket) = self.view_tag_index.get_mut(&old.view_tag) {
+                bucket.retain(|&i| i != id);
+            }
+            if let Some(hmac) = &old.payment_tx_hash_hmac {
+                self.payment_hmac_index.remove(hmac);
+            }
+            self.stats.write().remove(&old);
+        }
+        Ok(())
     }
 }
 

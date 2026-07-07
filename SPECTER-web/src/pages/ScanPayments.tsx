@@ -13,11 +13,10 @@ import { Input } from "@/components/ui/base/input";
 import { Card, CardContent } from "@/components/ui/base/card";
 import {
   Scan,
-  Loader2,
-  Wallet,
   Clock,
   AlertTriangle,
   Check,
+  ChevronRight,
   Upload,
   KeyRound,
   CheckCircle2,
@@ -27,13 +26,13 @@ import {
   ExternalLink,
   HardDrive,
   HelpCircle,
-  Info,
   Lock,
   RefreshCw,
   Activity,
 } from "lucide-react";
 import { toast } from "@/components/ui/base/sonner";
-import { api, ApiError, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
+import { api, ApiError, type AnnouncementDto, type DiscoveryDto, type ScanStatsDto } from "@/lib/api";
+import { scanAnnouncementsLocal, looksLikeV1Keys, V1_KEYS_MESSAGE } from "@/lib/crypto/specter";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import {
   ArbitrumIcon,
@@ -56,9 +55,28 @@ import {
   getSendChainConfig,
   getTxChainFromBackendName,
   getTxChainFromSourceChainId,
+  type EvmTxChain,
   type TxChain,
 } from "@/lib/blockchain/sendChains";
 import { PayLinkFab } from "@/components/features/pay/PayLinkFab";
+import {
+  balanceKey,
+  fetchEvmBalances,
+  isBelowDust,
+  type BalanceMap,
+} from "@/lib/claim/balances";
+import type { SweepPlanItem } from "@/lib/claim/sweep";
+import { identityHashFromMetaAddress, type ClaimReceipt } from "@/lib/claim/receipt";
+import {
+  claimedAddressSet,
+  fetchSweepHistory,
+  mergeReceiptIntoHistory,
+  type SweepHistoryGroup,
+} from "@/lib/claim/claimApi";
+import { ClaimSheet } from "@/components/features/claim/ClaimSheet";
+import { ClaimHistory } from "@/components/features/claim/ClaimHistory";
+import { ClaimBalanceCard } from "@/components/features/claim/ClaimBalanceCard";
+import type { ClaimableChainSummary } from "@/components/features/claim/ChainPicker";
 
 type ScanState = "idle" | "loading_keys" | "scanning" | "complete" | "error";
 type KeySource = "vault" | "file" | "paste";
@@ -67,8 +85,10 @@ interface KeysFromFile {
   viewing_sk: string;
   spending_pk: string;
   spending_sk: string;
-  viewing_pk: string;
-  meta_address: string;
+  /** Present only for complete backups / vault keys. */
+  viewing_pk?: string;
+  /** Present only for complete backups / vault keys — enables claim history. */
+  meta_address?: string;
 }
 
 /**
@@ -136,13 +156,6 @@ function chainIcon(chain: TxChain | null) {
   return <HelpCircle className="h-4 w-4 text-white/40" />;
 }
 
-function chainAccentClass(chain: TxChain): string {
-  if (chain === "sui") return "text-[#4DA2FF]";
-  if (chain === "arbitrum") return "text-[#96BEDC]";
-  if (chain === "monad") return "text-[#9E7BFF]";
-  return "text-primary";
-}
-
 /** Animated integer counter — eases up to `value` whenever it changes. */
 function CountUp({ value, durationMs = 900 }: { value: number; durationMs?: number }) {
   const [display, setDisplay] = useState(0);
@@ -204,6 +217,19 @@ export default function ScanPayments() {
   const [registryTotal, setRegistryTotal] = useState<number | null>(null);
   const stageTimersRef = useRef<number[]>([]);
 
+  // Claim flow: live balances, empty-address visibility, claim sheet, history.
+  const [balances, setBalances] = useState<BalanceMap | null>(null);
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const [showEmpty, setShowEmpty] = useState(false);
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [sweepHistory, setSweepHistory] = useState<SweepHistoryGroup[]>([]);
+  // Receipts produced this session. Server recording is best-effort and can
+  // lag (or fail), so history refetches merge these back in — "Previously
+  // claimed" always reflects a claim the moment it finishes.
+  const [localReceipts, setLocalReceipts] = useState<ClaimReceipt[]>([]);
+  // Bumped after a claim finishes to re-read balances and history.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
   const clearStageTimers = useCallback(() => {
     for (const t of stageTimersRef.current) window.clearTimeout(t);
     stageTimersRef.current = [];
@@ -256,25 +282,172 @@ export default function ScanPayments() {
   const selectedPaymentAmount = selectedPayment
     ? describeDiscoveryAmount(selectedPayment, selectedPaymentChain)
     : null;
-  const totalsByChain = discoveries.reduce<Record<TxChain, { count: number; amount: number }>>(
-    (acc, discovery) => {
-      const chain = resolveDiscoveryChain(discovery);
-      if (!chain) return acc; // unknown-chain payments are listed but not totalled
-      acc[chain].count += 1;
-      acc[chain].amount += describeDiscoveryAmount(discovery, chain).value;
-      return acc;
-    },
-    {
-      ethereum: { count: 0, amount: 0 },
-      arbitrum: { count: 0, amount: 0 },
-      monad: { count: 0, amount: 0 },
-      sui: { count: 0, amount: 0 },
-    },
-  );
 
   useEffect(() => {
     setPage(0);
   }, [discoveries.length, chainFilter]);
+
+  // ── claim flow: live balances + history ─────────────────────────────────
+
+  const scanComplete = scanState === "complete";
+
+  // Live native balances for all discovered EVM addresses. Runs after every
+  // completed scan and again after a claim (refreshNonce) so claimed
+  // addresses immediately read as empty.
+  useEffect(() => {
+    if (!scanComplete || discoveries.length === 0) {
+      setBalances(null);
+      setShowEmpty(false);
+      return;
+    }
+    let cancelled = false;
+    setBalancesLoading(true);
+    const targets = discoveries.flatMap((d) => {
+      const c = resolveDiscoveryChain(d);
+      return c && c !== "sui" ? [{ chain: c, address: d.stealth_address }] : [];
+    });
+    fetchEvmBalances(targets)
+      .then((map) => {
+        if (!cancelled) setBalances(map);
+      })
+      .finally(() => {
+        if (!cancelled) setBalancesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanComplete, discoveries, refreshNonce]);
+
+  // "Previously claimed" history, keyed by the hashed identity. Best-effort:
+  // failures just leave the section hidden.
+  const historyMetaAddress = fullKeySet?.meta_address ?? keys?.meta_address ?? null;
+  useEffect(() => {
+    if (!scanComplete) {
+      setSweepHistory([]);
+      return;
+    }
+    if (!historyMetaAddress) {
+      // No identity to look history up by — this session's receipts are all we have.
+      setSweepHistory(localReceipts.reduce(mergeReceiptIntoHistory, [] as SweepHistoryGroup[]));
+      return;
+    }
+    let cancelled = false;
+    identityHashFromMetaAddress(historyMetaAddress)
+      .then(fetchSweepHistory)
+      .then((groups) => {
+        if (!cancelled) {
+          // Re-apply this session's receipts: the server copy may not have
+          // landed yet (recording is best-effort and async).
+          setSweepHistory(localReceipts.reduce(mergeReceiptIntoHistory, groups));
+        }
+      })
+      .catch(() => {
+        /* history is an enhancement — never block the scan UI */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scanComplete, historyMetaAddress, refreshNonce, localReceipts]);
+
+  const claimedSet = useMemo(() => claimedAddressSet(sweepHistory), [sweepHistory]);
+
+  /** Wei already claimed per EVM chain (recorded history) — for the balance card. */
+  const claimedByChain = useMemo(() => {
+    const m = new Map<EvmTxChain, bigint>();
+    for (const g of sweepHistory) {
+      const chain = getTxChainFromBackendName(g.chain);
+      if (!chain || chain === "sui") continue;
+      m.set(chain, (m.get(chain) ?? 0n) + g.totalAmountBase);
+    }
+    return m;
+  }, [sweepHistory]);
+
+  /** Live balance of a discovery, or null when unknown (Sui / RPC miss). */
+  const liveBalanceOf = useCallback(
+    (d: DiscoveryDto): bigint | null => {
+      const c = resolveDiscoveryChain(d);
+      if (!c || c === "sui" || !balances) return null;
+      return balances.get(balanceKey(c, d.stealth_address)) ?? null;
+    },
+    [balances],
+  );
+
+  /** Funded EVM chains (live totals) offered by the claim sheet. */
+  const claimChains = useMemo<ClaimableChainSummary[]>(() => {
+    if (!balances) return [];
+    const per = new Map<EvmTxChain, { totalWei: bigint; count: number }>();
+    const seen = new Set<string>();
+    for (const d of discoveries) {
+      const c = resolveDiscoveryChain(d);
+      if (!c || c === "sui" || !d.eth_private_key) continue;
+      const key = balanceKey(c, d.stealth_address);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const b = balances.get(key);
+      if (!b || isBelowDust(b)) continue;
+      const cur = per.get(c) ?? { totalWei: 0n, count: 0 };
+      cur.totalWei += b;
+      cur.count += 1;
+      per.set(c, cur);
+    }
+    return [...per.entries()].map(([chain, v]) => ({ chain, ...v }));
+  }, [discoveries, balances]);
+
+  const suiDiscovered = useMemo(
+    () => discoveries.some((d) => resolveDiscoveryChain(d) === "sui"),
+    [discoveries],
+  );
+
+  /** Sweep candidates for one chain: funded addresses + their derived keys. */
+  const getClaimItems = useCallback(
+    (chain: EvmTxChain): SweepPlanItem[] => {
+      if (!balances) return [];
+      const items: SweepPlanItem[] = [];
+      const seen = new Set<string>();
+      for (const d of discoveries) {
+        if (resolveDiscoveryChain(d) !== chain || !d.eth_private_key) continue;
+        const key = d.stealth_address.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const b = balances.get(balanceKey(chain, d.stealth_address));
+        if (!b || isBelowDust(b)) continue;
+        items.push({
+          address: d.stealth_address,
+          privateKey: d.eth_private_key,
+          balanceWei: b,
+        });
+      }
+      return items;
+    },
+    [discoveries, balances],
+  );
+
+  const ownStealthAddresses = useMemo(
+    () => new Set(discoveries.map((d) => d.stealth_address.toLowerCase())),
+    [discoveries],
+  );
+
+  // Empty = balances are loaded and this EVM address reads below the dust
+  // threshold (0.0001 native — zero or leftover crumbs from a past claim).
+  // Sui/unknown rows are never hidden (their live balance is unknown here).
+  const isEmptyDiscovery = useCallback(
+    (d: DiscoveryDto) => {
+      const b = liveBalanceOf(d);
+      return b !== null && isBelowDust(b);
+    },
+    [liveBalanceOf],
+  );
+  const emptyCount = useMemo(
+    () => (balances ? filteredDiscoveries.filter(isEmptyDiscovery).length : 0),
+    [balances, filteredDiscoveries, isEmptyDiscovery],
+  );
+  const visibleDiscoveries = useMemo(
+    () =>
+      balances && !showEmpty
+        ? filteredDiscoveries.filter((d) => !isEmptyDiscovery(d))
+        : filteredDiscoveries,
+    [balances, showEmpty, filteredDiscoveries, isEmptyDiscovery],
+  );
 
   useEffect(() => {
     if (selectedPayment && revealedPk) {
@@ -336,6 +509,13 @@ export default function ScanPayments() {
         setKeySource(null);
         return false;
       }
+      if (looksLikeV1Keys({ spending_pk, spending_sk })) {
+        setLoadError(V1_KEYS_MESSAGE);
+        setKeys(null);
+        setFullKeySet(null);
+        setKeySource(null);
+        return false;
+      }
       setKeys({ viewing_sk, spending_pk, spending_sk });
       setKeySource(source);
       setKeysSavedToVault(false);
@@ -384,6 +564,11 @@ export default function ScanPayments() {
       toast.error("Load keys first");
       return;
     }
+    if (looksLikeV1Keys(scanKeys)) {
+      setScanState("idle");
+      toast.error(V1_KEYS_MESSAGE);
+      return;
+    }
     const keyMethod = method ?? (keysPaste ? "paste" : "file");
     analytics.scanInitiated(keyMethod);
     setScanState("scanning");
@@ -403,12 +588,28 @@ export default function ScanPayments() {
     clearStageTimers();
     stageTimersRef.current.push(window.setTimeout(() => setScanStageIndex(1), 900));
 
-    const stripHex = (s: string) => s.replace(/^0x/i, "").trim();
     try {
-      const scanRes = await api.scanPayments({
-        viewing_sk: stripHex(scanKeys.viewing_sk),
-        spending_pk: stripHex(scanKeys.spending_pk),
-        spending_sk: stripHex(scanKeys.spending_sk),
+      // Fetch announcements (public data) then scan ENTIRELY on-device via the
+      // SDK (Rust→WASM). The viewing/spending secret keys never leave the
+      // browser — no secret is ever sent to the server.
+      const pageSize = 1000;
+      const safetyCap = 50_000;
+      let offset = 0;
+      let total = Number.POSITIVE_INFINITY;
+      const all: AnnouncementDto[] = [];
+      while (all.length < total && all.length < safetyCap) {
+        const page = await api.listAnnouncements({ limit: pageSize, offset });
+        all.push(...page.announcements);
+        total = page.total;
+        if (page.announcements.length === 0) break;
+        offset += pageSize;
+      }
+      setRegistryTotal(total === Number.POSITIVE_INFINITY ? all.length : total);
+
+      const scanRes = await scanAnnouncementsLocal(all, {
+        viewing_sk: scanKeys.viewing_sk,
+        spending_pk: scanKeys.spending_pk,
+        spending_sk: scanKeys.spending_sk,
       });
       clearStageTimers();
       // Flash the final stage as done, then reveal results.
@@ -457,6 +658,24 @@ export default function ScanPayments() {
     analytics.scanKeysLoadedFromVault();
     toast.success("Keys unlocked — scanning…");
     await handleScan(k, "vault");
+  };
+
+  /** "Change keys": back to a clean slate — drop keys, results, and history. */
+  const handleChangeKeys = () => {
+    setScanState("idle");
+    setKeys(null);
+    setFullKeySet(null);
+    setKeySource(null);
+    setKeysPaste("");
+    setLoadError(null);
+    setKeysSavedToVault(false);
+    setStats(null);
+    setDiscoveries([]);
+    setBalances(null);
+    setSweepHistory([]);
+    setLocalReceipts([]);
+    setChainFilter("all");
+    setShowEmpty(false);
   };
 
   const formatTimestamp = (ts: number) => {
@@ -531,83 +750,126 @@ export default function ScanPayments() {
           {/* Load keys + Scan */}
           <Card className="w-full border-border bg-card/50 shadow-lg rounded-xl">
             <CardContent className="p-5">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                  <KeyRound className="h-3.5 w-3.5 text-primary" />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="font-display font-semibold text-foreground text-sm">
-                    {vaultEntries.length > 0 && !keys ? "Use a different key" : "Load keys"}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">
-                    Upload or paste your JSON backup from <Link to="/setup" className="text-primary hover:underline">Setup</Link>
-                  </p>
-                </div>
-              </div>
-
-              {/* Only show UnlockSavedKeys when there are no vault entries (no quick-unlock card above) */}
-              {vaultEntries.length === 0 && (
-                <UnlockSavedKeys
-                  onUnlock={(dk: DecryptedKeys) => {
-                    setKeys({
-                      viewing_sk: dk.viewing_sk,
-                      spending_pk: dk.spending_pk,
-                      spending_sk: dk.spending_sk,
-                      viewing_pk: dk.viewing_pk,
-                      meta_address: dk.meta_address,
-                    });
-                    setKeySource("vault");
-                    setFullKeySet(null);
-                    setKeysPaste("");
-                    setLoadError(null);
-                    setSavePromptDismissed(true);
-                  }}
-                />
-              )}
-
-              <div className="space-y-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) loadKeysFromFile(f);
-                    e.target.value = "";
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="default"
-                  className="w-full"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload JSON
-                </Button>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder='{"viewing_sk":"...",...}'
-                    value={keysPaste}
-                    onChange={(e) => setKeysPaste(e.target.value)}
-                    className="font-mono text-xs flex-1"
-                  />
+              {/* Once a scan is running or done the whole key-loading form
+                  collapses to one line — the results own the card. */}
+              {scanState !== "idle" && keys ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                    <KeyRound className="h-3.5 w-3.5 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">Keys loaded</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {keySource === "vault"
+                        ? "from a saved identity"
+                        : keySource === "file"
+                          ? "from your JSON backup"
+                          : "from pasted JSON"}
+                      {" · "}never leave this device
+                    </p>
+                  </div>
                   <Button
-                    variant="outline"
-                    size="default"
-                    onClick={loadKeysFromPaste}
-                    disabled={!keysPaste.trim()}
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleScan()}
+                    disabled={scanState === "scanning"}
                   >
-                    Load
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 mr-1.5 ${scanState === "scanning" ? "animate-spin" : ""}`}
+                    />
+                    Rescan
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleChangeKeys}
+                    disabled={scanState === "scanning"}
+                    className="text-muted-foreground"
+                  >
+                    Change
                   </Button>
                 </div>
-              </div>
-              {keys && (
-                <div className="specter-confirm mt-3">
-                  <Lock className="h-3.5 w-3.5" />
-                  <span className="specter-confirm-text">Keys loaded — ready to scan</span>
-                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                      <KeyRound className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="font-display font-semibold text-foreground text-sm">
+                        {vaultEntries.length > 0 && !keys ? "Use a different key" : "Load keys"}
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Upload or paste your JSON backup from <Link to="/setup" className="text-primary hover:underline">Setup</Link>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Only show UnlockSavedKeys when there are no vault entries (no quick-unlock card above) */}
+                  {vaultEntries.length === 0 && (
+                    <UnlockSavedKeys
+                      onUnlock={(dk: DecryptedKeys) => {
+                        setKeys({
+                          viewing_sk: dk.viewing_sk,
+                          spending_pk: dk.spending_pk,
+                          spending_sk: dk.spending_sk,
+                          viewing_pk: dk.viewing_pk,
+                          meta_address: dk.meta_address,
+                        });
+                        setKeySource("vault");
+                        setFullKeySet(null);
+                        setKeysPaste("");
+                        setLoadError(null);
+                        setSavePromptDismissed(true);
+                      }}
+                    />
+                  )}
+
+                  <div className="space-y-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) loadKeysFromFile(f);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="default"
+                      className="w-full"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload JSON
+                    </Button>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder='{"viewing_sk":"...",...}'
+                        value={keysPaste}
+                        onChange={(e) => setKeysPaste(e.target.value)}
+                        className="font-mono text-xs flex-1"
+                      />
+                      <Button
+                        variant="outline"
+                        size="default"
+                        onClick={loadKeysFromPaste}
+                        disabled={!keysPaste.trim()}
+                      >
+                        Load
+                      </Button>
+                    </div>
+                  </div>
+                  {keys && (
+                    <div className="specter-confirm mt-3">
+                      <Lock className="h-3.5 w-3.5" />
+                      <span className="specter-confirm-text">Keys loaded — ready to scan</span>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Offer local encryption for uploaded/pasted backups — same
@@ -662,27 +924,20 @@ export default function ScanPayments() {
                 </div>
               )}
 
-              <div className="mt-6">
-                <Button
-                  variant="quantum"
-                  size="lg"
-                  onClick={() => handleScan()}
-                  disabled={!keys || scanState === "scanning"}
-                  className="w-full"
-                >
-                  {scanState === "scanning" ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Scanning…
-                    </>
-                  ) : (
-                    <>
-                      <Scan className="h-4 w-4 mr-2" />
-                      Start scan
-                    </>
-                  )}
-                </Button>
-              </div>
+              {scanState === "idle" && (
+                <div className="mt-6">
+                  <Button
+                    variant="quantum"
+                    size="lg"
+                    onClick={() => handleScan()}
+                    disabled={!keys}
+                    className="w-full"
+                  >
+                    <Scan className="h-4 w-4 mr-2" />
+                    Start scan
+                  </Button>
+                </div>
+              )}
 
               {/* Live scan pipeline — shows which stage is running */}
               <AnimatePresence>
@@ -750,6 +1005,17 @@ export default function ScanPayments() {
                       </span>
                     </motion.div>
 
+                    {/* Live claimable balance per chain + the claim action */}
+                    {discoveries.length > 0 && (
+                      <ClaimBalanceCard
+                        loading={balancesLoading}
+                        chains={claimChains}
+                        claimedByChain={claimedByChain}
+                        suiFunded={suiDiscovered}
+                        onClaim={() => setClaimOpen(true)}
+                      />
+                    )}
+
                     {/* Scan statistics from the backend */}
                     {stats && (
                       <motion.div
@@ -797,35 +1063,6 @@ export default function ScanPayments() {
                         </div>
                       </motion.div>
                     )}
-                    {discoveries.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2">
-                        {(Object.keys(totalsByChain) as TxChain[])
-                          .filter((chain) => totalsByChain[chain].count > 0)
-                          .map((chain, i) => {
-                            const cfg = getSendChainConfig(chain);
-                            const total = totalsByChain[chain];
-                            return (
-                              <motion.div
-                                key={chain}
-                                initial={{ opacity: 0, y: 8 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.15 + i * 0.06 }}
-                                whileHover={{ y: -2 }}
-                                className="rounded-lg border border-white/[0.08] bg-black/25 px-2.5 py-2 transition-colors hover:border-white/[0.16] hover:bg-black/40"
-                              >
-                                <div className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${chainAccentClass(chain)}`}>
-                                  {chainIcon(chain)}
-                                  {cfg.shortLabel}
-                                </div>
-                                <div className="text-xs text-white/70 mt-1">
-                                  {formatCryptoAmount(total.amount.toFixed(6))} {cfg.currencySymbol}
-                                </div>
-                                <div className="text-[10px] text-white/35">{total.count} payment{total.count !== 1 ? "s" : ""}</div>
-                              </motion.div>
-                            );
-                          })}
-                      </div>
-                    )}
                     <div className="flex flex-wrap gap-2">
                       {chainFilters.map((filter) => {
                         const active = chainFilter === filter;
@@ -847,13 +1084,35 @@ export default function ScanPayments() {
                         );
                       })}
                     </div>
+                    {/* Empty addresses stay hidden by default to keep the list short. */}
+                    {balances && emptyCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowEmpty((v) => !v)}
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-1.5 text-[11px] text-white/45 hover:text-white/75 hover:bg-white/[0.04] transition-colors"
+                      >
+                        {showEmpty ? (
+                          <EyeOff className="h-3 w-3" />
+                        ) : (
+                          <Eye className="h-3 w-3" />
+                        )}
+                        {showEmpty
+                          ? `Hide ${emptyCount} empty address${emptyCount !== 1 ? "es" : ""}`
+                          : `Show ${emptyCount} empty address${emptyCount !== 1 ? "es" : ""}`}
+                      </button>
+                    )}
+
                     <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,0.1)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb:hover]:bg-white/20">
-                      {filteredDiscoveries.map((d, i) => {
+                      {visibleDiscoveries.map((d, i) => {
                         const mappedChain = resolveDiscoveryChain(d);
                         const addr = mappedChain === "sui" ? d.stealth_sui_address : d.stealth_address;
                         const shortAddr = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : addr;
                         const chainCfg = mappedChain ? getSendChainConfig(mappedChain) : null;
                         const amount = describeDiscoveryAmount(d, mappedChain);
+                        const liveBalance = liveBalanceOf(d);
+                        const isDustBalance = liveBalance !== null && isBelowDust(liveBalance);
+                        const isClaimed =
+                          isDustBalance && claimedSet.has(d.stealth_address.toLowerCase());
                         return (
                           <motion.div
                             key={`${d.stealth_address}-${d.announcement_id}`}
@@ -871,28 +1130,55 @@ export default function ScanPayments() {
                               {chainIcon(mappedChain)}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap text-xs">
-                                <span className="font-mono truncate" title={addr}>
-                                  {shortAddr}
-                                </span>
-                                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/55">
-                                  {chainCfg?.shortLabel ?? "Unknown"}
-                                </span>
-                                {amount.display && (
-                                  <span className="font-medium text-foreground shrink-0 inline-flex items-center gap-1">
-                                    {amount.display} {discoveryCurrencySymbol(d, mappedChain)}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                              <p className="font-mono text-xs truncate" title={addr}>
+                                {shortAddr}
+                              </p>
+                              <p className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5">
                                 <Clock className="h-3 w-3" />
                                 {formatTimestamp(d.timestamp)}
-                              </div>
+                                <span className="text-white/25">·</span>
+                                {chainCfg?.shortLabel ?? "Unknown"}
+                              </p>
                             </div>
+                            {/* One value on the right: live balance when we
+                                know it, the claimed/empty state when swept,
+                                or the announced amount as a fallback. Yellow
+                                channel payments always show their announced
+                                USDC — the native balance says nothing about
+                                the channel settlement. */}
+                            {d.channel_id && amount.display ? (
+                              <span className="font-mono text-xs text-white/75 tabular-nums shrink-0">
+                                {amount.display} {discoveryCurrencySymbol(d, mappedChain)}
+                              </span>
+                            ) : liveBalance !== null && !isDustBalance && mappedChain ? (
+                              <span className="font-mono text-xs text-emerald-400/90 tabular-nums shrink-0">
+                                {formatCryptoAmount(
+                                  formatUnits(liveBalance, getChainDecimals(mappedChain)),
+                                )}{" "}
+                                {chainCfg?.currencySymbol}
+                              </span>
+                            ) : isClaimed ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/50 shrink-0">
+                                <Check className="h-2.5 w-2.5" />
+                                Claimed
+                              </span>
+                            ) : isDustBalance ? (
+                              <span className="inline-flex items-center rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/40 shrink-0">
+                                Empty
+                              </span>
+                            ) : amount.display ? (
+                              <span className="font-mono text-xs text-white/75 tabular-nums shrink-0">
+                                {amount.display} {discoveryCurrencySymbol(d, mappedChain)}
+                              </span>
+                            ) : null}
+                            <ChevronRight className="h-3.5 w-3.5 text-white/25 shrink-0" />
                           </motion.div>
                         );
                       })}
                     </div>
+
+                    {/* Previously claimed — server-side history for this identity */}
+                    <ClaimHistory groups={sweepHistory} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -905,6 +1191,26 @@ export default function ScanPayments() {
 
       {/* Floating pay-link launcher (keeps scanning as the page's hero) */}
       <PayLinkFab />
+
+      {/* Claim funds — sweep funded stealth addresses to a wallet, in-browser */}
+      <ClaimSheet
+        open={claimOpen}
+        onClose={() => setClaimOpen(false)}
+        chains={claimChains}
+        suiFunded={suiDiscovered}
+        getItems={getClaimItems}
+        ownStealthAddresses={ownStealthAddresses}
+        metaAddress={historyMetaAddress}
+        onClaimed={(receipt) => {
+          // Show the claim in history immediately — the server record is
+          // best-effort and may lag behind the refetch triggered below.
+          if (receipt.confirmed > 0) {
+            setLocalReceipts((prev) => [...prev, receipt]);
+            setSweepHistory((prev) => mergeReceiptIntoHistory(prev, receipt));
+          }
+          setRefreshNonce((n) => n + 1);
+        }}
+      />
 
       {/* Payment detail modal */}
       <AnimatePresence>

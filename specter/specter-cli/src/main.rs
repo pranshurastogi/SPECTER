@@ -14,7 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use specter_api::{ApiConfig, ApiServer};
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, KyberPublicKey, MetaAddress};
-use specter_crypto::generate_keypair;
+use specter_crypto::{generate_keypair, generate_spending_keypair};
 use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::MemoryRegistry;
 use specter_stealth::create_stealth_payment;
@@ -117,22 +117,23 @@ async fn main() -> Result<()> {
 async fn cmd_generate(output: Option<PathBuf>) -> Result<()> {
     println!("{}", "🔑 Generating SPECTER keys...".cyan().bold());
 
-    let spending = generate_keypair();
+    let spending = generate_spending_keypair();
     let viewing = generate_keypair();
 
     let meta = MetaAddress::new(
-        KyberPublicKey::from_array(*spending.public.as_array()),
+        spending.public.clone(),
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
     // No `view_tag` field: SPECTER view tags are per-payment (derived from the
     // Kyber shared secret) and have no meaning at the wallet level.
     let keys_json = serde_json::json!({
-        "spending_pk": hex::encode(spending.public.as_bytes()),
+        "spending_pub": spending.public.to_hex(),
         "spending_sk": hex::encode(spending.secret.as_bytes()),
         "viewing_pk": hex::encode(viewing.public.as_bytes()),
         "viewing_sk": hex::encode(viewing.secret.as_bytes()),
         "meta_address": meta.to_hex(),
+        "protocol_version": specter_core::constants::PROTOCOL_VERSION,
     });
 
     if let Some(path) = output {
@@ -178,7 +179,7 @@ async fn cmd_resolve(name: &str, rpc_url: Option<String>) -> Result<()> {
     println!(
         "   {} {}...",
         "Spending PK:".dimmed(),
-        &meta.spending_pk.to_hex()[..32]
+        &meta.spending_pub.to_hex()[..32]
     );
     println!(
         "   {} {}...",
@@ -274,15 +275,10 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
             .as_str()
             .context("Missing viewing_sk")?,
     )?;
-    let spending_pk = hex::decode(
-        keys_json["spending_pk"]
+    let spending_pub = hex::decode(
+        keys_json["spending_pub"]
             .as_str()
-            .context("Missing spending_pk")?,
-    )?;
-    let spending_sk = hex::decode(
-        keys_json["spending_sk"]
-            .as_str()
-            .context("Missing spending_sk")?,
+            .context("Missing spending_pub (regenerate keys — v1 files are unsupported)")?,
     )?;
 
     // Load announcements
@@ -315,13 +311,9 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
             .progress_chars("#>-"),
     );
 
-    // Scan announcements
-    let discoveries = specter_stealth::discovery::scan_announcements(
-        &announcements,
-        &viewing_sk,
-        &spending_pk,
-        &spending_sk,
-    );
+    // Scan announcements (view-only: viewing_sk + spending_pub).
+    let discoveries =
+        specter_stealth::discovery::scan_announcements(&announcements, &viewing_sk, &spending_pub);
 
     pb.finish_with_message("done");
 
@@ -329,11 +321,11 @@ async fn cmd_scan(keys_path: &PathBuf, registry_path: Option<&std::path::Path>) 
         println!("\n{}", "No payments found.".yellow());
     } else {
         println!("\n{} {} payment(s) found:", "✅".green(), discoveries.len());
-        for (idx, keys) in &discoveries {
+        for (idx, payment) in &discoveries {
             println!(
                 "   {} {}",
                 "Address:".green(),
-                keys.address.to_checksum_string()
+                payment.address.to_checksum_string()
             );
             println!("      Announcement #{}", idx); // Todo: Use actual ID if available
         }
@@ -374,7 +366,7 @@ async fn cmd_bench(count: usize) -> Result<()> {
     // Generate keys
     println!("\n{}", "1. Generating keys...".dimmed());
     let start = std::time::Instant::now();
-    let spending = generate_keypair();
+    let spending = generate_spending_keypair();
     let viewing = generate_keypair();
     println!("   ✓ Key generation: {:?}", start.elapsed());
 
@@ -382,7 +374,7 @@ async fn cmd_bench(count: usize) -> Result<()> {
     println!("\n{}", "2. Creating announcements...".dimmed());
     let registry = MemoryRegistry::new();
     let meta = MetaAddress::new(
-        KyberPublicKey::from_array(*spending.public.as_array()),
+        spending.public.clone(),
         KyberPublicKey::from_array(*viewing.public.as_array()),
     );
 
@@ -422,7 +414,6 @@ async fn cmd_bench(count: usize) -> Result<()> {
         &announcements,
         viewing.secret.as_bytes(),
         spending.public.as_bytes(),
-        spending.secret.as_bytes(),
     );
     let scan_time = start.elapsed();
 

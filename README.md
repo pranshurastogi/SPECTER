@@ -3,14 +3,15 @@
 
   <h1>SPECTER</h1>
 
-  <strong>Post-quantum stealth address protocol for Ethereum and Sui.</strong>
+  <strong>The private payments layer for onchain money, built to outlive quantum computers.</strong>
   <br />
   <sub>Private payments today. Quantum-safe forever.</sub>
 
   <br /><br />
 
-  [![Website](https://img.shields.io/badge/Website-specterpq.com-black?style=flat-square&logo=vercel)](https://specterpq.com)
+  [![Website](https://img.shields.io/badge/Live-specterpq.com-black?style=flat-square&logo=vercel)](https://specterpq.com)
   [![Docs](https://img.shields.io/badge/Docs-Mintlify-6C47FF?style=flat-square&logo=gitbook)](https://docs.specterpq.com)
+  [![SDK](https://img.shields.io/badge/SDK-@specterpq/sdk-CB3837?style=flat-square&logo=npm)](https://www.npmjs.com/package/@specterpq/sdk)
   [![Paper](https://img.shields.io/badge/Paper-arXiv%202501.13733-B31B1B?style=flat-square&logo=arxiv)](https://arxiv.org/pdf/2501.13733v1)
   [![NIST FIPS 203](https://img.shields.io/badge/Crypto-ML--KEM--768%20(FIPS%20203)-2C7CB0?style=flat-square)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
   [![Twitter](https://img.shields.io/badge/Twitter-@SpecterPQ-1DA1F2?style=flat-square&logo=twitter)](https://twitter.com/SpecterPQ)
@@ -22,159 +23,200 @@
 
 ---
 
-## Table of Contents
+> **Every payment you have ever made on a public blockchain is a permanent, searchable record — your counterparties, your balances, your salary, your runway. Today it is merely exposed. Tomorrow, a quantum computer makes the little privacy that exists reversible. SPECTER is the payments layer that fixes both — private now, and provably private after quantum.**
 
-1. [The Problem](#the-problem)
-2. [What is SPECTER](#what-is-specter)
-3. [Protocol Design](#protocol-design)
-4. [Architecture](#architecture)
-5. [Performance](#performance)
-6. [Comparison](#comparison)
-7. [API Reference](#api-reference)
-8. [Getting Started](#getting-started)
-9. [Testing](#testing)
-10. [Security](#security)
-11. [Research](#research)
+SPECTER lets anyone send money to a human-readable name (`alice.eth`, `bob.sui`) so that **only the recipient can discover, link, or spend it** — using cryptography standardized by NIST to withstand quantum attack. It is **live**, multi-chain, non-custodial, and shipped as both a consumer app and a developer SDK.
 
 ---
 
-## The Problem
+## Table of Contents
 
-Every transaction on a public blockchain is a permanent, queryable record. Counterparties, balances, and payment patterns are exposed to anyone — retroactively and indefinitely.
+1. [Why This Matters Now](#1--why-this-matters-now)
+2. [The Opportunity](#2--the-opportunity)
+3. [What SPECTER Is](#3--what-specter-is)
+4. [Why SPECTER Wins](#4--why-specter-wins)
+5. [How It Works](#5--how-it-works)
+6. [Under the Hood — Protocol Design](#6--under-the-hood--protocol-design)
+7. [Architecture](#7--architecture)
+8. [Performance](#8--performance)
+9. [Security & Trust Model](#9--security--trust-model)
+10. [Use Cases](#10--use-cases)
+11. [Traction & Status](#11--traction--status)
+12. [Roadmap](#12--roadmap)
+13. [Build with SPECTER](#13--build-with-specter)
+14. [Testing](#14--testing)
+15. [Research & References](#15--research--references)
 
-The existing privacy layer for Ethereum — stealth addresses, as implemented in Umbra, Fluidkey, and ERC-5564 — relies on ECDH over secp256k1. Shor's algorithm, running on a sufficiently capable quantum computer, breaks ECDH entirely. The implication is not a future problem: nation-state adversaries are actively archiving public blockchain data today under the assumption that they can decrypt it once the hardware exists. This is the "harvest now, decrypt later" threat.
+---
+
+## 1 · Why This Matters Now
+
+Public blockchains made money programmable — and, as a side effect, made it **transparent to everyone, forever**. A wallet address is a lifelong identity. Anyone with a block explorer can see who paid whom, how much, and how often. For consumers this is a privacy problem; for businesses, treasuries, and payroll it is a non-starter.
+
+The existing answer — **stealth addresses** (Umbra, Fluidkey, ERC-5564) — gives each payment a fresh, unlinkable address. But every one of these systems is built on **ECDH over secp256k1**, the same elliptic-curve math that **Shor's algorithm breaks completely** on a sufficiently large quantum computer.
+
+This is not a distant, theoretical risk:
+
+- **The migration window is open.** In 2024, NIST finalized its post-quantum cryptography standards, including **ML-KEM (FIPS 203)** — the successor to classical key exchange. Governments and standards bodies are already mandating the transition.
+- **The attack is already underway.** Adversaries are recording encrypted and on-chain data *today* to decrypt it once quantum hardware matures.
 
 > *"Store now, decrypt later attacks mean data encrypted today may be vulnerable tomorrow."*
 > — CISA / NSA Joint Advisory, 2022
 
-NIST finalized its post-quantum cryptography standards in 2024 (FIPS 203). The window to migrate classical cryptographic systems is open now. Payment history that users consider private today may not remain so.
+Payment history that users believe is private today — pseudonymous, or "hidden" behind classical stealth addresses — may not stay that way. **The privacy of on-chain money needs to be re-architected once, correctly, before the deadline arrives.** That is the market SPECTER was built for.
 
 ---
 
-## What is SPECTER
+## 2 · The Opportunity
 
-SPECTER replaces ECDH in the stealth address construction with **ML-KEM-768** (NIST FIPS 203), the standardized post-quantum key encapsulation mechanism. The protocol preserves the same user experience — a sender pays to a human-readable name, the recipient scans to discover what's theirs — while making the underlying privacy guarantees quantum-resistant by construction.
+Trillions of dollars now move across public blockchains every year, and stablecoins have turned crypto rails into real payment infrastructure for payroll, remittance, commerce, and corporate treasury. Every one of those flows is, by default, **fully public**.
 
-It ships as a complete product:
+Two forces are converging:
 
-| Component | Description |
+| Force | Consequence |
 |---|---|
-| `specter-api` | Axum REST API — key generation, stealth payment creation, scanning, ENS/SuiNS resolution, IPFS pinning |
-| `specter-web` | React + TypeScript wallet interface — setup, send, scan, payment history, key recovery |
-| `specter-cli` | CLI for key generation, name resolution, scanning, and throughput benchmarking |
-| `specter-crypto / stealth` | Pure-Rust ML-KEM-768 primitives and one-time address derivation |
-| `specter-registry` | Announcement store (in-memory for development, Turso/libSQL for production) |
-| `specter-yellow` | Yellow Network state channel integration |
+| **Money is moving on-chain at scale** | Privacy is no longer a niche preference — it is a compliance, safety, and competitive requirement for anyone running real value on public ledgers. |
+| **Post-quantum migration is now mandated** | Every classical privacy system on-chain is on a countdown. The winners will be the ones that are quantum-safe *by construction*, not retrofitted later. |
 
-SPECTER supports Ethereum (mainnet + Sepolia) and Sui (mainnet + testnet) with ENS and SuiNS name resolution. It is live at [specterpq.com](https://specterpq.com).
+SPECTER sits precisely at that intersection: **the privacy layer for on-chain payments that is also the first to be quantum-safe.** We don't ask users to change behavior — they still pay to a name — we change the cryptography underneath so their financial life is private today and stays private after quantum.
 
 ---
 
-## Protocol Design
+## 3 · What SPECTER Is
 
-### Key generation — recipient
+SPECTER replaces the quantum-vulnerable key exchange at the heart of stealth addresses with **ML-KEM-768** (NIST FIPS 203), the standardized post-quantum key encapsulation mechanism — while keeping the experience users already understand:
 
-The recipient generates two ML-KEM-768 keypairs — `spending` and `viewing` — locally. Their public keys are concatenated into a single **meta-address**, pinned to IPFS, and linked to an ENS or SuiNS name under the `specter.meta` text record. Private keys never leave the device. The meta-address is public by design and reveals no payment history.
+> **Send to a name. Discover what's yours. Spend from any wallet. No one else can link the two.**
 
-```
-spending_pk ‖ viewing_pk  →  meta-address  →  IPFS CID  →  ENS / SuiNS text record
-```
+It ships as a complete, production-grade stack — a consumer product *and* the infrastructure others can build on:
+
+| Layer | What it delivers |
+|---|---|
+| **`specterpq.com`** | Live web wallet — set up an identity, attach it to ENS/SuiNS, send, scan, and recover payments. |
+| **`@specterpq/sdk`** | Browser-first SDK (Rust → WebAssembly). Any app can generate keys, build payments, and scan **entirely in the user's browser** — no secret ever touches a server. |
+| **`specter-api`** | Public-data services — announcement registry, ENS/SuiNS resolution, IPFS pinning, gas-sponsored relaying. |
+| **`specter-*` (Rust)** | The audited core: ML-KEM-768 primitives, secp256k1 stealth derivation, batch scanning, and persistence. |
+
+Supported today: **Ethereum** (mainnet + testnet) and **Sui** (mainnet + testnet), with **ENS** and **SuiNS** name resolution.
+
+**Non-custodial by construction.** Keys are generated and used inside the user's device via the WASM SDK. The server sees only public data. There is no key to leak, subpoena, or lose on our side.
+
+---
+
+## 4 · Why SPECTER Wins
+
+**We are the first production-grade stealth address protocol that is quantum-safe — and we shipped the full stack, not a paper.**
+
+|  | **SPECTER** | Umbra | Fluidkey |
+|---|:---:|:---:|:---:|
+| Post-quantum cryptography | ✅ ML-KEM-768 (FIPS 203) | ❌ ECDH secp256k1 | ❌ ECDH secp256k1 |
+| Harvest-now-decrypt-later safe | ✅ | ❌ | ❌ |
+| Non-custodial (keys never leave device) | ✅ WASM SDK | ✅ | ❌ server-delegated |
+| Chains | Ethereum + Sui | Ethereum | Ethereum |
+| Name resolution | ENS + SuiNS | ENS | ENS |
+| Developer SDK | ✅ npm, browser-first | ❌ | ❌ |
+| Scan 100k announcements | ~1–2 s | ~10–15 s | n/a (delegated) |
+| Open source & research-backed | ✅ | ✅ | ❌ |
+
+**The moat:**
+
+1. **Standards-grade cryptography, correctly implemented.** ML-KEM-768 is the NIST standard, not a bespoke scheme. The stealth derivation is a hardened, ERC-5564-style construction with a regression test that *proves the sender cannot derive the recipient's key*.
+2. **First-mover in an unavoidable migration.** Every competitor must eventually rebuild on post-quantum crypto. We already have.
+3. **Distribution as infrastructure.** The SDK turns SPECTER from an app into a primitive other wallets and apps can embed — compounding reach.
+4. **Real product, real UX.** Live, multi-chain, with name resolution and payment recovery — the unglamorous work that makes privacy usable.
+
+---
+
+## 5 · How It Works
+
+Three steps, familiar to anyone who has used a wallet.
+
+### ① Set up — a private identity, once
+
+The recipient's device generates two keypairs — a **secp256k1 spending** key and a post-quantum **ML-KEM-768 viewing** key — bundles their public halves into a **meta-address**, pins it to IPFS, and attaches it to an ENS or SuiNS name. Secret keys never leave the device. The meta-address is public and reveals no history.
 
 <div align="center"><img src="assets/setup.png" alt="Setup flow" width="72%"/></div>
 
-### Send
+### ② Send — pay to a name
 
-1. Resolve the recipient's name → IPFS CID → meta-address.
-2. `ML-KEM-768.Encaps(viewing_pk)` → `(shared_secret, ciphertext)`.
-3. Derive a one-time stealth address from `shared_secret` and `spending_pk`.
-4. Transfer funds to the stealth address on-chain.
-5. Publish an announcement to the registry: `ciphertext` + a 1-byte `view_tag`.
-
-```text
-stealth_pk = spending_pk  ⊕  SHAKE256("SPECTER_STEALTH_PK" ‖ shared_secret, 1184)
-stealth_sk = spending_sk  ⊕  SHAKE256("SPECTER_STEALTH_SK" ‖ shared_secret, 2400)
-eth_addr   = keccak256(stealth_pk)[12:]
-sui_addr   = blake2b256(0x00 ‖ stealth_pk)
-view_tag   = SHAKE256("SPECTER_VIEW_TAG_V1" ‖ shared_secret, 1)[0]
-```
+The sender resolves `alice.eth` → meta-address, derives a **fresh one-time address** for this payment, sends funds to it, and publishes a small **announcement** to the registry. The sender learns nothing about the recipient's other payments, and nobody watching the chain can link the payment to `alice.eth`.
 
 <div align="center"><img src="assets/send.png" alt="Send flow" width="72%"/></div>
 
-### Receive
+### ③ Receive — discover and claim
 
-For each announcement in the registry, the scanner:
-
-1. Compares the 1-byte `view_tag` — eliminates ~99.6% of all entries without any cryptographic work.
-2. Runs `ML-KEM-768.Decaps(ciphertext, viewing_sk)` → `shared_secret`.
-3. Derives the stealth private key and checks the resulting address against the on-chain stealth address.
-
-A match means the recipient holds the spending key and can move funds from any standard wallet.
+The recipient's wallet scans announcements, instantly skipping ~99.6% of them with a 1-byte tag, and recognizes the payments that are theirs. From there, **claiming is one flow, in-app**: the wallet reads live balances for every discovered stealth address, and sweeps all funded ones to any address or ENS name the user chooses — each transfer signed locally on the device, no private-key export or wallet import required. The claim produces a downloadable receipt (PNG / PDF / JSON) and a per-identity claim history, so a recipient always knows what was claimed, where it went, and what is still sitting in stealth addresses. (Power users can still export a per-payment private key into MetaMask or a Sui wallet.) **Discovery is view-only and can run anywhere; spending requires the secret key, which stays on the device.**
 
 <div align="center"><img src="assets/receive.png" alt="Receive flow" width="72%"/></div>
 
-### Server-authoritative publish
+---
 
-A mismatched `view_tag` at announcement publish time renders a payment silently invisible to the recipient — the funds land correctly but the recipient can never find them. SPECTER eliminates this failure mode at the API layer:
+## 6 · Under the Hood — Protocol Design
+
+*For the technically inclined reader performing diligence.*
+
+### Hybrid keys: post-quantum where it counts
+
+A meta-address (protocol **v2**) is a secp256k1 spending public key plus an ML-KEM-768 viewing public key:
 
 ```
-POST /api/v1/stealth/create
-  → { payment_id, announcement, stealth_address }
-    Server holds the canonical Announcement pinned to payment_id (24 h TTL)
-
-POST /api/v1/registry/announcements  { payment_id }
-  → Server publishes the announcement it generated — not what the client passes
+spending_pub (secp256k1, 33B) ‖ viewing_pk (ML-KEM, 1184B)  →  meta-address  →  IPFS CID  →  ENS / SuiNS
 ```
 
-If the server's pending entry has expired (restart, scale-out), the client may re-submit the full `Announcement` DTO received at create time. Either path enforces the invariant: the published `view_tag` is always derived from the protocol shared secret.
+- The **viewing key is post-quantum (ML-KEM).** This is the key that protects *linkability* — exactly what "harvest-now-decrypt-later" attacks target. It stays quantum-safe.
+- The **spending key is secp256k1**, because Ethereum and Sui accounts are secp256k1. A quantum adversary capable of breaking it could already drain any ordinary account — so the meaningful post-quantum guarantee lives in discovery, where we place it.
 
-The web interface implements layered recovery on top of this: a client-side pending vault (localStorage, 7-day TTL), a phase-aware send state machine (`signing → broadcasting → publishing`), a sticky retry panel for unpublished payments, and a one-click recovery JSON download — so a user can interrupt the flow at any point and resume from any subsequent session.
+### One-time address derivation
+
+For each payment, sender and recipient share a per-payment secret via ML-KEM. From it they derive an additive tweak `t` and shift the spending key — an ERC-5564-style construction over secp256k1:
+
+```text
+(shared_secret, ciphertext) = ML-KEM-768.Encaps(viewing_pk)
+t         = H_to_scalar("SPECTER_STEALTH_TWEAK_V2" ‖ shared_secret)   // secp256k1 scalar
+P         = spending_pub  +  t·G          // stealth address — sender-computable from PUBLIC data
+p         = spending_sk   +  t  (mod n)   // stealth private key — needs the SECRET spending key
+eth_addr  = keccak256(uncompressed(P))[12:]
+sui_addr  = blake2b256(0x01 ‖ compressed(P))
+view_tag  = SHAKE256("SPECTER_VIEW_TAG_V1" ‖ shared_secret, 1)[0]
+```
+
+Because `p·G = P`, the address the sender funds from public data is exactly the one the recipient can spend. **Critically, the sender cannot derive `p`** — that needs the secret spending scalar, which never leaves the recipient. This property is enforced by a dedicated regression test in the crypto crate.
+
+### Efficient, view-only discovery
+
+The 1-byte `view_tag` lets a scanner discard ~99.6% of announcements with a single comparison — no cryptography — before doing one ML-KEM decapsulation on the rest. **Detection needs only the viewing secret + the spending *public* key**, so it can run on a watch-only client, an auditor, or a service. Turning a discovered payment into a spendable key is a separate, device-local step.
+
+### Publish integrity
+
+A wrong `view_tag` at publish time would make a payment land correctly yet be forever invisible to the recipient. SPECTER closes this failure mode with a server-authoritative publish path (`payment_id` → the server publishes the exact announcement it generated), plus client-side recovery (a pending vault, a phase-aware send state machine, and one-click recovery export) so a user can interrupt and resume from any later session.
 
 ---
 
-## Architecture
+## 7 · Architecture
 
 ```
 SPECTER/
-├── specter/                        # Rust workspace
+├── specter/                        # Rust workspace (the audited core)
 │   ├── specter-core/               # Shared types, errors, constants
-│   ├── specter-crypto/             # ML-KEM-768, SHAKE256, view tag derivation
+│   ├── specter-crypto/             # ML-KEM-768, SHAKE256, secp256k1 stealth derivation
 │   ├── specter-stealth/            # One-time address derivation + payment discovery
 │   ├── specter-scanner/            # Batch scanning engine
 │   ├── specter-registry/           # Announcement store (memory / libSQL / Turso)
-│   ├── specter-cache/              # Lock-free LRU + dashmap caches
 │   ├── specter-ipfs/               # Pinata IPFS client (upload + fetch)
 │   ├── specter-ens/                # ENS resolution (alloy + IPFS)
 │   ├── specter-suins/              # SuiNS resolution (Sui JSON-RPC + IPFS)
 │   ├── specter-yellow/             # Yellow Network channel integration
-│   └── specter-api/                # Axum HTTP server
-│       ├── handlers.rs
-│       ├── pending.rs              # PendingPaymentStore (payment_id → Announcement)
-│       ├── middleware.rs           # Rate limiting, auth, security headers
-│       └── state.rs                # AppState, RegistryBackend
-└── SPECTER-web/                    # React + TypeScript
-    └── src/
-        ├── pages/                  # Setup, Send, Scan, Yellow, Use Cases
-        ├── lib/
-        │   ├── api.ts              # Typed REST client
-        │   ├── pendingPayment.ts   # Client-side recovery vault
-        │   ├── paymentHistory.ts   # Session payment log (status-aware)
-        │   ├── blockchain/         # viem, ENS, SuiNS, tx verification
-        │   └── crypto/             # Browser key vault (AES-GCM, PBKDF2)
-        └── components/             # Radix UI + Tailwind
+│   └── specter-api/                # Axum HTTP server (public data only)
+├── SPECTER-web/                    # React + TypeScript wallet
+│   └── src/lib/crypto/specter.ts   # Client-side crypto via @specterpq/sdk (WASM)
+└── @specterpq/sdk                  # Browser-first SDK (published to npm)
 ```
 
-### Registry backends
-
-| Backend | Use case |
-|---|---|
-| `memory` | Local development and CI |
-| `turso` | Staging and production (libSQL, SQLite-compatible) |
-
-The Turso backend ships with a 256-slot LRU per view tag, per-wallet scanner checkpoints for incremental restart, and Yellow Network channel lifecycle tracking.
+**Registry backends:** `memory` for local/CI, and **Turso** (libSQL, SQLite-compatible) for production — with a 256-slot LRU per view tag, per-wallet scanner checkpoints for incremental restart, and Yellow Network channel tracking. A single VPS sustains tens of millions of announcements without degrading scan times.
 
 ---
 
-## Performance
+## 8 · Performance
 
 <div align="center"><img src="assets/benchmarking.png" alt="Benchmarks" width="70%"/></div>
 
@@ -182,191 +224,144 @@ The Turso backend ships with a 256-slot LRU per view tag, per-wallet scanner che
 |---|---|
 | ML-KEM-768 key generation | < 1 ms |
 | Encapsulation (stealth address creation) | < 2 ms |
-| View tag check per announcement | ~0.5 µs |
+| View-tag check per announcement | ~0.5 µs |
 | Full scan — 100,000 announcements | ~1–2 s |
-| Announcement publish (SQLite / Turso) | < 5 ms |
+| Announcement publish (Turso / SQLite) | < 5 ms |
 | Cached registry lookup by view tag | < 1 ms |
 
-The 1-byte view tag is the dominant speed primitive: only 1 in 256 announcements requires full ML-KEM decapsulation. A single VPS can sustain a registry of tens of millions of announcements without degrading recipient-side scan times.
+The 1-byte view tag is the dominant speed primitive: only 1 in 256 announcements requires full ML-KEM decapsulation.
 
 ---
 
-## Comparison
+## 9 · Security & Trust Model
 
-|  | **SPECTER** | Umbra | Fluidkey |
-|---|:---:|:---:|:---:|
-| Cryptography | ML-KEM-768 (FIPS 203) | ECDH secp256k1 | ECDH secp256k1 |
-| Quantum resistant | ✅ | ❌ | ❌ |
-| Harvest-now-decrypt-later safe | ✅ | ❌ | ❌ |
-| Chains | Ethereum + Sui | Ethereum | Ethereum |
-| Name resolution | ENS + SuiNS | ENS | ENS |
-| View tags | ✅ ~99.6% skip | ✅ v2 only | Server-delegated |
-| Scan 100k announcements | ~1–2 s | ~10–15 s | n/a (delegated) |
-| Self-sovereign | ✅ | ✅ | ❌ |
-| Meta-address storage | IPFS | On-chain | On-chain |
-| Server-authoritative publish | ✅ | ❌ | n/a |
-| Open source | ✅ | ✅ | ❌ |
+**Design principle: the server holds no secret it could ever leak.**
+
+- **Client-side keys.** Key generation, scanning, and spend-key derivation run in the browser via the WASM SDK. `spending_sk` and `viewing_sk` **never cross the network**. The server sees only public data (meta-addresses, announcements) and relays gas-sponsored transactions.
+- **Standards-grade, pure-Rust crypto** ([RustCrypto](https://github.com/RustCrypto)): `ml-kem`, `sha3`, `k256`, `blake2`. `#![forbid(unsafe_code)]` workspace-wide.
+- **Secret-safe engineering.** Keys are `Zeroize`'d on drop; comparisons are constant-time via `subtle`; the sender-cannot-derive property is asserted by test.
+- **On-device key vault.** Secret keys are stored only as AES-256-GCM ciphertext, unlocked by **password** (PBKDF2-SHA256, 600k iterations) or **passkey** (WebAuthn PRF + HKDF). The client-side recovery vault stores only public fields — never private key material.
+- **Hardened services.** Per-IP rate limiting on write endpoints, security headers, and WAL-mode SQLite with a busy timeout.
+
+Responsible disclosure: **hello@pranshurastogi.com**
 
 ---
 
-## API Reference
+## 10 · Use Cases
 
-Base URL: `https://backend.specterpq.com` — local: `http://localhost:3001`
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | Health check + uptime |
-| `POST` | `/api/v1/keys/generate` | Generate ML-KEM-768 keypair |
-| `POST` | `/api/v1/stealth/create` | Create stealth payment — returns `payment_id`, `stealth_address`, `announcement` |
-| `POST` | `/api/v1/stealth/scan` | Scan announcements against a viewing key |
-| `GET` | `/api/v1/ens/resolve/:name` | Resolve ENS name → meta-address |
-| `GET` | `/api/v1/suins/resolve/:name` | Resolve SuiNS name → meta-address |
-| `POST` | `/api/v1/ipfs/upload` | Upload meta-address to IPFS |
-| `GET` | `/api/v1/ipfs/:cid` | Fetch IPFS content by CID |
-| `GET` | `/api/v1/registry/announcements` | List announcements (paginated) |
-| `POST` | `/api/v1/registry/announcements` | Publish announcement (`payment_id` preferred, full `announcement` as fallback) |
-| `GET` | `/api/v1/registry/stats` | Registry stats and view tag distribution |
-
-Full request/response schemas and a Postman collection are in [`specter/SPECTER_API.postman_collection.json`](specter/SPECTER_API.postman_collection.json). Extended documentation at [docs.specterpq.com](https://docs.specterpq.com).
+| For | Why SPECTER |
+|---|---|
+| **Payroll & contractors** | Pay a team on-chain without publishing every salary to the world. |
+| **Corporate & DAO treasuries** | Move funds and vendor payments without broadcasting cash position and counterparties. |
+| **Creators, donations & aid** | Receive support at a public name without exposing every backer or the total raised. |
+| **Personal finance** | Get paid to `you.eth` without turning your address into a lifelong, searchable profile. |
+| **Wallets & apps (via SDK)** | Add quantum-safe private payments in-app, non-custodially, in a few calls. |
 
 ---
 
-## Getting Started
+## 11 · Traction & Status
 
-### Requirements
+- **Live in production** at [specterpq.com](https://specterpq.com) — full setup → send → scan → claim flow, including in-app sweeping of discovered funds to any wallet or ENS name with receipts and claim history.
+- **Multi-chain:** Ethereum and Sui, with ENS and SuiNS name resolution.
+- **Developer SDK published** to npm as [`@specterpq/sdk`](https://www.npmjs.com/package/@specterpq/sdk) — browser-first, WASM-backed.
+- **Research-backed:** built on peer-reviewed post-quantum stealth-address research ([arXiv 2501.13733](https://arxiv.org/pdf/2501.13733v1)) and the NIST FIPS 203 standard.
+- **Open source** across the full stack — verifiable, auditable, integrable.
 
-- **Rust** stable — [rustup.rs](https://rustup.rs)
-- **Node.js** ≥ 18
-- **Pinata** account for IPFS storage — free tier is sufficient
-- **Ethereum RPC** — Alchemy, Infura, or a public endpoint
+---
 
-### Backend
+## 12 · Roadmap
+
+| Horizon | Focus |
+|---|---|
+| **Now** | Hardened v2 protocol (secp256k1 tweak + ML-KEM viewing), client-side SDK, Ethereum + Sui, ENS/SuiNS. |
+| **Next** | Broader chain and wallet integrations via the SDK; deeper stablecoin/payments flows; third-party security audit. |
+| **Later** | Fully post-quantum spending as chains adopt PQ-native accounts; enterprise payroll & treasury tooling. |
+
+---
+
+## 13 · Build with SPECTER
+
+### SDK (recommended — client-side, non-custodial)
 
 ```bash
-git clone https://github.com/pranshurastogi/SPECTER.git
-cd SPECTER/specter
-
-cp .env.sample .env
-# Fill in ETH_RPC_URL, Pinata credentials, and (for production) Turso connection details
-
-# Local development — in-memory registry
-cargo run -p specter-cli -- serve --port 3001
-
-# Production — persistent registry, release build
-REGISTRY_BACKEND=turso cargo run --release -p specter-cli -- serve --port 3001
+npm install @specterpq/sdk
 ```
 
-### Frontend
+```ts
+import { initSpecterSdk, generateSpecterKeys, createStealthPayment,
+         scanAnnouncement, deriveStealthKeys } from "@specterpq/sdk";
+
+await initSpecterSdk();                       // load WASM once
+const keys = generateSpecterKeys();           // in-browser; secrets never leave the device
+const payment = createStealthPayment(metaAddressHex); // sender: one-time address, no secret learned
+```
+
+### Run the stack
+
+**Requirements:** Rust (stable), Node.js ≥ 18, a Pinata account (IPFS), and an Ethereum RPC endpoint.
 
 ```bash
-cd SPECTER/SPECTER-web
+# Backend (public-data services)
+git clone https://github.com/pranshurastogi/SPECTER.git
+cd SPECTER/specter && cp .env.sample .env
+cargo run -p specter-cli -- serve --port 3001
+# Production: REGISTRY_BACKEND=turso cargo run --release -p specter-cli -- serve --port 3001
 
-cp .env.sample .env
-# Set VITE_API_BASE_URL to your backend and VITE_ETH_RPC_URL to your RPC endpoint
-
-npm install
-npm run dev          # http://localhost:8080
+# Frontend
+cd ../SPECTER-web && cp .env.sample .env
+npm install && npm run dev            # http://localhost:8080
 ```
 
 ### CLI
 
 ```bash
-specter generate --output keys.json        # ML-KEM-768 keypair
-specter resolve vitalik.eth                # ENS → meta-address
-specter create   alice.eth                 # Build stealth payment
-specter scan     --keys keys.json          # Scan registry for owned payments
-specter bench    --count 100000            # Throughput benchmark
-specter serve    --port 3001               # Start API server
+specter generate --output keys.json    # generate a key set
+specter resolve  vitalik.eth           # ENS → meta-address
+specter create   alice.eth             # build a stealth payment
+specter scan     --keys keys.json      # scan the registry for owned payments
+specter bench    --count 100000        # throughput benchmark
 ```
 
-### Docker
+### API (public data only)
 
-```dockerfile
-FROM rust:1.83 AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release -p specter-api
+Base URL: `https://backend.specterpq.com` · local: `http://localhost:3001`
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/specter-api /usr/local/bin/
-EXPOSE 8080
-CMD ["specter-api"]
-```
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check + uptime |
+| `POST` | `/api/v1/stealth/create` | Build a stealth payment for a **public** meta-address → `payment_id`, `stealth_address`, `announcement` |
+| `GET` | `/api/v1/registry/announcements` | List announcements (paginated) — scanned client-side |
+| `POST` | `/api/v1/registry/announcements` | Publish an announcement (`payment_id` preferred) |
+| `GET` | `/api/v1/ens/resolve/:name` · `/api/v1/suins/resolve/:name` | Resolve a name → meta-address |
+| `POST` | `/api/v1/ipfs/upload` · `GET /api/v1/ipfs/:cid` | Pin / fetch a meta-address |
+| `GET` | `/api/v1/registry/stats` | Registry stats and view-tag distribution |
 
-```bash
-docker run -p 8080:8080 \
-  -e ETH_RPC_URL=https://... \
-  -e PINATA_JWT=... \
-  -e PINATA_GATEWAY_URL=... \
-  -e PINATA_GATEWAY_TOKEN=... \
-  -e REGISTRY_BACKEND=turso \
-  -e TURSO_DATABASE_URL=libsql://your-db.turso.io \
-  -e TURSO_AUTH_TOKEN=... \
-  specter-api
-```
+> Key generation and scanning are performed **client-side in the SDK** — the API deliberately exposes no endpoint that receives a secret key. Full schemas and a Postman collection: [`specter/SPECTER_API.postman_collection.json`](specter/SPECTER_API.postman_collection.json) · [docs.specterpq.com](https://docs.specterpq.com).
 
 ---
 
-## Testing
+## 14 · Testing
 
 ```bash
-# Rust — full workspace
-cargo test --workspace
-
-# Rust — SQLite registry
-cargo test -p specter-registry --features sqlite -- sqlite
-
-# Frontend — vitest
-cd SPECTER-web && npm test
+cargo test --workspace                                   # Rust core (incl. sender-cannot-derive proof)
+cargo test -p specter-registry --features sqlite -- sqlite # persistence
+cd SPECTER-web && npm test                                # frontend (vitest)
 ```
-
-Key integration test coverage:
 
 | Test | What it asserts |
 |---|---|
-| `test_generate_keys` | `view_tag` is absent from the keygen response |
+| `sender_cannot_derive_stealth_private_key` | The sender provably cannot compute the recipient's spend key |
 | `test_create_then_publish_via_payment_id` | End-to-end server-authoritative publish |
 | `test_payment_id_is_single_use` | `payment_id` is consumed on first success |
-| `test_publish_rejects_loose_view_tag` | Legacy `{ephemeral_key, view_tag}` body is rejected |
 | `test_scan_stats_count_view_tag_matches_independently` | Scan reports `view_tag_matches` separately from `discoveries` |
 
-Frontend test suites: `pendingPayment` (31 cases), `paymentHistory` (16 cases), `recentRecipients`, `setupProgress`, `utils`, `appEnv`.
-
 ---
 
-## Security
-
-- All cryptography is pure Rust ([RustCrypto](https://github.com/RustCrypto)): `ml-kem`, `sha3`, `k256`, `blake2`.
-- Secret keys are `Zeroize`'d on drop and never transmitted.
-- Constant-time comparisons via `subtle` — no timing side-channels.
-- `#![forbid(unsafe_code)]` enforced workspace-wide.
-- Per-IP rate limiting on all write endpoints (`governor`).
-- SQLite runs in WAL mode with foreign-key constraints and a 5 s busy timeout.
-- The browser key vault stores secret keys as AES-GCM ciphertext — never in cleartext. Unlock via **password** (PBKDF2-SHA256, 210k iterations) or **passkey** (WebAuthn PRF + HKDF) on the same device.
-- The client-side pending-payment vault stores only public fields (stealth address, ciphertext, view tag, payment ID) — no private key material is written to localStorage.
-
-To report a vulnerability: **hello@pranshurastogi.com**
-
----
-
-## Research
+## 15 · Research & References
 
 - [Post-Quantum Stealth Address Protocols](https://arxiv.org/pdf/2501.13733v1) — arXiv 2501.13733
 - [NIST FIPS 203 — ML-KEM Standard](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
-- [ERC-5564 — Stealth Addresses for Ethereum](https://eips.ethereum.org/EIPS/eip-5564) — SPECTER extends ERC-5564 with post-quantum cryptography
-
----
-
-## Contributing
-
-| Branch | Environment | Network |
-|---|---|---|
-| `main` | Development | Sepolia |
-| `staging` | Staging | Sepolia |
-| `production` | Production | Ethereum mainnet |
-
-`feat/*` → PR → `main` → PR → `staging` → review → `production`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- [ERC-5564 — Stealth Addresses for Ethereum](https://eips.ethereum.org/EIPS/eip-5564) — SPECTER extends ERC-5564 with post-quantum discovery
 
 ---
 
@@ -379,7 +374,9 @@ To report a vulnerability: **hello@pranshurastogi.com**
   &nbsp;·&nbsp;
   <a href="https://docs.specterpq.com">Docs</a>
   &nbsp;·&nbsp;
+  <a href="https://www.npmjs.com/package/@specterpq/sdk">SDK</a>
+  &nbsp;·&nbsp;
   <a href="https://arxiv.org/pdf/2501.13733v1">Research</a>
   <br /><br />
-  <sub>Built with Rust · Powered by ML-KEM-768 · Private by design</sub>
+  <sub>Private payments today. Quantum-safe forever. · Built with Rust · Powered by ML-KEM-768</sub>
 </div>

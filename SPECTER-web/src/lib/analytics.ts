@@ -157,6 +157,27 @@ export const analytics = {
     trackEvent("scan_private_key_revealed");
   },
 
+  // ── Claim flow ──────────────────────────────────────────────────────────────
+
+  claimOpened(fundedChains: number) {
+    trackEvent("claim_opened", { funded_chains: fundedChains });
+  },
+  claimChainSelected(chain: AnalyticsChain) {
+    trackEvent("claim_chain_selected", { chain });
+  },
+  claimStarted(chain: AnalyticsChain, addressCount: number) {
+    trackEvent("claim_started", { chain, address_count: addressCount });
+  },
+  claimCompleted(chain: AnalyticsChain, confirmed: number, failed: number, skipped: number) {
+    trackEvent("claim_completed", { chain, confirmed, failed, skipped });
+  },
+  claimError(message: string) {
+    trackEvent("claim_error", { error_message: message.slice(0, 100) });
+  },
+  claimReceiptDownloaded(format: "json" | "pdf") {
+    trackEvent("claim_receipt_downloaded", { format });
+  },
+
   // ── Wallet ──────────────────────────────────────────────────────────────────
 
   walletConnectClicked(chain: AnalyticsChain) {

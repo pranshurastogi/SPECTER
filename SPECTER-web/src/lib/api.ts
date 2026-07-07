@@ -134,11 +134,15 @@ export interface HealthResponse {
 }
 
 export interface GenerateKeysResponse {
+  /** secp256k1 spending public key (33-byte compressed, hex) — protocol v2. */
   spending_pk: string;
+  /** secp256k1 spending secret key (32 bytes, hex). Never leaves the device. */
   spending_sk: string;
   viewing_pk: string;
   viewing_sk: string;
   meta_address: string;
+  /** Protocol version of the generated keys (2 for v2). */
+  protocol_version?: number;
 }
 
 export interface CreateStealthRequest {
@@ -153,8 +157,14 @@ export interface AnnouncementDto {
   timestamp: number;
   channel_id?: string | null;
   tx_hash?: string | null;
+  payment_tx_hash?: string | null;
   amount?: string | null;
   chain?: string | null;
+  source_chain_id?: number | null;
+  /** AEAD-encrypted metadata blob (hex). Decrypted client-side during scanning. */
+  metadata_blob?: string | null;
+  /** keccak256(ciphertext) for hash-only chain-indexed rows. */
+  ephemeral_key_hash?: string | null;
 }
 
 export interface CreateStealthResponse {
@@ -171,10 +181,14 @@ export interface CreateStealthResponse {
   announcement: AnnouncementDto;
 }
 
+/**
+ * View-only server scan request. The server endpoint no longer accepts a
+ * spending secret key. The app does not use this path — it scans in-browser via
+ * `scanAnnouncementsLocal()` so no secret key ever reaches the network.
+ */
 export interface ScanRequest {
   viewing_sk: string;
-  spending_pk: string;
-  spending_sk: string;
+  spending_pub: string;
   view_tags?: number[] | null;
   from_timestamp?: number | null;
   to_timestamp?: number | null;
@@ -216,7 +230,8 @@ export interface ScanResponse {
 export interface ResolveEnsResponse {
   ens_name: string;
   meta_address: string;
-  spending_pk: string;
+  /** secp256k1 spending public key (hex) — protocol v2. Display only. */
+  spending_pub: string;
   viewing_pk: string;
   ipfs_cid?: string;
   ipfs_url?: string;
@@ -225,7 +240,8 @@ export interface ResolveEnsResponse {
 export interface ResolveSuinsResponse {
   suins_name: string;
   meta_address: string;
-  spending_pk: string;
+  /** secp256k1 spending public key (hex) — protocol v2. Display only. */
+  spending_pub: string;
   viewing_pk: string;
   ipfs_cid?: string;
 }
@@ -309,6 +325,58 @@ export interface RegistryStatsResponse {
   view_tag_distribution: ViewTagCount[];
 }
 
+// ── sweep records (claim-flow history) ─────────────────────────────────────
+
+/** One swept stealth address inside a claim operation. */
+export interface SweepRowDto {
+  /** Client-generated UUID for this row (idempotency key). */
+  id: string;
+  stealth_address: string;
+  /** Amount transferred, base units (wei) as a decimal string. */
+  amount_base: string;
+  /** Network fee deducted, base units (wei) as a decimal string. */
+  fee_base: string;
+  /** Broadcast tx hash (empty string for skipped rows). */
+  tx_hash: string;
+  status: "confirmed" | "failed" | "skipped_dust";
+}
+
+export interface RecordSweepsRequest {
+  receipt_id: string;
+  /** SHA-256 of the meta-address bytes, lowercase hex (64 chars). */
+  identity_hash: string;
+  /** Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet"). */
+  chain: string;
+  /** Resolved destination address (0x…). */
+  destination: string;
+  /** What the user typed (ENS name or the address itself). */
+  destination_input: string;
+  records: SweepRowDto[];
+}
+
+export interface RecordSweepsResponse {
+  inserted: number;
+}
+
+export interface SweepRecordDto {
+  id: string;
+  receipt_id: string;
+  chain: string;
+  stealth_address: string;
+  destination: string;
+  destination_input: string;
+  amount_base: string;
+  fee_base: string;
+  tx_hash: string;
+  status: string;
+  created_at: number;
+}
+
+export interface ListSweepsResponse {
+  sweeps: SweepRecordDto[];
+  total: number;
+}
+
 export const api = {
   getBaseUrl,
 
@@ -316,6 +384,11 @@ export const api = {
     return request<HealthResponse>("/health");
   },
 
+  /**
+   * @deprecated Do NOT use — this generates secret keys on the server. Generate
+   * keys in-browser with `generateKeysLocal()` from `@/lib/crypto/specter`.
+   * Kept only for reference; no app code should call it.
+   */
   async generateKeys(): Promise<GenerateKeysResponse> {
     return request<GenerateKeysResponse>("/api/v1/keys/generate", { method: "POST" });
   },
@@ -327,6 +400,11 @@ export const api = {
     });
   },
 
+  /**
+   * @deprecated View-only server scan. The app scans in-browser via
+   * `scanAnnouncementsLocal()` so the viewing/spending secrets never leave the
+   * device. Retained only for non-secret/watch-only server-side use cases.
+   */
   async scanPayments(body: ScanRequest): Promise<ScanResponse> {
     return request<ScanResponse>("/api/v1/stealth/scan", {
       method: "POST",
@@ -376,6 +454,21 @@ export const api = {
     return request<RegistryStatsResponse>("/api/v1/registry/stats");
   },
 
+  /** Records the rows of a completed claim (idempotent per row id). */
+  async recordSweeps(body: RecordSweepsRequest): Promise<RecordSweepsResponse> {
+    return request<RecordSweepsResponse>("/api/v1/sweeps", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Sweep history for an identity (pre-hashed client-side), newest first. */
+  async listSweeps(identityHash: string): Promise<ListSweepsResponse> {
+    return request<ListSweepsResponse>(
+      `/api/v1/sweeps/${encodeURIComponent(identityHash)}`
+    );
+  },
+
   // ═══════════════════════════════════════════════════════════════════════════
   // YELLOW NETWORK API
   // ═══════════════════════════════════════════════════════════════════════════
@@ -394,7 +487,12 @@ export const api = {
       });
     },
 
-    /** Discover private channels for a wallet */
+    /**
+     * @deprecated DO NOT USE — this would send `viewing_sk`/`spending_sk` to the
+     * server. Channel discovery must be done client-side via the SDK, like
+     * `scanAnnouncementsLocal`. Currently unused; kept only to avoid a silent API
+     * break. Wiring this up would reintroduce the server-custody security issue.
+     */
     async discoverChannels(body: YellowDiscoverRequest): Promise<YellowDiscoverResponse> {
       return request<YellowDiscoverResponse>("/api/v1/yellow/channel/discover", {
         method: "POST",

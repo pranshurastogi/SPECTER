@@ -12,16 +12,19 @@ use uuid::Uuid;
 /// stable view tag.
 #[derive(Debug, Serialize)]
 pub struct GenerateKeysResponse {
-    /// Spending public key (hex)
-    pub spending_pk: String,
-    /// Spending secret key (hex) - HANDLE WITH CARE
+    /// secp256k1 spending public key (33-byte compressed, hex)
+    pub spending_pub: String,
+    /// secp256k1 spending secret key (32 bytes, hex) - HANDLE WITH CARE.
+    /// This controls all funds; generate client-side in production.
     pub spending_sk: String,
-    /// Viewing public key (hex)
+    /// ML-KEM viewing public key (hex)
     pub viewing_pk: String,
-    /// Viewing secret key (hex) - HANDLE WITH CARE
+    /// ML-KEM viewing secret key (hex) - HANDLE WITH CARE
     pub viewing_sk: String,
     /// Meta-address (hex-encoded, for ENS storage)
     pub meta_address: String,
+    /// Protocol version of the generated keys (currently 2).
+    pub protocol_version: u8,
 }
 
 /// Request to create a stealth payment.
@@ -55,15 +58,18 @@ pub struct CreateStealthResponse {
     pub announcement: AnnouncementDto,
 }
 
-/// Request to scan for payments.
+/// Request to scan for payments (view-only).
+///
+/// Deliberately does NOT accept the spending secret key. Detection needs only
+/// the viewing secret key and the spending *public* key; the per-payment
+/// `shared_secret` is returned so the client can derive spend keys locally with
+/// its own secret spending key (which must never be sent to a server).
 #[derive(Debug, Deserialize)]
 pub struct ScanRequest {
-    /// Viewing secret key (hex)
+    /// ML-KEM viewing secret key (hex)
     pub viewing_sk: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
-    /// Spending secret key (hex)
-    pub spending_sk: String,
+    /// secp256k1 spending public key (33-byte compressed, hex)
+    pub spending_pub: String,
     /// Optional: Only scan specific view tags
     pub view_tags: Option<Vec<u8>>,
     /// Optional: Scan from timestamp
@@ -82,16 +88,19 @@ pub struct ScanResponse {
 }
 
 /// A discovered payment.
+///
+/// Contains no private key. To spend, the client derives the spend key locally
+/// from `shared_secret` + its secret spending key (never sent to the server).
 #[derive(Debug, Serialize)]
 pub struct DiscoveryDto {
     /// Stealth Ethereum address (checksummed)
     pub stealth_address: String,
     /// Stealth Sui address
     pub stealth_sui_address: String,
-    /// Stealth private key (hex) - HANDLE WITH CARE
-    pub stealth_sk: String,
-    /// Ethereum-compatible private key (32 bytes, hex)
-    pub eth_private_key: String,
+    /// Per-payment ML-KEM shared secret (hex). Feed this plus your secret
+    /// spending key into client-side `derive_stealth_keys` to obtain the spend
+    /// key. Knowing it alone does NOT allow spending.
+    pub shared_secret: String,
     /// Announcement ID
     pub announcement_id: u64,
     /// Timestamp
@@ -140,8 +149,8 @@ pub struct ResolveEnsResponse {
     pub ens_name: String,
     /// Meta-address (hex)
     pub meta_address: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
+    /// secp256k1 spending public key (hex)
+    pub spending_pub: String,
     /// Viewing public key (hex)
     pub viewing_pk: String,
     /// IPFS CID where meta-address is stored
@@ -155,8 +164,8 @@ pub struct ResolveSuinsResponse {
     pub suins_name: String,
     /// Meta-address (hex)
     pub meta_address: String,
-    /// Spending public key (hex)
-    pub spending_pk: String,
+    /// secp256k1 spending public key (hex)
+    pub spending_pub: String,
     /// Viewing public key (hex)
     pub viewing_pk: String,
     /// IPFS CID where meta-address is stored
@@ -210,6 +219,16 @@ pub struct AnnouncementDto {
     /// Recipient stealth address (checksummed)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stealth_address: Option<String>,
+    /// AEAD-encrypted on-chain metadata blob (hex). Opaque to everyone except
+    /// the recipient, who decrypts it with the per-payment shared secret to
+    /// recover the amount / source tx / chain id during client-side scanning.
+    /// Safe to serve publicly — it reveals nothing without the viewing key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_blob: Option<String>,
+    /// keccak256(ciphertext) for chain-indexed rows whose full ciphertext has
+    /// not been resolved yet (hex). Lets clients verify a resolved ciphertext.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_key_hash: Option<String>,
 }
 
 impl From<Announcement> for AnnouncementDto {
@@ -225,6 +244,8 @@ impl From<Announcement> for AnnouncementDto {
             amount: ann.amount,
             chain: ann.chain,
             stealth_address: ann.stealth_address,
+            metadata_blob: ann.metadata_blob.map(hex::encode),
+            ephemeral_key_hash: ann.ephemeral_key_hash.map(hex::encode),
         }
     }
 }
@@ -356,6 +377,88 @@ pub struct ViewTagCount {
     pub tag: u8,
     /// Number of announcements
     pub count: u64,
+}
+
+// ── sweep records (claim-flow history) ─────────────────────────────────────
+
+/// One swept stealth address inside a claim operation.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct SweepRowDto {
+    /// Client-generated UUID for this row (idempotency key).
+    pub id: String,
+    /// Swept stealth address (0x…).
+    pub stealth_address: String,
+    /// Amount transferred, base units (wei) as a decimal string.
+    pub amount_base: String,
+    /// Network fee paid, base units (wei) as a decimal string.
+    pub fee_base: String,
+    /// Broadcast tx hash (empty string for skipped rows).
+    pub tx_hash: String,
+    /// "confirmed" | "failed" | "skipped_dust".
+    pub status: String,
+}
+
+/// Request to record a completed claim operation.
+///
+/// Contains only public-after-broadcast data plus a pre-hashed identity key.
+/// Recording is best-effort on the client: rejection never blocks a claim.
+#[derive(Debug, Deserialize)]
+pub struct RecordSweepsRequest {
+    /// Groups these rows into one receipt (client UUID).
+    pub receipt_id: String,
+    /// SHA-256 of the meta-address bytes, lowercase hex (64 chars).
+    pub identity_hash: String,
+    /// Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet").
+    pub chain: String,
+    /// Resolved destination address (0x…).
+    pub destination: String,
+    /// What the user typed (ENS name or the address itself).
+    pub destination_input: String,
+    /// Per-address rows (at least one, at most 200).
+    pub records: Vec<SweepRowDto>,
+}
+
+/// Response for recording sweeps.
+#[derive(Debug, Serialize)]
+pub struct RecordSweepsResponse {
+    /// Rows newly inserted (idempotent re-posts insert 0).
+    pub inserted: u64,
+}
+
+/// One stored sweep row, as returned by the list endpoint.
+#[derive(Debug, Serialize)]
+pub struct SweepRecordDto {
+    /// Row id.
+    pub id: String,
+    /// Receipt this row belongs to.
+    pub receipt_id: String,
+    /// Backend chain name.
+    pub chain: String,
+    /// Swept stealth address.
+    pub stealth_address: String,
+    /// Resolved destination address.
+    pub destination: String,
+    /// What the user typed (ENS name or address).
+    pub destination_input: String,
+    /// Amount transferred (wei, decimal string).
+    pub amount_base: String,
+    /// Network fee paid (wei, decimal string).
+    pub fee_base: String,
+    /// Broadcast tx hash.
+    pub tx_hash: String,
+    /// "confirmed" | "failed" | "skipped_dust".
+    pub status: String,
+    /// Unix seconds when recorded.
+    pub created_at: i64,
+}
+
+/// Response for listing an identity's sweep history.
+#[derive(Debug, Serialize)]
+pub struct ListSweepsResponse {
+    /// Sweep rows, newest first.
+    pub sweeps: Vec<SweepRecordDto>,
+    /// Number of rows returned.
+    pub total: u64,
 }
 
 /// Health check response.

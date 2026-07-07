@@ -28,34 +28,9 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    // Pre-bundle heavy deps for faster dev startup.
-    // Exclude the local WASM SDK so its `new URL('...', import.meta.url)`
-    // resolution of `specter_wasm_bg.wasm` survives esbuild pre-bundling
-    // (used by the trustless /i-dont-trust-specter recovery page).
+    // The SPECTER SDK loads its crypto from WebAssembly via a dynamic import.
+    // esbuild's dep pre-bundling mangles that dynamic import + the `.wasm`
+    // asset URL, so exclude it and let Vite serve the wasm as a real asset.
     exclude: ["@specterpq/sdk"],
-  },
-  build: {
-    // The WASM-backed SDK pushes the main chunk past Vite's 500 kB warning;
-    // raise the threshold and skip the per-chunk gzip pass, which spikes peak
-    // memory at the final flush (the source of the build-time OOM).
-    chunkSizeWarningLimit: 2000,
-    reportCompressedSize: false,
-    rollupOptions: {
-      output: {
-        // Split heavy vendors into their own chunks so no single chunk has to
-        // hold the SDK, viem, and the React tree in memory at once.
-        manualChunks(id) {
-          if (id.includes("@specterpq/sdk") || id.includes("specter-sdk")) {
-            return "specter-sdk";
-          }
-          if (id.includes("node_modules/viem") || id.includes("node_modules/@noble")) {
-            return "viem";
-          }
-          if (id.includes("node_modules/react") || id.includes("node_modules/scheduler")) {
-            return "react-vendor";
-          }
-        },
-      },
-    },
   },
 });

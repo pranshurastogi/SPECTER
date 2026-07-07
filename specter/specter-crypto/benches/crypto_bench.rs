@@ -47,7 +47,7 @@ fn bench_view_tag(c: &mut Criterion) {
 }
 
 fn bench_stealth_derivation(c: &mut Criterion) {
-    let spending = generate_keypair();
+    let spending = specter_crypto::generate_spending_keypair();
     let viewing = generate_keypair();
     let (_ct, shared_secret) = encapsulate(&viewing.public).unwrap();
     let ss: &[u8] = &shared_secret[..];

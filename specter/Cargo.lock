@@ -4507,6 +4507,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "hex",
+ "k256",
  "proptest",
  "serde",
  "serde_json",
