@@ -66,7 +66,7 @@ import {
   type BalanceMap,
 } from "@/lib/claim/balances";
 import type { SweepPlanItem } from "@/lib/claim/sweep";
-import { identityHashFromMetaAddress, type ClaimReceipt } from "@/lib/claim/receipt";
+import { identityHashFromViewingKey, type ClaimReceipt } from "@/lib/claim/receipt";
 import {
   claimedAddressSet,
   fetchSweepHistory,
@@ -318,21 +318,22 @@ export default function ScanPayments() {
     };
   }, [scanComplete, discoveries, refreshNonce]);
 
-  // "Previously claimed" history, keyed by the hashed identity. Best-effort:
+  // "Previously claimed" history, keyed by an HMAC of the viewing key (not
+  // the public meta-address — see identityHashFromViewingKey). Best-effort:
   // failures just leave the section hidden.
-  const historyMetaAddress = fullKeySet?.meta_address ?? keys?.meta_address ?? null;
+  const historyViewingSk = fullKeySet?.viewing_sk ?? keys?.viewing_sk ?? null;
   useEffect(() => {
     if (!scanComplete) {
       setSweepHistory([]);
       return;
     }
-    if (!historyMetaAddress) {
+    if (!historyViewingSk) {
       // No identity to look history up by — this session's receipts are all we have.
       setSweepHistory(localReceipts.reduce(mergeReceiptIntoHistory, [] as SweepHistoryGroup[]));
       return;
     }
     let cancelled = false;
-    identityHashFromMetaAddress(historyMetaAddress)
+    identityHashFromViewingKey(historyViewingSk)
       .then(fetchSweepHistory)
       .then((groups) => {
         if (!cancelled) {
@@ -347,7 +348,7 @@ export default function ScanPayments() {
     return () => {
       cancelled = true;
     };
-  }, [scanComplete, historyMetaAddress, refreshNonce, localReceipts]);
+  }, [scanComplete, historyViewingSk, refreshNonce, localReceipts]);
 
   const claimedSet = useMemo(() => claimedAddressSet(sweepHistory), [sweepHistory]);
 
@@ -1200,7 +1201,7 @@ export default function ScanPayments() {
         suiFunded={suiDiscovered}
         getItems={getClaimItems}
         ownStealthAddresses={ownStealthAddresses}
-        metaAddress={historyMetaAddress}
+        viewingSk={historyViewingSk}
         onClaimed={(receipt) => {
           // Show the claim in history immediately — the server record is
           // best-effort and may lag behind the refetch triggered below.

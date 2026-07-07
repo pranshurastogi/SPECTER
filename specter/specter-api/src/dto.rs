@@ -406,7 +406,8 @@ pub struct SweepRowDto {
 pub struct RecordSweepsRequest {
     /// Groups these rows into one receipt (client UUID).
     pub receipt_id: String,
-    /// SHA-256 of the meta-address bytes, lowercase hex (64 chars).
+    /// HMAC-SHA256 keyed on the client's secret viewing key, lowercase hex
+    /// (64 chars) — never derivable from the public meta-address alone.
     pub identity_hash: String,
     /// Backend chain name (e.g. "sepolia", "arbitrum", "monad-testnet").
     pub chain: String,
@@ -450,6 +451,17 @@ pub struct SweepRecordDto {
     pub status: String,
     /// Unix seconds when recorded.
     pub created_at: i64,
+}
+
+/// Request to list an identity's sweep history.
+///
+/// POSTed (not a GET path param) so this bearer-equivalent hash never lands
+/// in server access logs, CDN logs, or browser history.
+#[derive(Debug, Deserialize)]
+pub struct ListSweepsRequest {
+    /// HMAC-SHA256 keyed on the client's secret viewing key, lowercase hex
+    /// (64 chars) — see [`RecordSweepsRequest::identity_hash`].
+    pub identity_hash: String,
 }
 
 /// Response for listing an identity's sweep history.

@@ -9,7 +9,7 @@ import {
 } from "@/lib/claim/balances";
 import { parseEther } from "viem";
 import { summarize, type SweepRowResult } from "@/lib/claim/sweep";
-import { buildReceipt, identityHashFromMetaAddress } from "@/lib/claim/receipt";
+import { buildReceipt, identityHashFromViewingKey } from "@/lib/claim/receipt";
 import { groupSweepHistory, claimedAddressSet } from "@/lib/claim/claimApi";
 import type { SweepRecordDto } from "@/lib/api";
 
@@ -112,21 +112,31 @@ describe("claim receipt", () => {
     expect(receipt.receiptId).toMatch(/[0-9a-f-]{36}/);
   });
 
-  it("computes the identity hash as SHA-256 of the meta-address bytes", async () => {
-    // SHA-256(0xabcd) — independently verifiable test vector.
-    const hash = await identityHashFromMetaAddress("0xABCD");
+  it("computes the identity hash as HMAC-SHA256 of the viewing key, not a bare hash of public data", async () => {
+    // HMAC-SHA256(key = 0xABCD, msg = "specter-sweep-history-v1") — independently
+    // verifiable test vector (computed via Node's crypto module, not this code).
+    const hash = await identityHashFromViewingKey("0xABCD");
     expect(hash).toBe(
-      "123d4c7ef2d1600a1b3a0f6addc60a10f05a3495c9409f2ecbf4cc095d000a6b",
+      "d08d05dd0ff7bf60f9cfa0e7868cceb27dd25f8376d32e6eee80d7bc9331579a",
     );
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
     // 0x prefix and case must not change the hash.
-    expect(await identityHashFromMetaAddress("abcd")).toBe(hash);
+    expect(await identityHashFromViewingKey("abcd")).toBe(hash);
   });
 
-  it("rejects malformed meta-address hex", async () => {
-    await expect(identityHashFromMetaAddress("0xzz")).rejects.toThrow();
-    await expect(identityHashFromMetaAddress("0xabc")).rejects.toThrow(); // odd length
-    await expect(identityHashFromMetaAddress("")).rejects.toThrow();
+  it("produces a different hash per viewing key (not derivable from public data alone)", async () => {
+    const a = await identityHashFromViewingKey("abcd");
+    const b = await identityHashFromViewingKey("ef01");
+    expect(a).not.toBe(b);
+    expect(b).toBe(
+      "a44b417c6e731faf577f960b926ae27628644e84cf3b18121f530d2b9359524b",
+    );
+  });
+
+  it("rejects malformed viewing-key hex", async () => {
+    await expect(identityHashFromViewingKey("0xzz")).rejects.toThrow();
+    await expect(identityHashFromViewingKey("0xabc")).rejects.toThrow(); // odd length
+    await expect(identityHashFromViewingKey("")).rejects.toThrow();
   });
 });
 
