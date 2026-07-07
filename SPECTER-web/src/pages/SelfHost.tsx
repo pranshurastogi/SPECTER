@@ -12,6 +12,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { Card, CardContent } from "@/components/ui/base/card";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
+import { RecoveryScriptBlock } from "@/components/features/RecoveryScriptBlock";
 
 /** Canonical public repository users clone to run their own SPECTER. */
 const REPO_URL = "https://github.com/pranshurastogi/SPECTER.git";
@@ -133,7 +134,10 @@ export default function SelfHost() {
             </div>
           </div>
 
-          <Card className="w-full border-border bg-card/50 shadow-lg rounded-xl">
+          {/* Lightest path: just want your funds back? One file, two deps. */}
+          <RecoveryScriptBlock />
+
+          <Card className="mt-6 w-full border-border bg-card/50 shadow-lg rounded-xl">
             <CardContent className="p-5 md:p-6">
               {/* Step 1 — Clone */}
               <Step n={1} icon={GitBranch} title="Clone the repository">

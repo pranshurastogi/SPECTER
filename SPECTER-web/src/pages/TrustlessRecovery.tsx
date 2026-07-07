@@ -31,6 +31,7 @@ import { Card, CardContent } from "@/components/ui/base/card";
 import { CopyButton } from "@/components/ui/specialized/copy-button";
 import { toast } from "@/components/ui/base/sonner";
 import { UnlockSavedKeys } from "@/components/features/keys/UnlockSavedKeys";
+import { RecoveryScriptBlock } from "@/components/features/RecoveryScriptBlock";
 import type { DecryptedKeys } from "@/lib/crypto/keyVault";
 import { formatCryptoAmount } from "@/lib/utils";
 import { DEFAULT_MONAD_RPC_URL } from "@/lib/recovery/config";
@@ -656,6 +657,9 @@ export default function TrustlessRecovery() {
               )}
             </CardContent>
           </Card>
+
+          {/* The exact recovery logic as a headless, self-runnable script. */}
+          <RecoveryScriptBlock />
 
           {/* Self-host escape hatch: this page still has to be *served* from
               somewhere. If SPECTER's hosting is down too, run it yourself. */}
