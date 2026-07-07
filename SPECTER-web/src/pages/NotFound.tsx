@@ -21,12 +21,20 @@ const NotFound = () => {
           title="Lost in the static"
           description="This page must be a ghost — we couldn't tune it in. Let's get you back to a working channel."
           actions={
-            <Link
-              to="/"
-              className="font-dm-sans inline-block select-none rounded-full bg-primary px-8 py-3 text-lg font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              Go to Home
-            </Link>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Link
+                to="/"
+                className="font-dm-sans inline-block select-none rounded-full bg-primary px-8 py-3 text-lg font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                Go to Home
+              </Link>
+              <Link
+                to="/self-host"
+                className="font-dm-sans inline-block select-none rounded-full border border-border bg-background/40 px-8 py-3 text-lg font-medium text-foreground transition-colors hover:bg-background/70"
+              >
+                Self-host SPECTER
+              </Link>
+            </div>
           }
         />
       </main>

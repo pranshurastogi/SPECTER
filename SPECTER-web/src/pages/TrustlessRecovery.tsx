@@ -20,6 +20,8 @@ import {
   Zap,
   ArrowDown,
   ArrowUp,
+  Terminal,
+  ArrowRight,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -654,6 +656,58 @@ export default function TrustlessRecovery() {
               )}
             </CardContent>
           </Card>
+
+          {/* Self-host escape hatch: this page still has to be *served* from
+              somewhere. If SPECTER's hosting is down too, run it yourself. */}
+          <div className="mt-6 rounded-xl border border-white/[0.08] bg-card/30 p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 text-primary" />
+              <h2 className="font-display font-semibold text-foreground text-sm">
+                SPECTER is down? Run it yourself.
+              </h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              SPECTER is open source. Clone it and this exact recovery tool runs on your machine —
+              against a public Monad RPC, with zero SPECTER calls.
+            </p>
+            <div className="relative">
+              <pre className="text-[11px] font-mono leading-relaxed block bg-background/80 p-3 pr-12 rounded-lg border border-white/[0.08] overflow-x-auto">
+                <code>
+                  {[
+                    "git clone https://github.com/pranshurastogi/SPECTER.git",
+                    "cd SPECTER/SPECTER-web && cp .env.example .env",
+                    "npm install && npm run dev",
+                  ].map((line) => (
+                    <span key={line} className="block">
+                      <span className="select-none text-muted-foreground/60">$ </span>
+                      {line}
+                    </span>
+                  ))}
+                </code>
+              </pre>
+              <div className="absolute top-1.5 right-1.5">
+                <CopyButton
+                  text={
+                    "git clone https://github.com/pranshurastogi/SPECTER.git\n" +
+                    "cd SPECTER/SPECTER-web && cp .env.example .env\n" +
+                    "npm install && npm run dev"
+                  }
+                  showLabel={false}
+                  variant="ghost"
+                  size="icon"
+                  successMessage="Commands copied"
+                  tooltip="Copy commands"
+                />
+              </div>
+            </div>
+            <Link
+              to="/self-host"
+              className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+            >
+              Full self-host guide
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
         </div>
       </main>
 
