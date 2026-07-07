@@ -616,7 +616,11 @@ mod tests {
         let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
         let scan: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let discoveries = scan["discoveries"].as_array().unwrap();
-        assert_eq!(discoveries.len(), 1, "the published payment must be discovered");
+        assert_eq!(
+            discoveries.len(),
+            1,
+            "the published payment must be discovered"
+        );
         assert_eq!(
             discoveries[0]["stealth_address"].as_str().unwrap(),
             expected_stealth_address,
@@ -722,7 +726,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK, "sweep record must be accepted");
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "sweep record must be accepted"
+        );
 
         // 3. Fetch it back via the new POST route, keyed by the same hash.
         let res = app
