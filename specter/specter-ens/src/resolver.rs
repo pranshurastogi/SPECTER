@@ -281,4 +281,150 @@ mod tests {
         assert!(resolver.parse_cid("http://example.com").is_err());
         assert!(resolver.parse_cid("").is_err());
     }
+
+    // ── whole-flow: resolve_full over mocked eth_call + IPFS gateway ────────
+    //
+    // Both `resolver(bytes32)` and `text(bytes32,string)` are eth_call JSON-RPC
+    // requests to the same URL, distinguished only by their 4-byte function
+    // selector inside the request body — mocks below match on that selector
+    // rather than the full ABI-encoded call, since the namehash/key encoding
+    // is exercised by ens.rs's own unit tests.
+
+    use specter_core::constants::KYBER_PUBLIC_KEY_SIZE;
+    use specter_core::types::{KyberPublicKey, MetaAddress, Secp256k1PublicKey};
+    use wiremock::matchers::{body_string_contains, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A deterministic, valid compressed secp256k1 public key for tests.
+    fn test_spending_pub(seed: u8) -> Secp256k1PublicKey {
+        let sk = k256::SecretKey::from_slice(&[seed; 32]).unwrap();
+        let compressed = sk.public_key().to_sec1_bytes();
+        Secp256k1PublicKey::from_bytes(&compressed).unwrap()
+    }
+
+    fn test_meta_address() -> MetaAddress {
+        let spending_pub = test_spending_pub(0x77);
+        let viewing_pk = KyberPublicKey::from_array([0x88; KYBER_PUBLIC_KEY_SIZE]);
+        MetaAddress::new(spending_pub, viewing_pk)
+    }
+
+    /// Builds the ABI encoding of a single dynamic `string` return value:
+    /// offset word + length word + the string bytes (unpadded — the decoder
+    /// only reads exactly `length` bytes past the header).
+    fn abi_encode_string_return(s: &str) -> String {
+        let bytes = s.as_bytes();
+        let mut out = vec![0u8; 64 + bytes.len()];
+        out[31] = 0x20; // offset = 32
+        out[56..64].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
+        out[64..64 + bytes.len()].copy_from_slice(bytes);
+        format!("0x{}", hex::encode(out))
+    }
+
+    /// A 32-byte ABI address return: 12 zero bytes + the 20-byte address.
+    fn abi_encode_address_return(addr_byte: u8) -> String {
+        let mut out = [0u8; 32];
+        out[12..].fill(addr_byte);
+        format!("0x{}", hex::encode(out))
+    }
+
+    #[tokio::test]
+    async fn test_resolve_full_whole_flow_over_mocked_network() {
+        let eth_rpc = MockServer::start().await;
+        let ipfs_gateway = MockServer::start().await;
+
+        let cid = "bafkreibopfezkz4lk6ubucbgymspyyhy7ws4pe4zfkdqq6dzo74yzvf3cm";
+        let meta = test_meta_address();
+
+        // resolver(bytes32) on the ENS registry — any non-zero resolver address.
+        Mock::given(method("POST"))
+            .and(body_string_contains("0178b8bf"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": abi_encode_address_return(0x11)
+            })))
+            .mount(&eth_rpc)
+            .await;
+
+        // text(bytes32,string) on the resolver — the "specter" text record.
+        Mock::given(method("POST"))
+            .and(body_string_contains("59d1d43c"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": abi_encode_string_return(&format!("ipfs://{cid}"))
+            })))
+            .mount(&eth_rpc)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(format!("/ipfs/{cid}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(meta.to_bytes()))
+            .mount(&ipfs_gateway)
+            .await;
+
+        let resolver = SpecterResolver::with_config(ResolverConfig::new(
+            eth_rpc.uri(),
+            ipfs_gateway.uri(),
+            "test-gateway-token",
+        ));
+
+        let result = resolver
+            .resolve_full("jeremy.eth")
+            .await
+            .expect("whole flow must resolve successfully");
+
+        assert_eq!(result.meta_address.to_bytes(), meta.to_bytes());
+        assert_eq!(result.ens_name, "jeremy.eth");
+        assert_eq!(result.ipfs_cid, cid);
+    }
+
+    /// A name whose resolver has no text record and no content hash set must
+    /// fail with `NoSpecterRecord`, not some other error.
+    #[tokio::test]
+    async fn test_resolve_full_no_record_is_no_specter_record() {
+        let eth_rpc = MockServer::start().await;
+        let ipfs_gateway = MockServer::start().await;
+
+        // Resolver resolves, but both text() and contenthash() come back empty.
+        Mock::given(method("POST"))
+            .and(body_string_contains("0178b8bf"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": abi_encode_address_return(0x11)
+            })))
+            .mount(&eth_rpc)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("59d1d43c"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": "0x"
+            })))
+            .mount(&eth_rpc)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("bc1c58d1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": "0x"
+            })))
+            .mount(&eth_rpc)
+            .await;
+
+        let resolver = SpecterResolver::with_config(ResolverConfig::new(
+            eth_rpc.uri(),
+            ipfs_gateway.uri(),
+            "test-gateway-token",
+        ));
+
+        let err = resolver
+            .resolve_full("no-record.eth")
+            .await
+            .expect_err("a name with no text record or content hash must not resolve");
+        assert!(matches!(err, SpecterError::NoSpecterRecord(_)));
+    }
 }

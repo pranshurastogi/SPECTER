@@ -283,4 +283,141 @@ mod tests {
         assert!(resolver.parse_cid("http://example.com").is_err());
         assert!(resolver.parse_cid("").is_err());
     }
+
+    // ── whole-flow: resolve_full over mocked Sui RPC + IPFS gateway ─────────
+    //
+    // Response shapes below are copied verbatim from a real `suix_*` RPC
+    // session (captured resolving a live testnet SuiNS name), not invented,
+    // so a change to the parsing logic that would break on real network
+    // shapes breaks this test too.
+
+    use specter_core::constants::KYBER_PUBLIC_KEY_SIZE;
+    use specter_core::types::{KyberPublicKey, MetaAddress, Secp256k1PublicKey};
+    use wiremock::matchers::{body_string_contains, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A deterministic, valid compressed secp256k1 public key for tests.
+    fn test_spending_pub(seed: u8) -> Secp256k1PublicKey {
+        let sk = k256::SecretKey::from_slice(&[seed; 32]).unwrap();
+        let compressed = sk.public_key().to_sec1_bytes();
+        Secp256k1PublicKey::from_bytes(&compressed).unwrap()
+    }
+
+    fn test_meta_address() -> MetaAddress {
+        let spending_pub = test_spending_pub(0x42);
+        let viewing_pk = KyberPublicKey::from_array([0x24; KYBER_PUBLIC_KEY_SIZE]);
+        MetaAddress::new(spending_pub, viewing_pk)
+    }
+
+    #[tokio::test]
+    async fn test_resolve_full_whole_flow_over_mocked_network() {
+        let sui_rpc = MockServer::start().await;
+        let ipfs_gateway = MockServer::start().await;
+
+        // Real CID captured from a live SuiNS name-record content_hash field.
+        let cid = "bafkreibopfezkz4lk6ubucbgymspyyhy7ws4pe4zfkdqq6dzo74yzvf3cm";
+        let meta = test_meta_address();
+
+        // suix_resolveNameServiceAddress — confirms the name is registered.
+        Mock::given(method("POST"))
+            .and(body_string_contains("suix_resolveNameServiceAddress"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": "0x75047637442dbc560a5efaf031eb29ff530e84587f200ad1cf90e5feba99f849"
+            })))
+            .mount(&sui_rpc)
+            .await;
+
+        // suix_getDynamicFieldObject — the name record holding content_hash.
+        // Structure matches the real Sui RPC response exactly (see suins.rs
+        // module docs): result.data.content.fields.value.fields.data.fields.contents[].
+        Mock::given(method("POST"))
+            .and(body_string_contains("suix_getDynamicFieldObject"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "data": {
+                        "content": {
+                            "fields": {
+                                "value": {
+                                    "fields": {
+                                        "data": {
+                                            "fields": {
+                                                "contents": [
+                                                    {
+                                                        "fields": {
+                                                            "key": "content_hash",
+                                                            "value": format!("ipfs://{cid}")
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })))
+            .mount(&sui_rpc)
+            .await;
+
+        // IPFS gateway serves the meta-address bytes for that CID.
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(format!("/ipfs/{cid}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(meta.to_bytes()))
+            .mount(&ipfs_gateway)
+            .await;
+
+        let resolver = SuinsResolver::with_config(SuinsResolverConfig::new(
+            sui_rpc.uri(),
+            false,
+            ipfs_gateway.uri(),
+            "test-gateway-token",
+        ));
+
+        let result = resolver
+            .resolve_full("jeremy.sui")
+            .await
+            .expect("whole flow must resolve successfully");
+
+        assert_eq!(result.meta_address.to_bytes(), meta.to_bytes());
+        assert_eq!(result.suins_name, "jeremy.sui");
+        assert_eq!(result.ipfs_cid, cid);
+    }
+
+    /// A name with no SuiNS registration at all must fail with
+    /// `NoSuinsSpecterRecord`, not some other error — this is exactly the
+    /// failure mode a wrong-network RPC endpoint produces in production.
+    #[tokio::test]
+    async fn test_resolve_full_unregistered_name_is_no_specter_record() {
+        let sui_rpc = MockServer::start().await;
+        let ipfs_gateway = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains("suix_resolveNameServiceAddress"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": null
+            })))
+            .mount(&sui_rpc)
+            .await;
+
+        let resolver = SuinsResolver::with_config(SuinsResolverConfig::new(
+            sui_rpc.uri(),
+            false,
+            ipfs_gateway.uri(),
+            "test-gateway-token",
+        ));
+
+        let err = resolver
+            .resolve_full("unregistered-name.sui")
+            .await
+            .expect_err("an unregistered name must not resolve");
+        assert!(matches!(err, SpecterError::NoSuinsSpecterRecord(_)));
+    }
 }

@@ -4544,6 +4544,7 @@ dependencies = [
  "async-trait",
  "cid",
  "hex",
+ "k256",
  "multihash",
  "reqwest",
  "serde",
@@ -4640,6 +4641,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "hex",
+ "k256",
  "reqwest",
  "serde",
  "serde_json",
@@ -4648,6 +4650,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]
