@@ -485,7 +485,7 @@ impl TursoRegistry {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
-                "SELECT id FROM announcements \
+                "SELECT id, view_tag FROM announcements \
                  WHERE payment_tx_hash_hmac = ?1 AND on_chain = 0 AND tx_hash IS NULL \
                    AND created_at <= strftime('%s','now') - ?2",
                 params![Value::Blob(hmac), STALE_RESERVATION_SECS],
@@ -502,6 +502,10 @@ impl TursoRegistry {
         let id = match row.get_value(0) {
             Ok(Value::Integer(i)) => i,
             _ => return Err(SpecterError::DuplicatePayment),
+        };
+        let old_view_tag = match row.get_value(1) {
+            Ok(Value::Integer(t)) => Some(t as u8),
+            _ => None,
         };
 
         // Overwrite the abandoned row with the fresh announcement content. The
@@ -539,7 +543,17 @@ impl TursoRegistry {
         }
 
         warn!(id, "Reclaimed stale un-finalized announcement reservation");
-        self.cache.write().await.pop(&ann.view_tag);
+        // Invalidate the cache slot for the row's new view_tag, and also for
+        // its old one if the reclaim changed it — a scanner may have cached
+        // the abandoned reservation under the old tag before it went stale.
+        let mut cache = self.cache.write().await;
+        cache.pop(&ann.view_tag);
+        if let Some(old_tag) = old_view_tag {
+            if old_tag != ann.view_tag {
+                cache.pop(&old_tag);
+            }
+        }
+        drop(cache);
         Ok(id as u64)
     }
 

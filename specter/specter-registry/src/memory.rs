@@ -4,11 +4,17 @@
 //! and single-process deployments.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use tracing::{debug, instrument};
+
+/// Minimum age of an un-finalized reservation before it can be reclaimed by a
+/// retry — mirrors the Turso backend's `STALE_RESERVATION_SECS`, so an
+/// in-flight concurrent publish is never hijacked here either.
+const STALE_RESERVATION_SECS: u64 = 900;
 
 use specter_core::error::{Result, SpecterError};
 use specter_core::traits::AnnouncementRegistry;
@@ -41,6 +47,9 @@ pub struct MemoryRegistry {
     /// Payment HMAC dedup index: payment_tx_hash_hmac → announcement ID
     /// (mirrors the Turso UNIQUE index used by the reserve flow).
     payment_hmac_index: DashMap<Vec<u8>, u64>,
+    /// Reservation creation time for un-finalized rows (id → created at),
+    /// used to gate reclaiming a stale reservation. Cleared on finalize/release.
+    reserved_at: DashMap<u64, Instant>,
     /// Next announcement ID
     next_id: AtomicU64,
     /// Registry statistics
@@ -55,6 +64,7 @@ impl MemoryRegistry {
             view_tag_index: DashMap::new(),
             tx_hash_index: DashMap::new(),
             payment_hmac_index: DashMap::new(),
+            reserved_at: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -69,6 +79,7 @@ impl MemoryRegistry {
             view_tag_index: DashMap::with_capacity(256), // One bucket per view tag
             tx_hash_index: DashMap::new(),
             payment_hmac_index: DashMap::new(),
+            reserved_at: DashMap::new(),
             next_id: AtomicU64::new(1),
             stats: RwLock::new(AnnouncementStats::new()),
         }
@@ -90,6 +101,7 @@ impl MemoryRegistry {
         self.view_tag_index.clear();
         self.tx_hash_index.clear();
         self.payment_hmac_index.clear();
+        self.reserved_at.clear();
         self.next_id.store(1, Ordering::SeqCst);
         *self.stats.write() = AnnouncementStats::new();
     }
@@ -159,9 +171,10 @@ impl MemoryRegistry {
     /// Reserves a dedup slot (parity with the Turso reserve flow). Inserts the
     /// announcement with `tx_hash = None`; a duplicate `payment_tx_hash_hmac`
     /// returns `SpecterError::DuplicatePayment` — unless the existing row is
-    /// an un-finalized leftover from a failed publish, which is reclaimed so
-    /// the retry can proceed (parity with the Turso stale-reservation reclaim;
-    /// no age check here because this backend is single-process dev/test).
+    /// an un-finalized leftover from a failed publish *and* older than
+    /// [`STALE_RESERVATION_SECS`], in which case it's reclaimed so the retry
+    /// can proceed. The age gate mirrors the Turso backend's stale-reservation
+    /// reclaim so an in-flight concurrent publish is never hijacked here either.
     pub async fn reserve_announcement(&self, ann: &Announcement) -> Result<u64> {
         if let Some(hmac) = &ann.payment_tx_hash_hmac {
             if let Some(existing_id) = self.payment_hmac_index.get(hmac).map(|e| *e.value()) {
@@ -171,6 +184,14 @@ impl MemoryRegistry {
                     .map(|a| a.tx_hash.is_some())
                     .unwrap_or(false);
                 if finalized {
+                    return Err(SpecterError::DuplicatePayment);
+                }
+                let stale = self
+                    .reserved_at
+                    .get(&existing_id)
+                    .map(|t| t.elapsed().as_secs() >= STALE_RESERVATION_SECS)
+                    .unwrap_or(true); // no recorded reservation time → treat as reclaimable
+                if !stale {
                     return Err(SpecterError::DuplicatePayment);
                 }
                 // Reclaim: overwrite the abandoned reservation in place.
@@ -190,6 +211,7 @@ impl MemoryRegistry {
                     }
                 }
                 self.stats.write().add(&stored);
+                self.reserved_at.insert(existing_id, Instant::now());
                 return Ok(existing_id);
             }
         }
@@ -208,6 +230,7 @@ impl MemoryRegistry {
         }
         self.stats.write().add(&stored);
         self.announcements.insert(id, stored);
+        self.reserved_at.insert(id, Instant::now());
         Ok(id)
     }
 
@@ -223,6 +246,7 @@ impl MemoryRegistry {
                 let normalized = Self::normalize_tx_hash(monad_tx_hash);
                 entry.tx_hash = Some(normalized.clone());
                 self.tx_hash_index.insert(normalized, id);
+                self.reserved_at.remove(&id);
                 Ok(())
             }
             None => Err(SpecterError::AnnouncementNotFound(id.to_string())),
@@ -249,6 +273,7 @@ impl MemoryRegistry {
             }
             self.stats.write().remove(&old);
         }
+        self.reserved_at.remove(&id);
         Ok(())
     }
 }
