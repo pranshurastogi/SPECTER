@@ -63,6 +63,10 @@ impl RelayerConfig {
 pub struct ApiConfig {
     /// Ethereum mainnet RPC URL for ENS resolution.
     pub rpc_url: String,
+    /// Extra Ethereum RPC endpoints tried when `rpc_url` fails, from
+    /// `ETH_RPC_FALLBACKS` (comma-separated). Empty means "use the built-in
+    /// public defaults".
+    pub rpc_fallback_urls: Vec<String>,
     /// General testnet flag (controls Monad/EVM testnet behaviour).
     pub use_testnet: bool,
     /// When true, SuiNS resolution uses testnet registry/package IDs.
@@ -76,6 +80,10 @@ pub struct ApiConfig {
     pub pinata_gateway_token: String,
     /// Sui RPC URL.
     pub sui_rpc_url: String,
+    /// Extra Sui RPC endpoints tried when `sui_rpc_url` fails, from
+    /// `SUI_RPC_FALLBACKS` (comma-separated). Empty means "use the built-in
+    /// public defaults for the selected network".
+    pub sui_rpc_fallback_urls: Vec<String>,
     /// Enables IPFS download caching where safe.
     pub enable_cache: bool,
     /// Security configuration.
@@ -162,12 +170,14 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             rpc_url: DEFAULT_ETH_MAINNET_RPC.into(),
+            rpc_fallback_urls: Vec::new(),
             use_testnet: false,
             use_sui_testnet: false,
             pinata_jwt: None,
             pinata_gateway_url: String::new(),
             pinata_gateway_token: String::new(),
             sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
+            sui_rpc_fallback_urls: Vec::new(),
             enable_cache: true,
             security: SecurityConfig::default(),
             chain_rpc_map: HashMap::new(),
@@ -215,6 +225,11 @@ impl ApiConfig {
             }
         });
 
+        // Operator-supplied fallback endpoints. Left empty, each resolver
+        // falls back to the key-free public nodes baked into specter-core.
+        let rpc_fallback_urls = parse_endpoint_list("ETH_RPC_FALLBACKS");
+        let sui_rpc_fallback_urls = parse_endpoint_list("SUI_RPC_FALLBACKS");
+
         let pinata_gateway_url = std::env::var("PINATA_GATEWAY_URL").unwrap_or_default();
         let pinata_gateway_token = std::env::var("PINATA_GATEWAY_TOKEN").unwrap_or_default();
 
@@ -243,12 +258,14 @@ impl ApiConfig {
 
         Self {
             rpc_url,
+            rpc_fallback_urls,
             use_testnet,
             use_sui_testnet,
             pinata_jwt: std::env::var("PINATA_JWT").ok(),
             pinata_gateway_url,
             pinata_gateway_token,
             sui_rpc_url,
+            sui_rpc_fallback_urls,
             enable_cache: std::env::var("ENABLE_CACHE")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
@@ -723,6 +740,17 @@ impl AppState {
 
 // ── builder helpers ───────────────────────────────────────────────────────
 
+/// Reads a comma-separated endpoint list from `var`, dropping blanks.
+fn parse_endpoint_list(var: &str) -> Vec<String> {
+    std::env::var(var)
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 fn build_resolver(config: &ApiConfig) -> SpecterResolver {
     let mut rc = ResolverConfig::new(
         &config.rpc_url,
@@ -731,6 +759,9 @@ fn build_resolver(config: &ApiConfig) -> SpecterResolver {
     );
     if let Some(jwt) = &config.pinata_jwt {
         rc = rc.with_pinata_jwt(jwt);
+    }
+    if !config.rpc_fallback_urls.is_empty() {
+        rc.ens = rc.ens.with_fallbacks(config.rpc_fallback_urls.clone());
     }
     if !config.enable_cache {
         rc.ipfs = rc.ipfs.no_cache();
@@ -747,6 +778,11 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     );
     if let Some(jwt) = &config.pinata_jwt {
         sc = sc.with_pinata_jwt(jwt);
+    }
+    if !config.sui_rpc_fallback_urls.is_empty() {
+        sc.suins = sc
+            .suins
+            .with_fallbacks(config.sui_rpc_fallback_urls.clone());
     }
     if !config.enable_cache {
         sc.ipfs = sc.ipfs.no_cache();
