@@ -19,6 +19,7 @@ export const BROKEN_RPC_HOSTS = [
   'rpc.sepolia.org', // returns 404 HTML
   'rpc2.sepolia.org',
   'blastapi.io', // "Blast API is no longer available"
+  '1rpc.io', // answers eth_chainId, refuses real calls on the free plan
 ] as const;
 
 /** True when a configured URL points at a host known to be unusable. */
@@ -65,7 +66,7 @@ export const ETH_MAINNET_FALLBACKS = [
 
 export const ETH_SEPOLIA_FALLBACKS = [
   'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://1rpc.io/sepolia',
+  'https://sepolia.gateway.tenderly.co',
 ];
 
 export const ARB_SEPOLIA_FALLBACKS = [

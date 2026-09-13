@@ -197,8 +197,17 @@ pub const SUI_TESTNET_RPC_URL: &str = "https://sui-testnet-rpc.publicnode.com";
 // to "broken" — and never to a false "this name has no SPECTER record".
 //
 // Every endpoint below was verified to answer the exact call this codebase
-// makes: `eth_call` against the ENS registry for the Ethereum lists, and
+// makes: `eth_call` against the ENS registry for the Ethereum lists,
+// `eth_getTransactionReceipt` for the source-chain verification lists, and
 // `suix_resolveNameServiceAddress` for the Sui lists.
+//
+// Verify with the real method, never `eth_chainId`. Several free endpoints
+// answer `eth_chainId` happily and then refuse the calls that matter —
+// `1rpc.io/sepolia` returns "chain is not available on free plan" for
+// `eth_getTransactionReceipt`, and some publicnode endpoints reject receipt
+// lookups as "archive requests". An endpoint that passes a liveness ping but
+// fails the real workload is worse than no fallback: it burns a retry and
+// surfaces its error as the reason the whole operation failed.
 
 /// Public Ethereum **mainnet** RPC fallbacks (ENS resolution).
 pub const ETH_MAINNET_RPC_FALLBACKS: &[&str] =
@@ -207,7 +216,7 @@ pub const ETH_MAINNET_RPC_FALLBACKS: &[&str] =
 /// Public Ethereum **Sepolia** RPC fallbacks.
 pub const ETH_SEPOLIA_RPC_FALLBACKS: &[&str] = &[
     "https://ethereum-sepolia-rpc.publicnode.com",
-    "https://1rpc.io/sepolia",
+    "https://sepolia.gateway.tenderly.co",
 ];
 
 /// Public Sui **mainnet** RPC fallbacks (JSON-RPC still enabled).
@@ -237,7 +246,7 @@ pub fn chain_public_fallbacks(chain: &str) -> &'static [&'static str] {
             "https://rpc-testnet.monadinfra.com",
             "https://monad-testnet.drpc.org",
         ],
-        "base" => &["https://base.publicnode.com"],
+        "base" => &["https://mainnet.base.org", "https://base.drpc.org"],
         "polygon" => &["https://polygon-bor-rpc.publicnode.com"],
         _ => &[],
     }
