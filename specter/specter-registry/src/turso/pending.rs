@@ -51,9 +51,45 @@ impl PendingStore {
         Ok(())
     }
 
-    /// Single-use take: returns `(announcement, wrapped_secret)` and DELETES the row.
-    /// Returns `None` if missing or expired (and deletes an expired row).
-    pub async fn take(&self, payment_id: &str, now: i64) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    /// Re-inserts a previously taken row under the same id and original expiry.
+    ///
+    /// Used to undo a [`Self::take`] when the publish it was taken for did not
+    /// commit. `INSERT OR REPLACE` so a concurrent re-create cannot make this
+    /// fail; the original `expires_at` is preserved so a restore can never
+    /// extend the TTL.
+    pub async fn restore(
+        &self,
+        payment_id: &str,
+        announcement: &[u8],
+        wrapped_secret: &[u8],
+        expires_at: i64,
+    ) -> Result<()> {
+        let conn = self.conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO pending_payments (payment_id, announcement, shared_secret_wrapped, expires_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                payment_id.to_string(),
+                Value::Blob(announcement.to_vec()),
+                Value::Blob(wrapped_secret.to_vec()),
+                expires_at
+            ],
+        )
+        .await
+        .map_err(|e| SpecterError::RegistryError(format!("pending restore: {e}")))?;
+        Ok(())
+    }
+
+    /// Single-use take: returns `(announcement, wrapped_secret, expires_at)` and
+    /// DELETES the row. Returns `None` if missing or expired (and deletes an
+    /// expired row).
+    ///
+    /// `expires_at` is returned so the caller can [`Self::restore`] the row on a
+    /// failed publish without extending its lifetime.
+    pub async fn take(
+        &self,
+        payment_id: &str,
+        now: i64,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>, i64)>> {
         let conn = self.conn()?;
         let mut rows = conn
             .query(
@@ -91,7 +127,7 @@ impl PendingStore {
             Ok(Value::Blob(b)) => b,
             _ => return Ok(None),
         };
-        Ok(Some((ann, wrapped)))
+        Ok(Some((ann, wrapped, expires_at)))
     }
 
     /// Deletes all expired rows; returns the count.

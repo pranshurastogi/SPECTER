@@ -28,7 +28,7 @@
 //! [`CLEANUP_INTERVAL`].
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use specter_core::error::SpecterError;
@@ -52,6 +52,16 @@ pub struct PendingPayment {
     pub announcement: Announcement,
     /// ML-KEM shared secret for encrypting on-chain metadata at publish time.
     pub shared_secret: [u8; 32],
+    /// Absolute expiry as unix **milliseconds**.
+    ///
+    /// Carried so [`PendingPaymentStore::restore`] can put the entry back with
+    /// its original lifetime: a publish that fails and retries must not be able
+    /// to keep a pending payment alive indefinitely.
+    ///
+    /// Milliseconds rather than seconds because the in-memory backend is used
+    /// with sub-second TTLs in tests; the Turso column stays in seconds, and the
+    /// conversion happens at that boundary.
+    pub expires_at_ms: u64,
 }
 
 /// Server-authoritative store for in-flight stealth payments.
@@ -70,8 +80,8 @@ pub enum PendingPaymentStore {
     },
     /// In-memory dev fallback (ephemeral; does not survive restarts).
     Memory {
-        /// `payment_id → (payment, created_at)`.
-        inner: DashMap<Uuid, (PendingPayment, Instant)>,
+        /// `payment_id → payment` (the payment carries its own absolute expiry).
+        inner: DashMap<Uuid, PendingPayment>,
         /// Time-to-live for entries.
         ttl: Duration,
     },
@@ -120,16 +130,14 @@ impl PendingPaymentStore {
                     .insert(&id.to_string(), &blob, &wrapped, expires_at)
                     .await?;
             }
-            Self::Memory { inner, .. } => {
+            Self::Memory { inner, ttl } => {
                 inner.insert(
                     id,
-                    (
-                        PendingPayment {
-                            announcement,
-                            shared_secret,
-                        },
-                        Instant::now(),
-                    ),
+                    PendingPayment {
+                        announcement,
+                        shared_secret,
+                        expires_at_ms: now_millis() + ttl.as_millis() as u64,
+                    },
                 );
             }
         }
@@ -143,7 +151,8 @@ impl PendingPaymentStore {
         match self {
             Self::Turso { store, db_keys, .. } => {
                 let now = now_secs() as i64;
-                let Some((blob, wrapped)) = store.take(&id.to_string(), now).await? else {
+                let Some((blob, wrapped, expires_at)) = store.take(&id.to_string(), now).await?
+                else {
                     return Ok(None);
                 };
                 let announcement: Announcement = serde_json::from_slice(&blob).map_err(|e| {
@@ -153,18 +162,56 @@ impl PendingPaymentStore {
                 Ok(Some(PendingPayment {
                     announcement,
                     shared_secret,
+                    expires_at_ms: expires_at.max(0) as u64 * 1_000,
                 }))
             }
-            Self::Memory { inner, ttl } => {
-                let Some((_, (p, created))) = inner.remove(id) else {
+            Self::Memory { inner, .. } => {
+                let Some((_, p)) = inner.remove(id) else {
                     return Ok(None);
                 };
-                if created.elapsed() > *ttl {
+                if p.expires_at_ms <= now_millis() {
                     return Ok(None);
                 }
                 Ok(Some(p))
             }
         }
+    }
+
+    /// Puts a previously [`Self::take`]n entry back, unchanged.
+    ///
+    /// Called when the publish the entry was taken for did not commit, so a
+    /// retry can still use the server-held shared secret and publish encrypted
+    /// metadata. Without this, any transient failure after the take (an RPC
+    /// blip, a throttled relayer) permanently burns the `payment_id` and forces
+    /// the client onto the unencrypted fallback path.
+    ///
+    /// Restoring an already-expired entry is a no-op: there is nothing useful to
+    /// put back, and re-inserting would resurrect a row the sweeper just cleared.
+    pub async fn restore(&self, id: &Uuid, payment: PendingPayment) -> Result<(), SpecterError> {
+        if payment.expires_at_ms <= now_millis() {
+            debug!(payment_id = %id, "Not restoring an expired pending payment");
+            return Ok(());
+        }
+        match self {
+            Self::Turso { store, db_keys, .. } => {
+                let blob = serde_json::to_vec(&payment.announcement)
+                    .map_err(|e| SpecterError::RegistryError(format!("pending serialize: {e}")))?;
+                let wrapped = db_keys.wrap_secret(&payment.shared_secret);
+                store
+                    .restore(
+                        &id.to_string(),
+                        &blob,
+                        &wrapped,
+                        (payment.expires_at_ms / 1_000) as i64,
+                    )
+                    .await?;
+            }
+            Self::Memory { inner, .. } => {
+                inner.insert(*id, payment);
+            }
+        }
+        debug!(payment_id = %id, "Restored pending payment after a failed publish");
+        Ok(())
     }
 
     /// Removes all expired entries. Cheap, safe to call frequently.
@@ -173,12 +220,20 @@ impl PendingPaymentStore {
             Self::Turso { store, .. } => {
                 store.purge_expired(now_secs() as i64).await?;
             }
-            Self::Memory { inner, ttl } => {
-                inner.retain(|_, (_, created)| created.elapsed() <= *ttl);
+            Self::Memory { inner, .. } => {
+                let now = now_millis();
+                inner.retain(|_, p| p.expires_at_ms > now);
             }
         }
         Ok(())
     }
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn now_secs() -> u64 {
@@ -343,5 +398,148 @@ mod tests {
         let id = store.insert(mk_announcement(), mk_secret()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(1100)).await;
         assert!(store.take(&id).await.unwrap().is_none());
+    }
+
+    // ── restore-on-failed-publish ─────────────────────────────────────────
+    //
+    // The publish handler takes a pending entry before it verifies the payment
+    // and relays. A transient failure in between used to burn the payment_id
+    // permanently, pushing the client's retry onto the no-secret publish path.
+
+    #[tokio::test]
+    async fn restore_makes_a_taken_entry_usable_again() {
+        let store = PendingPaymentStore::memory(Duration::from_secs(60));
+        let secret = [0x11u8; 32];
+        let id = store.insert(mk_announcement(), secret).await.unwrap();
+
+        let taken = store.take(&id).await.unwrap().expect("present");
+        assert!(
+            store.take(&id).await.unwrap().is_none(),
+            "take must be single-use"
+        );
+
+        store.restore(&id, taken).await.unwrap();
+
+        let again = store.take(&id).await.unwrap().expect("restored");
+        assert_eq!(
+            again.shared_secret, secret,
+            "the shared secret must survive a restore — without it the retry \
+             cannot encrypt metadata, which is the whole point"
+        );
+        assert_eq!(again.announcement.view_tag, 0x42);
+    }
+
+    #[tokio::test]
+    async fn restore_is_still_single_use_afterwards() {
+        let store = PendingPaymentStore::memory(Duration::from_secs(60));
+        let id = store.insert(mk_announcement(), mk_secret()).await.unwrap();
+        let taken = store.take(&id).await.unwrap().unwrap();
+        store.restore(&id, taken).await.unwrap();
+        assert!(store.take(&id).await.unwrap().is_some());
+        assert!(
+            store.take(&id).await.unwrap().is_none(),
+            "restoring must not make the id reusable more than once"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_extend_the_original_ttl() {
+        // A client that repeatedly fails a publish must not be able to keep a
+        // pending payment alive forever by racking up restores.
+        let store = PendingPaymentStore::memory(Duration::from_millis(40));
+        let id = store.insert(mk_announcement(), mk_secret()).await.unwrap();
+        let taken = store.take(&id).await.unwrap().unwrap();
+        let original_expiry = taken.expires_at_ms;
+
+        store.restore(&id, taken).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        assert!(
+            store.take(&id).await.unwrap().is_none(),
+            "restored entry must still expire on its original schedule"
+        );
+        assert!(original_expiry > 0);
+    }
+
+    #[tokio::test]
+    async fn restoring_an_expired_entry_is_a_noop() {
+        let store = PendingPaymentStore::memory(Duration::from_secs(60));
+        let id = store.insert(mk_announcement(), mk_secret()).await.unwrap();
+        let mut taken = store.take(&id).await.unwrap().unwrap();
+        taken.expires_at_ms = 1; // long past
+
+        store.restore(&id, taken).await.unwrap();
+        assert!(
+            store.take(&id).await.unwrap().is_none(),
+            "an expired entry must not be resurrected by a restore"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_of_an_unknown_id_is_harmless() {
+        let store = PendingPaymentStore::memory(Duration::from_secs(60));
+        let id = store.insert(mk_announcement(), mk_secret()).await.unwrap();
+        let taken = store.take(&id).await.unwrap().unwrap();
+        // Restore under a different id — should simply create that entry, never panic.
+        let other = Uuid::new_v4();
+        store.restore(&other, taken).await.unwrap();
+        assert!(store.take(&other).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn turso_restore_round_trips_through_the_database() {
+        let reg = TursoRegistry::new_test().await;
+        let store = PendingPaymentStore::turso(
+            PendingStore::new(reg.database()),
+            mk_keys(),
+            Duration::from_secs(600),
+        );
+        let secret = [0x7Eu8; 32];
+        let id = store.insert(mk_announcement(), secret).await.unwrap();
+
+        let taken = store.take(&id).await.unwrap().expect("present");
+        let expiry = taken.expires_at_ms;
+        assert!(store.take(&id).await.unwrap().is_none(), "row was consumed");
+
+        store.restore(&id, taken).await.unwrap();
+
+        let again = store.take(&id).await.unwrap().expect("restored row");
+        assert_eq!(
+            again.shared_secret, secret,
+            "KEK-wrapped secret must survive"
+        );
+        assert_eq!(
+            again.expires_at_ms / 1_000,
+            expiry / 1_000,
+            "expiry must be preserved to the second the column stores"
+        );
+    }
+
+    #[tokio::test]
+    async fn turso_restore_survives_a_new_store_instance() {
+        let reg = TursoRegistry::new_test().await;
+        let db = reg.database();
+        let secret = [0x3Du8; 32];
+
+        let id = {
+            let s1 = PendingPaymentStore::turso(
+                PendingStore::new(db.clone()),
+                mk_keys(),
+                Duration::from_secs(600),
+            );
+            let id = s1.insert(mk_announcement(), secret).await.unwrap();
+            let taken = s1.take(&id).await.unwrap().unwrap();
+            s1.restore(&id, taken).await.unwrap();
+            id
+        };
+
+        let s2 =
+            PendingPaymentStore::turso(PendingStore::new(db), mk_keys(), Duration::from_secs(600));
+        let taken = s2
+            .take(&id)
+            .await
+            .unwrap()
+            .expect("durable across instances");
+        assert_eq!(taken.shared_secret, secret);
     }
 }

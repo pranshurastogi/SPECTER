@@ -194,6 +194,117 @@ mod tests {
     }
 
     /// Publishing twice with the same payment_id must fail: the entry is consumed.
+    /// A publish that fails *after* the pending entry is taken must put it back,
+    /// so the retry still has the server-held shared secret.
+    ///
+    /// Before this was fixed, the first failure permanently burned the
+    /// `payment_id`; the client's retry then fell back to a publish with no
+    /// secret, which dropped the payment metadata from the announcement. A
+    /// transient RPC blip was enough to trigger it.
+    #[tokio::test]
+    async fn failed_publish_restores_the_payment_id_for_retry() {
+        let state = Arc::new(AppState::new_sync(ApiConfig::default()));
+        let app = create_router(state);
+
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/keys/generate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let keys: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let meta_address = keys["meta_address"].as_str().unwrap().to_string();
+
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/stealth/create")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"meta_address":"{meta_address}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let create: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let payment_id = create["payment_id"].as_str().unwrap().to_string();
+
+        // Attempt 1: no relayer configured and no tx_hash supplied, so the
+        // publish fails at the relay step — i.e. after the take.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"payment_id":"{payment_id}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "dev-mode publish without tx_hash should fail at the relay step"
+        );
+
+        // Attempt 2: the same payment_id must still work.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{payment_id}","tx_hash":"0xfeedface"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "retry after a failed publish must reuse the restored payment_id, got {}",
+            String::from_utf8_lossy(&body)
+        );
+
+        // And it must still be single-use after the successful publish.
+        let res = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/registry/announcements")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"payment_id":"{payment_id}","tx_hash":"0xfeedface"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            res.status(),
+            StatusCode::OK,
+            "a committed payment_id must not be reusable"
+        );
+    }
+
     #[tokio::test]
     async fn test_payment_id_is_single_use() {
         let state = Arc::new(AppState::new_sync(ApiConfig::default()));

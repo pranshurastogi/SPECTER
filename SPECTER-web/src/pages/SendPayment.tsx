@@ -301,9 +301,14 @@ function ReceiptConfetti() {
 /**
  * Publish the announcement, preferring the server-held `payment_id` path
  * (correct view tag + encrypted metadata). If the server reports the pending
- * entry expired (24h TTL or restart in dev), automatically retry once with
- * the announcement DTO fallback — the payment still becomes discoverable,
- * but the metadata blob is published unencrypted (logged server-side).
+ * entry expired (24h TTL), automatically retry once with the announcement DTO
+ * fallback.
+ *
+ * The fallback has no shared secret, so the server cannot encrypt the payment
+ * metadata — it omits it instead of publishing it in the clear. The payment is
+ * still fully discoverable and claimable (discovery keys off the view tag, and
+ * the claim flow reads live balances); what is lost is the convenience metadata
+ * (source tx hash, amount, chain id) that the encrypted blob would have carried.
  */
 async function publishWithFallback(
   stealth: CreateStealthResponse,
@@ -332,7 +337,8 @@ async function publishWithFallback(
       /unknown or expired payment_id/i.test(err.message);
     if (!pendingExpired) throw err;
     console.warn(
-      "[send] Server-side pending entry expired — publishing via announcement DTO fallback (metadata will not be encrypted).",
+      "[send] Server-side pending entry expired — publishing via announcement DTO fallback " +
+        "(payment metadata omitted; it cannot be encrypted without the server-held secret).",
     );
     const res = await api.publishAnnouncement(base);
     return { res, usedFallback: true };
@@ -1030,7 +1036,9 @@ export default function SendPayment({ payLink }: { payLink?: PayLinkConfig } = {
         );
         if (usedFallback) {
           toast.warning(
-            "Published via fallback announcement — the server-side pending entry had expired, so payment metadata was not encrypted.",
+            "Published via fallback — the server-side pending entry had expired, so the payment " +
+              "details (source tx, amount) were left out of the announcement. The payment is still " +
+              "discoverable and claimable.",
           );
         }
         refreshIncompletePending();

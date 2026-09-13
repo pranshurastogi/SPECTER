@@ -285,8 +285,57 @@ pub async fn publish_announcement(
     let request_start = Instant::now();
 
     // ── 1. Resolve announcement ───────────────────────────────────────────────
-    let (mut announcement, shared_secret) = resolve_pending_announcement(&state, &req).await?;
+    // The take is atomic (that is what keeps `payment_id` single-use against
+    // concurrent requests), but it happens before the payment is verified and
+    // relayed. If anything downstream fails, put the entry back: otherwise a
+    // transient RPC error permanently burns the id and the client's retry falls
+    // back to a publish with no shared secret — silently dropping the payment
+    // metadata that the encrypted path would have carried.
+    let (announcement, shared_secret, taken) = resolve_pending_announcement(&state, &req).await?;
 
+    let mut committed = false;
+    let result = publish_resolved(
+        &state,
+        &req,
+        &headers,
+        maybe_connect.as_ref(),
+        request_start,
+        announcement,
+        shared_secret,
+        &mut committed,
+    )
+    .await;
+
+    if result.is_err() && !committed {
+        if let Some((pid, payment)) = taken {
+            if let Err(e) = state.pending_payments.restore(&pid, payment).await {
+                // Best-effort: the publish already failed, and losing the entry
+                // only costs the user a re-create. Never mask the real error.
+                warn!(payment_id = %pid, "Failed to restore pending payment: {e}");
+            }
+        }
+    }
+
+    result
+}
+
+/// The publish flow proper, running against an already-resolved announcement.
+///
+/// `committed` is set the instant the `announce()` transaction is broadcast.
+/// Past that point the announcement is irreversibly public, so the caller must
+/// not restore the pending entry — doing so would allow the same payment to be
+/// announced twice.
+#[allow(clippy::too_many_arguments)]
+async fn publish_resolved(
+    state: &Arc<AppState>,
+    req: &PublishAnnouncementRequest,
+    headers: &HeaderMap,
+    maybe_connect: Option<&ConnectInfo<SocketAddr>>,
+    request_start: Instant,
+    mut announcement: Announcement,
+    shared_secret: Option<[u8; 32]>,
+    committed: &mut bool,
+) -> Result<Json<PublishAnnouncementResponse>> {
     // ── 2. Local-only payment metadata (kept transiently, NOT persisted plaintext)
     announcement.payment_tx_hash = req
         .payment_tx_hash
@@ -406,9 +455,14 @@ pub async fn publish_announcement(
             })
     };
     let monad_tx_hash = match relay_result {
-        Ok(hash) => hash,
+        Ok(hash) => {
+            // The announce() tx is out. The payment is public from here on, so
+            // the pending entry must stay consumed no matter what follows.
+            *committed = true;
+            hash
+        }
         Err(e) => {
-            release_reservation_best_effort(&state, reserved_id, view_tag).await;
+            release_reservation_best_effort(state, reserved_id, view_tag).await;
             return Err(e);
         }
     };
@@ -437,7 +491,7 @@ pub async fn publish_announcement(
     );
 
     // ── 7. Telemetry (best-effort) ────────────────────────────────────────────
-    let ip = extract_client_ip(&headers, maybe_connect.as_ref());
+    let ip = extract_client_ip(headers, maybe_connect);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -777,13 +831,21 @@ fn strip_hex_prefix(s: &str) -> &str {
 
 /// Resolves an `Announcement` and its associated shared secret from the pending store.
 ///
-/// Returns `(announcement, shared_secret)` where `shared_secret` is `Some` only for
-/// the `payment_id` path. The fallback (raw `announcement`) has no secret available
-/// and metadata will be emitted in plaintext.
+/// Returns `(announcement, shared_secret, taken)`.
+///
+/// `shared_secret` is `Some` only for the `payment_id` path; the raw-announcement
+/// fallback has no secret, so its metadata is published view-tag-only.
+///
+/// `taken` carries the consumed pending entry so the caller can put it back if
+/// the publish does not commit. The take stays atomic — that is what keeps
+/// `payment_id` single-use under concurrent requests — but a publish that never
+/// reached the relayer must not burn it.
+type TakenPending = Option<(uuid::Uuid, crate::pending::PendingPayment)>;
+
 async fn resolve_pending_announcement(
     state: &AppState,
     req: &PublishAnnouncementRequest,
-) -> Result<(Announcement, Option<[u8; 32]>)> {
+) -> Result<(Announcement, Option<[u8; 32]>, TakenPending)> {
     match (req.payment_id, req.announcement.as_ref()) {
         (Some(pid), _) => {
             let pending = state
@@ -799,10 +861,17 @@ async fn resolve_pending_announcement(
                 })?;
             debug!(payment_id = %pid, view_tag = pending.announcement.view_tag, "Resolved pending payment");
             let secret = pending.shared_secret;
-            Ok((pending.announcement, Some(secret)))
+            Ok((
+                pending.announcement.clone(),
+                Some(secret),
+                Some((pid, pending)),
+            ))
         }
         (None, Some(dto)) => {
-            warn!("Publish via announcement fallback (no payment_id). Metadata will not be encrypted.");
+            warn!(
+                "Publish via announcement fallback (no payment_id). Payment metadata will be \
+                 omitted from the on-chain blob — it cannot be encrypted without the secret."
+            );
             let mut ann: Announcement =
                 dto.clone()
                     .try_into()
@@ -810,7 +879,7 @@ async fn resolve_pending_announcement(
                         ApiError::bad_request(format!("Invalid announcement: {}", e))
                     })?;
             ann.id = 0;
-            Ok((ann, None))
+            Ok((ann, None, None))
         }
         (None, None) => Err(ApiError::bad_request(
             "Either payment_id or announcement is required",
@@ -867,9 +936,26 @@ async fn relay_announcement(
 
 /// Encodes on-chain metadata from an announcement's payment fields.
 ///
-/// When `shared_secret` is `Some`, returns 93 bytes (AES-256-GCM encrypted).
-/// When `None`, returns 77 bytes (plaintext). The contract accepts both sizes.
+/// With a `shared_secret`, returns 93 bytes (AES-256-GCM over the full
+/// metadata). Without one, returns a 77-byte blob carrying **only the view
+/// tag** — the payment fields are omitted, not published in the clear.
+///
+/// Emitting them in plaintext would put the funding transaction hash, the
+/// amount, and the source chain id on-chain right next to the stealth address,
+/// handing an observer the sender→stealth-address link and the value directly.
+/// Discovery does not need them: the recipient matches on the view tag, then
+/// derives the stealth key and reads live balances. So the safe degradation is
+/// "less convenience metadata", never "less privacy".
 fn build_on_chain_metadata(ann: &Announcement, shared_secret: Option<&[u8; 32]>) -> Vec<u8> {
+    let Some(secret) = shared_secret else {
+        warn!(
+            view_tag = ann.view_tag,
+            "no shared secret for this announcement — publishing a view-tag-only blob and \
+             omitting payment metadata (tx hash, amount, source chain)"
+        );
+        return AnnouncementMetadata::new(ann.view_tag).encode().to_vec();
+    };
+
     let mut meta = AnnouncementMetadata::new(ann.view_tag);
 
     if let Some(ptx) = &ann.payment_tx_hash {
@@ -891,14 +977,7 @@ fn build_on_chain_metadata(ann: &Announcement, shared_secret: Option<&[u8; 32]>)
     }
 
     let plaintext = meta.encode();
-
-    match shared_secret {
-        Some(secret) => specter_crypto::encrypt_announcement_metadata(&plaintext, secret).to_vec(),
-        None => {
-            warn!("publishing announcement without metadata encryption (no shared secret)");
-            plaintext.to_vec()
-        }
-    }
+    specter_crypto::encrypt_announcement_metadata(&plaintext, secret).to_vec()
 }
 
 /// Parses a hex tx hash string ("0x..." or bare hex) into a 32-byte array.
@@ -974,4 +1053,108 @@ fn extract_client_ip(
     connect_info
         .map(|ci| ci.0.ip())
         .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use specter_core::constants::KYBER_CIPHERTEXT_SIZE;
+
+    /// A recognisable tx hash and amount so we can assert they never leak.
+    const TX_HASH: &str = "0xaabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    const AMOUNT_WEI: &str = "1234567890000000000";
+    const VIEW_TAG: u8 = 0x5A;
+
+    fn tx_hash_bytes() -> Vec<u8> {
+        hex::decode(TX_HASH.trim_start_matches("0x")).unwrap()
+    }
+
+    fn ann_with_payment_fields() -> Announcement {
+        let mut a = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], VIEW_TAG);
+        a.payment_tx_hash = Some(TX_HASH.to_string());
+        a.amount = Some(AMOUNT_WEI.to_string());
+        a.source_chain_id = Some(11_155_111);
+        a
+    }
+
+    /// Returns true when `needle` appears anywhere in `haystack`.
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn without_a_secret_the_payment_fields_are_omitted_not_published_in_the_clear() {
+        // The regression: a publish with no shared secret used to emit the
+        // funding tx hash and amount as plaintext on-chain, next to the stealth
+        // address — handing an observer the sender link and the value.
+        let blob = build_on_chain_metadata(&ann_with_payment_fields(), None);
+
+        assert!(
+            !contains(&blob, &tx_hash_bytes()),
+            "the source payment tx hash leaked into the on-chain blob"
+        );
+        assert_eq!(
+            blob[0], VIEW_TAG,
+            "the view tag must survive — discovery needs it"
+        );
+        assert_eq!(blob.len(), 77, "unencrypted blobs stay the 77-byte shape");
+        assert!(
+            blob[1..].iter().all(|&b| b == 0),
+            "everything past the view tag must be zeroed, got {:?}",
+            &blob[1..16]
+        );
+    }
+
+    #[test]
+    fn with_a_secret_the_fields_are_carried_but_encrypted() {
+        let secret = [0x9Cu8; 32];
+        let blob = build_on_chain_metadata(&ann_with_payment_fields(), Some(&secret));
+
+        assert_eq!(blob.len(), 93, "AES-256-GCM blob is 93 bytes");
+        assert!(
+            !contains(&blob, &tx_hash_bytes()),
+            "the tx hash must not appear in the ciphertext"
+        );
+    }
+
+    #[test]
+    fn the_two_paths_are_distinguishable_only_by_length_not_by_leaked_data() {
+        let secret = [0x01u8; 32];
+        let ann = ann_with_payment_fields();
+        let encrypted = build_on_chain_metadata(&ann, Some(&secret));
+        let omitted = build_on_chain_metadata(&ann, None);
+
+        for blob in [&encrypted, &omitted] {
+            assert!(!contains(blob, &tx_hash_bytes()), "tx hash leaked");
+        }
+        assert_ne!(encrypted.len(), omitted.len());
+    }
+
+    #[test]
+    fn an_announcement_with_no_payment_fields_still_encodes_the_view_tag() {
+        let ann = Announcement::new(vec![0x42u8; KYBER_CIPHERTEXT_SIZE], VIEW_TAG);
+        let blob = build_on_chain_metadata(&ann, None);
+        assert_eq!(blob[0], VIEW_TAG);
+        assert_eq!(blob.len(), 77);
+    }
+
+    #[test]
+    fn view_tag_survives_every_possible_value_without_a_secret() {
+        // The view tag is the one field discovery depends on; an off-by-one in
+        // the omission path would silently make payments undiscoverable.
+        for tag in [0u8, 1, 0x7F, 0x80, 0xFE, 0xFF] {
+            let mut a = ann_with_payment_fields();
+            a.view_tag = tag;
+            let blob = build_on_chain_metadata(&a, None);
+            assert_eq!(blob[0], tag, "view tag {tag} did not survive");
+        }
+    }
+
+    #[test]
+    fn a_malformed_tx_hash_does_not_leak_partial_bytes() {
+        let mut a = ann_with_payment_fields();
+        a.payment_tx_hash = Some("0xnot-hex".to_string());
+        let blob = build_on_chain_metadata(&a, None);
+        assert!(blob[1..].iter().all(|&b| b == 0));
+    }
 }
