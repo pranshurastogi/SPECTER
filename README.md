@@ -43,7 +43,7 @@ SPECTER lets anyone send money to a human-readable name (`alice.eth`, `bob.sui`)
 10. [Use Cases](#10--use-cases)
 11. [Traction & Status](#11--traction--status)
 12. [Roadmap](#12--roadmap)
-13. [Build with SPECTER](#13--build-with-specter)
+13. [Build with SPECTER](#13--build-with-specter) · [Use from an AI agent](#use-specter-from-an-ai-agent)
 14. [Testing](#14--testing)
 15. [Research & References](#15--research--references)
 
@@ -336,7 +336,7 @@ Base URL: `https://backend.specterpq.com` · local: `http://localhost:3001`
 | `POST` | `/api/v1/ipfs/upload` · `GET /api/v1/ipfs/:cid` | Pin / fetch a meta-address |
 | `GET` | `/api/v1/registry/stats` | Registry stats and view-tag distribution |
 
-> Key generation and scanning are performed **client-side in the SDK** — the API deliberately exposes no endpoint that receives a secret key. Full schemas and a Postman collection: [`specter/SPECTER_API.postman_collection.json`](specter/SPECTER_API.postman_collection.json) · [docs.specterpq.com](https://docs.specterpq.com).
+> Key generation and scanning are performed **client-side in the SDK** — the API deliberately exposes no endpoint that receives a secret key. Full schemas: **[OpenAPI 3.1 spec](https://docs.specterpq.com/openapi.yaml)** · [Postman collection](specter/SPECTER_API.postman_collection.json) · [docs.specterpq.com](https://docs.specterpq.com).
 
 ### Ecosystem repositories
 
@@ -347,6 +347,22 @@ Base URL: `https://backend.specterpq.com` · local: `http://localhost:3001`
 | [playground](https://github.com/specter-privacy/playground) | Interactive demo / sandbox for trying the protocol end-to-end |
 
 **Deployed announcer contract (Monad Testnet):** [`0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC`](https://testnet.monadexplorer.com/address/0x7a687B5a7c98c880f23F00003A820e7E2fF7fDaC)
+
+### Use SPECTER from an AI agent
+
+SPECTER is available as an **MCP server** with per-call x402 payments — no API key, no subscription:
+
+```bash
+claude mcp add --transport http specter https://specter.bazgateway.com/mcp
+```
+
+Ten tools covering name resolution, stealth payment creation, announcement publishing, and the
+registry. Three published Recipes wrap the multi-step flows so an agent can send a private payment
+unaided — the ordering is not discoverable from an endpoint list, and getting it wrong silently
+drops the payment metadata.
+
+📄 **[BAZANTIC.md](BAZANTIC.md)** — gateway, Recipes, and the controlled A/B experiment showing the
+difference measured on-chain (77-byte unencrypted vs 93-byte encrypted announcement metadata).
 
 ---
 
