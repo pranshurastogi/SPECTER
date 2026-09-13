@@ -4,14 +4,22 @@
  * ENS always uses {@link ensPublicClient} from ensConfig.ts (mainnet only).
  */
 
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, fallback, http } from 'viem';
 import { chain } from './chainConfig';
+import {
+  ETH_MAINNET_FALLBACKS,
+  ETH_SEPOLIA_FALLBACKS,
+  rpcChain,
+} from './rpcFallbacks';
 
-const rpcUrl =
-  import.meta.env.VITE_ETH_RPC_URL ||
-  (chain.id === 1 ? 'https://ethereum.publicnode.com' : 'https://ethereum-sepolia-rpc.publicnode.com');
+const defaults = chain.id === 1 ? ETH_MAINNET_FALLBACKS : ETH_SEPOLIA_FALLBACKS;
+const urls = rpcChain(
+  import.meta.env.VITE_ETH_RPC_URL,
+  import.meta.env.VITE_ETH_RPC_URL_FALLBACK,
+  defaults,
+);
 
 export const publicClient = createPublicClient({
   chain,
-  transport: http(rpcUrl),
+  transport: fallback(urls.map((url) => http(url))),
 });

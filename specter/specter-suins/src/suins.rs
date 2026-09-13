@@ -8,15 +8,47 @@ use tracing::{debug, instrument};
 
 use specter_core::constants::{
     SUINS_PACKAGE_ID_MAINNET, SUINS_PACKAGE_ID_TESTNET, SUINS_REGISTRY_TABLE_ID_MAINNET,
-    SUINS_REGISTRY_TABLE_ID_TESTNET, SUI_MAINNET_RPC_URL,
+    SUINS_REGISTRY_TABLE_ID_TESTNET, SUI_MAINNET_RPC_FALLBACKS, SUI_MAINNET_RPC_URL,
+    SUI_TESTNET_RPC_FALLBACKS,
 };
 use specter_core::error::{Result, SpecterError};
+use specter_core::redact::{redact_url, sanitize_error};
+
+/// What one Sui RPC endpoint had to say about a call.
+enum SuiCallOutcome {
+    /// The node answered. `None`/`null` means the name is not registered.
+    Answered(Option<serde_json::Value>),
+    /// The endpoint itself is unusable and the call should be retried elsewhere.
+    EndpointFailed(String),
+}
+
+/// Returns the default fallback endpoints for the given network.
+pub fn default_sui_fallbacks(use_testnet: bool) -> Vec<String> {
+    let list = if use_testnet {
+        SUI_TESTNET_RPC_FALLBACKS
+    } else {
+        SUI_MAINNET_RPC_FALLBACKS
+    };
+    list.iter().map(|s| (*s).to_string()).collect()
+}
+
+fn default_sui_mainnet_fallbacks() -> Vec<String> {
+    default_sui_fallbacks(false)
+}
 
 /// SuiNS client configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SuinsConfig {
-    /// Sui RPC URL
+    /// Sui RPC URL tried first.
     pub rpc_url: String,
+    /// Endpoints tried, in order, when [`Self::rpc_url`] fails.
+    ///
+    /// This matters more on Sui than on Ethereum: the official public
+    /// fullnodes have disabled JSON-RPC entirely, so an endpoint that looks
+    /// healthy can still answer `-32601 Method not found` for every SuiNS
+    /// lookup. Without fallbacks that reads as "name not registered".
+    #[serde(default = "default_sui_mainnet_fallbacks")]
+    pub fallback_rpc_urls: Vec<String>,
     /// Whether to use testnet constants (registry table, package ID)
     pub use_testnet: bool,
     /// Request timeout in seconds
@@ -27,6 +59,7 @@ impl Default for SuinsConfig {
     fn default() -> Self {
         Self {
             rpc_url: SUI_MAINNET_RPC_URL.into(),
+            fallback_rpc_urls: default_sui_fallbacks(false),
             use_testnet: false,
             timeout_seconds: 30,
         }
@@ -35,12 +68,25 @@ impl Default for SuinsConfig {
 
 impl SuinsConfig {
     /// Creates a new configuration with the given RPC URL.
+    ///
+    /// Fallbacks default to the public endpoints for the selected network.
     pub fn new(rpc_url: impl Into<String>, use_testnet: bool) -> Self {
         Self {
             rpc_url: rpc_url.into(),
+            fallback_rpc_urls: default_sui_fallbacks(use_testnet),
             use_testnet,
             ..Default::default()
         }
+    }
+
+    /// Replaces the fallback endpoint list.
+    pub fn with_fallbacks<I, S>(mut self, urls: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.fallback_rpc_urls = urls.into_iter().map(Into::into).collect();
+        self
     }
 
     /// Returns the SuiNS registry table ID for the configured network.
@@ -229,29 +275,104 @@ impl SuinsClient {
             "id": 1
         });
 
-        let response = self
-            .http_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        let endpoints = self.endpoints();
+        let total = endpoints.len();
+        let mut last_error = String::from("no endpoints configured");
 
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
+        // One budget for the whole call. The Sui list is the longest in the
+        // codebase, so without a shared deadline a single SuiNS lookup could
+        // block for timeout x endpoints, twice over (resolve + content hash).
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(self.config.timeout_seconds);
+
+        for (idx, url) in endpoints.iter().enumerate() {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                last_error = format!(
+                    "endpoint budget of {}s exhausted",
+                    self.config.timeout_seconds
+                );
+                break;
+            }
+            match tokio::time::timeout(remaining, self.sui_rpc_call_once(url, &request))
+                .await
+                .unwrap_or_else(|_| SuiCallOutcome::EndpointFailed("timed out".into()))
+            {
+                SuiCallOutcome::Answered(result) => {
+                    if idx > 0 {
+                        debug!(
+                            method,
+                            endpoint = %redact_url(url),
+                            attempt = idx + 1,
+                            "Sui RPC served by fallback endpoint"
+                        );
+                    }
+                    return Ok(result);
+                }
+                SuiCallOutcome::EndpointFailed(err) => {
+                    debug!(
+                        method,
+                        endpoint = %redact_url(url),
+                        attempt = idx + 1,
+                        of = total,
+                        error = %err,
+                        "Sui RPC endpoint failed; trying next"
+                    );
+                    last_error = err;
+                }
+            }
+        }
+
+        Err(SpecterError::RpcError(format!(
+            "all {total} Sui RPC endpoint(s) failed for {method}; last error: {last_error}"
+        )))
+    }
+
+    /// Endpoints to try, in order: the configured primary, then the fallbacks.
+    fn endpoints(&self) -> Vec<&str> {
+        let mut out = vec![self.config.rpc_url.as_str()];
+        for url in &self.config.fallback_rpc_urls {
+            if !url.is_empty() && !out.contains(&url.as_str()) {
+                out.push(url.as_str());
+            }
+        }
+        out
+    }
+
+    /// Issues the call against exactly one endpoint and classifies the result.
+    ///
+    /// Unlike `eth_call`, the SuiNS read methods have no revert concept: a
+    /// healthy node reports an unregistered name as `"result": null`, so every
+    /// JSON-RPC *error* is an endpoint problem and is worth retrying elsewhere.
+    async fn sui_rpc_call_once(&self, url: &str, request: &serde_json::Value) -> SuiCallOutcome {
+        let response = match self.http_client.post(url).json(request).send().await {
+            Ok(r) => r,
+            Err(e) => return SuiCallOutcome::EndpointFailed(sanitize_error(&e.to_string())),
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            return SuiCallOutcome::EndpointFailed(format!("HTTP {status}"));
+        }
+
+        let json: serde_json::Value = match response.json().await {
+            Ok(j) => j,
+            Err(e) => {
+                return SuiCallOutcome::EndpointFailed(sanitize_error(&format!(
+                    "malformed JSON: {e}"
+                )))
+            }
+        };
 
         if let Some(error) = json.get("error") {
             let msg = error
                 .get("message")
                 .and_then(|m| m.as_str())
-                .unwrap_or("Unknown RPC error");
-            debug!(method, error = %msg, "Sui RPC error");
-            return Ok(None);
+                .unwrap_or("unknown JSON-RPC error");
+            return SuiCallOutcome::EndpointFailed(sanitize_error(msg));
         }
 
-        Ok(json.get("result").cloned())
+        SuiCallOutcome::Answered(json.get("result").cloned())
     }
 
     /// Normalizes a SuiNS name (lowercase, validate format).
@@ -291,10 +412,13 @@ impl SuinsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_client() -> SuinsClient {
         SuinsClient::with_config(SuinsConfig {
             rpc_url: "https://example.com".into(),
+            fallback_rpc_urls: Vec::new(),
             use_testnet: false,
             timeout_seconds: 30,
         })
@@ -436,5 +560,217 @@ mod tests {
 
         let result = client.extract_content_hash(&fields);
         assert!(result.is_none());
+    }
+    // ── RPC fallback + error semantics ──────────────────────────────────
+    //
+    // Regression coverage for a production outage: Sui disabled JSON-RPC on
+    // its public fullnodes, so `suix_*` began answering `-32601 Method not
+    // found`. The old client mapped every JSON-RPC error to `Ok(None)`, which
+    // the API layer rendered as "No SPECTER record found for SuiNS name" — a
+    // broken endpoint was reported to users as an unregistered name.
+
+    /// The exact error a deprecated Sui public fullnode returns.
+    fn method_not_found() -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {
+                "code": -32601,
+                "message": "Method not found. JSON-RPC on public fullnodes has been deprecated. \
+                            Please migrate to gRPC or GraphQL endpoints."
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_address_falls_over_to_a_healthy_fallback() {
+        let dead = MockServer::start().await;
+        let healthy = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(method_not_found()))
+            .mount(&dead)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": "0xabc123"
+            })))
+            .mount(&healthy)
+            .await;
+
+        let client = SuinsClient::with_config(
+            SuinsConfig::new(dead.uri(), false).with_fallbacks([healthy.uri()]),
+        );
+
+        let got = client.resolve_address("alice.sui").await.unwrap();
+        assert_eq!(
+            got,
+            Some("0xabc123".to_string()),
+            "a deprecated primary must not stop resolution when a fallback is healthy"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_endpoints_failing_is_an_error_not_a_missing_record() {
+        let dead_a = MockServer::start().await;
+        let dead_b = MockServer::start().await;
+        for server in [&dead_a, &dead_b] {
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(method_not_found()))
+                .mount(server)
+                .await;
+        }
+
+        let client = SuinsClient::with_config(
+            SuinsConfig::new(dead_a.uri(), false).with_fallbacks([dead_b.uri()]),
+        );
+
+        let err = client
+            .resolve_address("alice.sui")
+            .await
+            .expect_err("exhausting every endpoint must surface as an error");
+
+        assert!(
+            matches!(err, SpecterError::RpcError(_)),
+            "expected RpcError so the API returns 5xx, got {err:?} — an Ok(None) here is \
+             the masking bug: users are told their name has no SPECTER record"
+        );
+    }
+
+    #[tokio::test]
+    async fn unregistered_name_is_still_a_clean_none() {
+        let healthy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": null
+            })))
+            .mount(&healthy)
+            .await;
+
+        let client = SuinsClient::with_config(
+            SuinsConfig::new(healthy.uri(), false).with_fallbacks(Vec::<String>::new()),
+        );
+
+        assert_eq!(
+            client.resolve_address("nobody.sui").await.unwrap(),
+            None,
+            "a healthy node answering null means the name is genuinely unregistered"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_5xx_also_rolls_over_to_the_next_endpoint() {
+        let flaky = MockServer::start().await;
+        let healthy = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&flaky)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "result": "0xdeadbeef"
+            })))
+            .mount(&healthy)
+            .await;
+
+        let client = SuinsClient::with_config(
+            SuinsConfig::new(flaky.uri(), false).with_fallbacks([healthy.uri()]),
+        );
+
+        assert_eq!(
+            client.resolve_address("alice.sui").await.unwrap(),
+            Some("0xdeadbeef".to_string())
+        );
+    }
+
+    #[test]
+    fn endpoint_list_dedupes_and_drops_blanks() {
+        let cfg = SuinsConfig::new("https://primary.example", false).with_fallbacks([
+            "https://primary.example",
+            "",
+            "https://backup.example",
+        ]);
+        let client = SuinsClient::with_config(cfg);
+        assert_eq!(
+            client.endpoints(),
+            vec!["https://primary.example", "https://backup.example"]
+        );
+    }
+
+    #[test]
+    fn redact_url_strips_the_api_key_path() {
+        assert_eq!(
+            redact_url("https://sepolia.infura.io/v3/deadbeefdeadbeefdeadbeef"),
+            "https://sepolia.infura.io"
+        );
+    }
+
+    #[test]
+    fn testnet_and_mainnet_get_different_default_fallbacks() {
+        let main = SuinsConfig::new("https://x.example", false);
+        let test = SuinsConfig::new("https://x.example", true);
+        assert!(!main.fallback_rpc_urls.is_empty());
+        assert!(!test.fallback_rpc_urls.is_empty());
+        assert_ne!(main.fallback_rpc_urls, test.fallback_rpc_urls);
+    }
+
+    // ── audit: latency budget and credential leakage ────────────────────
+
+    #[tokio::test]
+    async fn a_slow_endpoint_list_cannot_multiply_request_latency() {
+        let mut servers = Vec::new();
+        for _ in 0..4 {
+            let s = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(std::time::Duration::from_secs(5))
+                        .set_body_json(serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1, "result": "0xabc"
+                        })),
+                )
+                .mount(&s)
+                .await;
+            servers.push(s);
+        }
+
+        let mut cfg = SuinsConfig::new(servers[0].uri(), false).with_fallbacks([
+            servers[1].uri(),
+            servers[2].uri(),
+            servers[3].uri(),
+        ]);
+        cfg.timeout_seconds = 1;
+        let client = SuinsClient::with_config(cfg);
+
+        let started = std::time::Instant::now();
+        let result = client.resolve_address("slow.sui").await;
+        let elapsed = started.elapsed();
+
+        assert!(result.is_err());
+        assert!(
+            elapsed < std::time::Duration::from_millis(2_000),
+            "budget not enforced: {elapsed:?}. Without a shared deadline this would be \
+             ~4s (1s timeout x 4 endpoints); with one it must stay near 1s"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_returned_error_never_contains_the_provider_api_key() {
+        const KEY: &str = "491b68b60b4e432ab0fee1febb9278f3";
+        let mut cfg = SuinsConfig::new(
+            format!("https://unreachable-host-xyz.invalid/v3/{KEY}"),
+            false,
+        )
+        .with_fallbacks(Vec::<String>::new());
+        cfg.timeout_seconds = 5;
+        let client = SuinsClient::with_config(cfg);
+
+        let err = client.resolve_address("leak.sui").await.unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            !rendered.contains(KEY),
+            "API key leaked into the error surfaced to callers: {rendered}"
+        );
     }
 }

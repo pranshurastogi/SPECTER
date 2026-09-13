@@ -11,4 +11,4 @@ mod suins;
 
 pub use resolver::{SuinsResolveResult, SuinsResolver, SuinsResolverConfig};
 pub use specter_ipfs::{IpfsClient, IpfsConfig, PinataClient};
-pub use suins::{SuinsClient, SuinsConfig};
+pub use suins::{default_sui_fallbacks, SuinsClient, SuinsConfig};

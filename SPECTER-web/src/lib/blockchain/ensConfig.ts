@@ -3,28 +3,31 @@
  * Used for reverse lookup, text-record writes, and ENS app links.
  */
 
-import { createPublicClient, http, type PublicClient } from 'viem';
+import { createPublicClient, fallback, http, type PublicClient } from 'viem';
 import { mainnet } from 'viem/chains';
+import { ETH_MAINNET_FALLBACKS, isBrokenRpcUrl, rpcChain } from './rpcFallbacks';
 
 export const ENS_CHAIN = mainnet;
 export const ENS_CHAIN_ID = mainnet.id;
 export const ENS_APP_URL = 'https://app.ens.domains';
 
-const DEFAULT_ENS_RPC = 'https://ethereum.publicnode.com';
-const ENS_INCOMPATIBLE_RPC_HOSTS = ['cloudflare-eth.com'];
-
-function ensRpcUrl(): string {
+/**
+ * Endpoints for ENS reads, primary first.
+ *
+ * A configured RPC that is rate-limited or has a revoked key would otherwise
+ * make every name look like it has no SPECTER record, so the public nodes are
+ * always appended behind it rather than used only when nothing is configured.
+ */
+function ensRpcUrls(): string[] {
   const configured =
     import.meta.env.VITE_ENS_RPC_URL || import.meta.env.VITE_ETH_MAINNET_RPC_URL;
-  if (configured && !ENS_INCOMPATIBLE_RPC_HOSTS.some((host) => configured.includes(host))) {
-    return configured;
-  }
-  return DEFAULT_ENS_RPC;
+  const primary = isBrokenRpcUrl(configured) ? undefined : configured;
+  return rpcChain(primary, import.meta.env.VITE_ENS_RPC_URL_FALLBACK, ETH_MAINNET_FALLBACKS);
 }
 
 export const ensPublicClient: PublicClient = createPublicClient({
   chain: mainnet,
-  transport: http(ensRpcUrl()),
+  transport: fallback(ensRpcUrls().map((url) => http(url))),
 });
 
 export function ensAppProfileUrl(name: string): string {

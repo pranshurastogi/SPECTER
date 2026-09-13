@@ -321,7 +321,7 @@ pub async fn publish_announcement(
     // ── 4. Verify payment on source chain ─────────────────────────────────────
     if let (Some(ptx), Some(chain_name)) = (&announcement.payment_tx_hash, &announcement.chain) {
         match state.config.chain_rpc_map.get(chain_name.as_str()) {
-            Some(rpc_url) => {
+            Some(rpc_urls) => {
                 let stealth = announcement.stealth_address.as_deref().unwrap_or_default();
                 let amount_u256 = announcement
                     .amount
@@ -332,7 +332,7 @@ pub async fn publish_announcement(
                     .token
                     .as_deref()
                     .and_then(|t| t.parse::<alloy::primitives::Address>().ok());
-                verifier::verify_payment_tx(rpc_url, ptx, stealth, amount_u256, token)
+                verifier::verify_payment_tx(rpc_urls, ptx, stealth, amount_u256, token)
                     .await
                     .map_err(|e| {
                         warn!(chain = %chain_name, tx = %ptx, "Payment verification failed: {e:?}");

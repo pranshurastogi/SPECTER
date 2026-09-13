@@ -7,24 +7,39 @@ use cid::Cid;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
-use specter_core::constants::ENS_TEXT_KEY;
+use specter_core::constants::{ENS_TEXT_KEY, ETH_MAINNET_RPC_FALLBACKS};
 use specter_core::error::{Result, SpecterError};
+use specter_core::redact::{redact_url, sanitize_error};
 
 /// ENS client configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EnsConfig {
-    /// Ethereum RPC URL
+    /// Ethereum RPC URL tried first.
     pub rpc_url: String,
+    /// Endpoints tried, in order, when [`Self::rpc_url`] fails. Defaults to
+    /// the key-free public nodes in [`ETH_MAINNET_RPC_FALLBACKS`] so a
+    /// rate-limited or revoked primary key degrades to slower resolution
+    /// rather than to a false "no SPECTER record".
+    #[serde(default = "default_eth_fallbacks")]
+    pub fallback_rpc_urls: Vec<String>,
     /// Request timeout in seconds
     pub timeout_seconds: u64,
 }
 
 const DEFAULT_ETH_RPC_URL: &str = "https://ethereum.publicnode.com";
 
+fn default_eth_fallbacks() -> Vec<String> {
+    ETH_MAINNET_RPC_FALLBACKS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
 impl Default for EnsConfig {
     fn default() -> Self {
         Self {
             rpc_url: DEFAULT_ETH_RPC_URL.into(),
+            fallback_rpc_urls: default_eth_fallbacks(),
             timeout_seconds: 30,
         }
     }
@@ -38,6 +53,47 @@ impl EnsConfig {
             ..Default::default()
         }
     }
+
+    /// Replaces the fallback endpoint list.
+    pub fn with_fallbacks<I, S>(mut self, urls: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.fallback_rpc_urls = urls.into_iter().map(Into::into).collect();
+        self
+    }
+}
+
+/// What one RPC endpoint had to say about a call.
+enum CallOutcome {
+    /// The node answered. `None` means "no return data".
+    Answered(Option<String>),
+    /// The node answered, but the contract reverted — a healthy node giving a
+    /// definitive "no". Never retried on another endpoint: every other node
+    /// would revert identically, and retrying would turn a 404 into a 500.
+    Reverted,
+    /// The endpoint itself is unusable (transport error, 401/403/429/5xx,
+    /// method not found, ...). Worth retrying elsewhere.
+    EndpointFailed(String),
+}
+
+/// True when a JSON-RPC error is a contract revert rather than an endpoint
+/// problem. Geth-family nodes report reverts as code 3, others as -32000 with
+/// "execution reverted" in the message.
+fn is_execution_revert(error: &serde_json::Value) -> bool {
+    let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+    if code == 3 {
+        return true;
+    }
+    error
+        .get("message")
+        .and_then(|m| m.as_str())
+        .map(|m| {
+            let m = m.to_ascii_lowercase();
+            m.contains("execution reverted") || m.contains("revert")
+        })
+        .unwrap_or(false)
 }
 
 /// ENS client for querying text records.
@@ -187,7 +243,25 @@ impl EnsClient {
         }
     }
 
-    /// Performs eth_call and returns the result hex, or None on error.
+    /// Endpoints to try, in order: the configured primary, then the fallbacks.
+    /// Duplicates are dropped so a fallback repeating the primary does not
+    /// cost an extra round-trip.
+    fn endpoints(&self) -> Vec<&str> {
+        let mut out = vec![self.config.rpc_url.as_str()];
+        for url in &self.config.fallback_rpc_urls {
+            if !url.is_empty() && !out.contains(&url.as_str()) {
+                out.push(url.as_str());
+            }
+        }
+        out
+    }
+
+    /// Performs `eth_call`, walking the endpoint list until one answers.
+    ///
+    /// `Ok(None)` means a healthy node gave a definitive negative (no return
+    /// data, or the contract reverted). An `Err` means *every* endpoint was
+    /// unusable — which callers must not confuse with "this name has no
+    /// record", or a dead RPC key silently reads as an unregistered name.
     async fn eth_call(&self, to: &str, data: &str) -> Result<Option<String>> {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
@@ -195,24 +269,94 @@ impl EnsClient {
             "params": [{"to": to, "data": data}, "latest"],
             "id": 1
         });
-        let response = self
-            .http_client
-            .post(&self.config.rpc_url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| SpecterError::HttpError(e.to_string()))?;
-        if json.get("error").is_some() {
-            return Ok(None);
+
+        let endpoints = self.endpoints();
+        let total = endpoints.len();
+        let mut last_error = String::from("no endpoints configured");
+
+        // One budget for the whole call, not one per endpoint. Without this a
+        // three-endpoint list would triple the worst-case latency of a single
+        // request, handing callers a cheap way to tie up server tasks.
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(self.config.timeout_seconds);
+
+        for (idx, url) in endpoints.iter().enumerate() {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                last_error = format!(
+                    "endpoint budget of {}s exhausted",
+                    self.config.timeout_seconds
+                );
+                break;
+            }
+            match tokio::time::timeout(remaining, self.eth_call_once(url, &request))
+                .await
+                .unwrap_or_else(|_| CallOutcome::EndpointFailed("timed out".into()))
+            {
+                CallOutcome::Answered(result) => {
+                    if idx > 0 {
+                        debug!(
+                            endpoint = %redact_url(url),
+                            attempt = idx + 1,
+                            "ENS RPC served by fallback endpoint"
+                        );
+                    }
+                    return Ok(result);
+                }
+                CallOutcome::Reverted => return Ok(None),
+                CallOutcome::EndpointFailed(err) => {
+                    debug!(
+                        endpoint = %redact_url(url),
+                        attempt = idx + 1,
+                        of = total,
+                        error = %err,
+                        "ENS RPC endpoint failed; trying next"
+                    );
+                    last_error = err;
+                }
+            }
         }
-        Ok(json
-            .get("result")
-            .and_then(|v| v.as_str())
-            .map(String::from))
+
+        Err(SpecterError::RpcError(format!(
+            "all {total} Ethereum RPC endpoint(s) failed; last error: {last_error}"
+        )))
+    }
+
+    /// Issues the call against exactly one endpoint and classifies the result.
+    async fn eth_call_once(&self, url: &str, request: &serde_json::Value) -> CallOutcome {
+        let response = match self.http_client.post(url).json(request).send().await {
+            Ok(r) => r,
+            Err(e) => return CallOutcome::EndpointFailed(sanitize_error(&e.to_string())),
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            return CallOutcome::EndpointFailed(format!("HTTP {status}"));
+        }
+
+        let json: serde_json::Value = match response.json().await {
+            Ok(j) => j,
+            Err(e) => {
+                return CallOutcome::EndpointFailed(sanitize_error(&format!("malformed JSON: {e}")))
+            }
+        };
+
+        if let Some(error) = json.get("error") {
+            if is_execution_revert(error) {
+                return CallOutcome::Reverted;
+            }
+            let msg = error
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown JSON-RPC error");
+            return CallOutcome::EndpointFailed(sanitize_error(msg));
+        }
+
+        CallOutcome::Answered(
+            json.get("result")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        )
     }
 
     /// Normalizes an ENS name (lowercase, validate format).
@@ -316,6 +460,34 @@ impl EnsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{body_string_contains, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// ABI-encoded address, right-aligned in a 32-byte word.
+    fn word_address(addr: &str) -> String {
+        format!("0x{:0>64}", addr.trim_start_matches("0x"))
+    }
+
+    /// A resolver(bytes32) response pointing at a non-zero resolver.
+    fn resolver_response() -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": word_address("0x231b0ee14048e9dccd1d247744d114a4eb5e8e63")
+        })
+    }
+
+    /// A text(bytes32,string) response carrying "ipfs://CID".
+    fn text_response(value: &str) -> serde_json::Value {
+        let bytes = value.as_bytes();
+        let mut data = vec![0u8; 64 + bytes.len().div_ceil(32) * 32];
+        data[31] = 0x20; // offset
+        data[56..64].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
+        data[64..64 + bytes.len()].copy_from_slice(bytes);
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "result": format!("0x{}", hex::encode(&data))
+        })
+    }
 
     #[test]
     fn test_normalize_name() {
@@ -374,5 +546,195 @@ mod tests {
         let client = EnsClient::new("https://example.com");
         assert!(client.normalize_name("no-tld").is_err());
         assert!(client.normalize_name("a.b.c.eth").is_ok());
+    }
+    // ── RPC fallback + error semantics ──────────────────────────────────
+    //
+    // A rate-limited or revoked provider key (Infura 401, Alchemy 429) must
+    // never read as "this ENS name has no SPECTER record".
+
+    #[tokio::test]
+    async fn rate_limited_primary_rolls_over_to_the_fallback() {
+        let throttled = MockServer::start().await;
+        let healthy = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1,
+                "error": { "code": 429, "message": "Your app has been rate-limited" }
+            })))
+            .mount(&throttled)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains("0x0178b8bf"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(resolver_response()))
+            .mount(&healthy)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("0x59d1d43c"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(text_response("ipfs://bafkreitest")),
+            )
+            .mount(&healthy)
+            .await;
+
+        let client =
+            EnsClient::with_config(EnsConfig::new(throttled.uri()).with_fallbacks([healthy.uri()]));
+
+        assert_eq!(
+            client
+                .get_specter_record("empoweryourid.eth")
+                .await
+                .unwrap(),
+            Some("ipfs://bafkreitest".to_string()),
+            "a throttled primary must not hide a record the fallback can serve"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_endpoints_failing_is_an_error_not_a_missing_record() {
+        let dead_a = MockServer::start().await;
+        let dead_b = MockServer::start().await;
+        for server in [&dead_a, &dead_b] {
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+                .mount(server)
+                .await;
+        }
+
+        let client =
+            EnsClient::with_config(EnsConfig::new(dead_a.uri()).with_fallbacks([dead_b.uri()]));
+
+        let err = client
+            .get_specter_record("empoweryourid.eth")
+            .await
+            .expect_err("exhausting every endpoint must surface as an error");
+
+        assert!(
+            matches!(err, SpecterError::RpcError(_)),
+            "expected RpcError, got {err:?} — Ok(None) here would report a dead RPC key \
+             as an unregistered ENS name"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_revert_is_a_definitive_no_and_is_not_retried() {
+        let reverting = MockServer::start().await;
+        let fallback_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1,
+                "error": { "code": 3, "message": "execution reverted" }
+            })))
+            .mount(&reverting)
+            .await;
+
+        let client = EnsClient::with_config(
+            EnsConfig::new(reverting.uri()).with_fallbacks([fallback_server.uri()]),
+        );
+
+        assert_eq!(
+            client.get_specter_record("norecord.eth").await.unwrap(),
+            None,
+            "a revert is a healthy node saying no — it must not become an error"
+        );
+        assert!(
+            fallback_server
+                .received_requests()
+                .await
+                .unwrap()
+                .is_empty(),
+            "a revert must not be retried: every other node would revert identically"
+        );
+    }
+
+    #[test]
+    fn endpoint_list_dedupes_and_drops_blanks() {
+        let client =
+            EnsClient::with_config(EnsConfig::new("https://primary.example").with_fallbacks([
+                "https://primary.example",
+                "",
+                "https://backup.example",
+            ]));
+        assert_eq!(
+            client.endpoints(),
+            vec!["https://primary.example", "https://backup.example"]
+        );
+    }
+
+    #[test]
+    fn default_config_ships_with_public_fallbacks() {
+        assert!(
+            !EnsConfig::default().fallback_rpc_urls.is_empty(),
+            "callers that never opt in should still survive a dead primary"
+        );
+    }
+
+    #[test]
+    fn redact_url_strips_the_api_key_path() {
+        assert_eq!(
+            redact_url("https://mainnet.infura.io/v3/deadbeefdeadbeefdeadbeef"),
+            "https://mainnet.infura.io"
+        );
+    }
+
+    // ── audit: latency budget and credential leakage ────────────────────
+
+    #[tokio::test]
+    async fn a_slow_endpoint_list_cannot_multiply_request_latency() {
+        // Three endpoints that each hang. Without a shared deadline this
+        // would take 3 x timeout; the budget must hold it to ~1 x timeout.
+        let mut servers = Vec::new();
+        for _ in 0..3 {
+            let s = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(std::time::Duration::from_secs(5))
+                        .set_body_json(resolver_response()),
+                )
+                .mount(&s)
+                .await;
+            servers.push(s);
+        }
+
+        let mut cfg =
+            EnsConfig::new(servers[0].uri()).with_fallbacks([servers[1].uri(), servers[2].uri()]);
+        cfg.timeout_seconds = 1;
+        let client = EnsClient::with_config(cfg);
+
+        let started = std::time::Instant::now();
+        let result = client.get_specter_record("slow.eth").await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_err(),
+            "every endpoint hung, so this must be an error"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(2_000),
+            "budget not enforced: {elapsed:?}. Without a shared deadline this would be \
+             ~3s (1s timeout x 3 endpoints); with one it must stay near 1s"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_returned_error_never_contains_the_provider_api_key() {
+        // reqwest embeds the full request URL — key included — in transport
+        // errors. That string must not survive into SpecterError, which can
+        // reach a 5xx response body.
+        const KEY: &str = "491b68b60b4e432ab0fee1febb9278f3";
+        let mut cfg = EnsConfig::new(format!("https://unreachable-host-xyz.invalid/v3/{KEY}"))
+            .with_fallbacks(Vec::<String>::new());
+        cfg.timeout_seconds = 5;
+        let client = EnsClient::with_config(cfg);
+
+        let err = client.get_specter_record("leak.eth").await.unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            !rendered.contains(KEY),
+            "API key leaked into the error surfaced to callers: {rendered}"
+        );
     }
 }

@@ -2,6 +2,13 @@ import { createPublicClient, defineChain, fallback, http, type Chain, type Publi
 import { arbitrumSepolia, mainnet, sepolia } from "viem/chains";
 import { sendUseTestnet, useSuiTestnet } from "./chainConfig";
 import {
+  ARB_SEPOLIA_FALLBACKS,
+  ETH_MAINNET_FALLBACKS,
+  ETH_SEPOLIA_FALLBACKS,
+  MONAD_TESTNET_FALLBACKS,
+  rpcChain,
+} from "./rpcFallbacks";
+import {
   CHAIN_STANDARDS,
   EIP155_CHAIN_IDS,
   getBackendChainName,
@@ -77,7 +84,7 @@ const EVM_CONFIG: Record<EvmTxChain, {
       ? import.meta.env.VITE_ETH_SEPOLIA_RPC_URL ||
         import.meta.env.VITE_YELLOW_SANDBOX_RPC_SEPOLIA ||
         "https://ethereum-sepolia-rpc.publicnode.com"
-      : import.meta.env.VITE_ETH_RPC_URL || "https://cloudflare-eth.com",
+      : import.meta.env.VITE_ETH_RPC_URL || ETH_MAINNET_FALLBACKS[0],
     colorClass: "text-primary",
     logoPath: undefined,
   },
@@ -175,26 +182,28 @@ if (import.meta.env.DEV) {
 
 // Public fallback RPCs (no API key required). Used when the primary RPC
 // (e.g. Alchemy, Infura) is down, rate-limited, or returns 401.
+//
+// The lists live in rpcFallbacks.ts so the ENS client and this module cannot
+// drift apart, and so hosts that have since died (rpc.sepolia.org now serves
+// 404 HTML; cloudflare-eth.com errors on eth_call) are filtered in one place.
+//
+// This matters for the claim flow in particular: the Monad endpoint
+// rate-limits (429) under batched balance reads, and without a fallback those
+// reads fail and funded stealth addresses silently drop out of the claimable
+// set — money that looks like it is not there.
 const EVM_FALLBACK_RPCS: Partial<Record<EvmTxChain, string[]>> = {
+  ethereum: sendUseTestnet ? ETH_SEPOLIA_FALLBACKS : ETH_MAINNET_FALLBACKS,
+  arbitrum: ARB_SEPOLIA_FALLBACKS,
+  monad: MONAD_TESTNET_FALLBACKS,
+};
+
+// Optional second provider per chain, tried before the public nodes.
+const EVM_SECONDARY_RPCS: Partial<Record<EvmTxChain, string | undefined>> = {
   ethereum: sendUseTestnet
-    ? [
-        "https://ethereum-sepolia-rpc.publicnode.com",
-        "https://rpc.sepolia.org",
-        "https://rpc2.sepolia.org",
-      ]
-    : [
-        "https://ethereum.publicnode.com",
-        "https://cloudflare-eth.com",
-      ],
-  arbitrum: [
-    "https://sepolia-rollup.arbitrum.io/rpc",
-    "https://arbitrum-sepolia-rpc.publicnode.com",
-  ],
-  // The Alchemy Monad endpoint rate-limits (429) under the claim flow's
-  // batched balance reads; without a fallback those reads fail and funded
-  // Monad addresses silently drop out of the claimable set. The public
-  // Monad testnet RPC needs no API key.
-  monad: ["https://testnet-rpc.monad.xyz"],
+    ? import.meta.env.VITE_ETH_SEPOLIA_RPC_URL_FALLBACK
+    : import.meta.env.VITE_ETH_RPC_URL_FALLBACK,
+  arbitrum: import.meta.env.VITE_ARB_SEPOLIA_RPC_URL_FALLBACK,
+  monad: import.meta.env.VITE_MONAD_TESTNET_RPC_URL_FALLBACK,
 };
 
 const evmClients = new Map<EvmTxChain, PublicClient>();
@@ -203,15 +212,17 @@ export function getPublicClientForEvm(chain: EvmTxChain): PublicClient {
   const existing = evmClients.get(chain);
   if (existing) return existing;
 
-  const primaryUrl = getRpcUrlForEvm(chain);
-  const fallbacks = EVM_FALLBACK_RPCS[chain] ?? [];
-  // Exclude fallbacks that duplicate the primary to avoid redundant retries.
-  const uniqueFallbacks = fallbacks.filter((u) => u !== primaryUrl);
+  // Primary, then an optional second provider, then the public nodes. Blanks,
+  // duplicates, and hosts known to be dead are dropped, so a stale env var
+  // cannot pin the client to an endpoint that always fails.
+  const urls = rpcChain(
+    getRpcUrlForEvm(chain),
+    EVM_SECONDARY_RPCS[chain],
+    EVM_FALLBACK_RPCS[chain] ?? [],
+  );
 
   const transport =
-    uniqueFallbacks.length > 0
-      ? fallback([http(primaryUrl), ...uniqueFallbacks.map((u) => http(u))])
-      : http(primaryUrl);
+    urls.length > 1 ? fallback(urls.map((u) => http(u))) : http(urls[0]);
 
   const client = createPublicClient({
     chain: getViemChainForEvm(chain),

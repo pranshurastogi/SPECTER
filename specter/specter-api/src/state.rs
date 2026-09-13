@@ -8,9 +8,10 @@ use alloy::signers::local::PrivateKeySigner;
 use specter_ens::{ResolverConfig, SpecterResolver};
 use specter_registry::turso::{ScanPositionStore, SweepStore, TursoRegistry};
 use specter_registry::MemoryRegistry;
-use specter_suins::{SuinsResolver, SuinsResolverConfig};
+use specter_suins::{default_sui_fallbacks, SuinsResolver, SuinsResolverConfig};
 use tracing::info;
 
+use specter_core::constants::{chain_public_fallbacks, ETH_MAINNET_RPC_FALLBACKS};
 use specter_core::error::Result;
 use specter_core::traits::AnnouncementRegistry;
 use specter_core::types::{Announcement, AnnouncementStats};
@@ -63,6 +64,10 @@ impl RelayerConfig {
 pub struct ApiConfig {
     /// Ethereum mainnet RPC URL for ENS resolution.
     pub rpc_url: String,
+    /// Extra Ethereum RPC endpoints tried when `rpc_url` fails, from
+    /// `ETH_RPC_FALLBACKS` (comma-separated). Empty means "use the built-in
+    /// public defaults".
+    pub rpc_fallback_urls: Vec<String>,
     /// General testnet flag (controls Monad/EVM testnet behaviour).
     pub use_testnet: bool,
     /// When true, SuiNS resolution uses testnet registry/package IDs.
@@ -76,6 +81,10 @@ pub struct ApiConfig {
     pub pinata_gateway_token: String,
     /// Sui RPC URL.
     pub sui_rpc_url: String,
+    /// Extra Sui RPC endpoints tried when `sui_rpc_url` fails, from
+    /// `SUI_RPC_FALLBACKS` (comma-separated). Empty means "use the built-in
+    /// public defaults for the selected network".
+    pub sui_rpc_fallback_urls: Vec<String>,
     /// Enables IPFS download caching where safe.
     pub enable_cache: bool,
     /// Security configuration.
@@ -83,7 +92,10 @@ pub struct ApiConfig {
     /// RPC URLs for payment verification per source chain name.
     /// Keys: "arbitrum", "ethereum", "base", "optimism", "monad-testnet", etc.
     /// Env vars: CHAIN_RPC_ARBITRUM, CHAIN_RPC_ETHEREUM, CHAIN_RPC_BASE, etc.
-    pub chain_rpc_map: HashMap<String, String>,
+    /// Source-chain RPC endpoints for payment verification, primary first.
+    /// Each `CHAIN_RPC_*` var accepts a comma-separated list so a throttled or
+    /// dead provider rolls over instead of failing the publish.
+    pub chain_rpc_map: HashMap<String, Vec<String>>,
 }
 
 /// Production security settings (loaded from environment).
@@ -162,12 +174,14 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             rpc_url: DEFAULT_ETH_MAINNET_RPC.into(),
+            rpc_fallback_urls: Vec::new(),
             use_testnet: false,
             use_sui_testnet: false,
             pinata_jwt: None,
             pinata_gateway_url: String::new(),
             pinata_gateway_token: String::new(),
             sui_rpc_url: DEFAULT_SUI_MAINNET_RPC.into(),
+            sui_rpc_fallback_urls: Vec::new(),
             enable_cache: true,
             security: SecurityConfig::default(),
             chain_rpc_map: HashMap::new(),
@@ -215,6 +229,11 @@ impl ApiConfig {
             }
         });
 
+        // Operator-supplied fallback endpoints. Left empty, each resolver
+        // falls back to the key-free public nodes baked into specter-core.
+        let rpc_fallback_urls = parse_endpoint_list("ETH_RPC_FALLBACKS");
+        let sui_rpc_fallback_urls = parse_endpoint_list("SUI_RPC_FALLBACKS");
+
         let pinata_gateway_url = std::env::var("PINATA_GATEWAY_URL").unwrap_or_default();
         let pinata_gateway_token = std::env::var("PINATA_GATEWAY_TOKEN").unwrap_or_default();
 
@@ -234,21 +253,25 @@ impl ApiConfig {
             ("CHAIN_RPC_SEPOLIA", "sepolia"),
         ];
         for (env_key, chain_name) in chain_env_keys {
-            if let Ok(url) = std::env::var(env_key) {
-                if !url.is_empty() {
-                    chain_rpc_map.insert(chain_name.to_string(), url);
-                }
+            let urls = with_public_safety_net(
+                &parse_endpoint_list(env_key),
+                chain_public_fallbacks(chain_name),
+            );
+            if !urls.is_empty() {
+                chain_rpc_map.insert(chain_name.to_string(), urls);
             }
         }
 
         Self {
             rpc_url,
+            rpc_fallback_urls,
             use_testnet,
             use_sui_testnet,
             pinata_jwt: std::env::var("PINATA_JWT").ok(),
             pinata_gateway_url,
             pinata_gateway_token,
             sui_rpc_url,
+            sui_rpc_fallback_urls,
             enable_cache: std::env::var("ENABLE_CACHE")
                 .map(|v| v != "false" && v != "0")
                 .unwrap_or(true),
@@ -723,6 +746,37 @@ impl AppState {
 
 // ── builder helpers ───────────────────────────────────────────────────────
 
+/// Concatenates operator-supplied endpoints with the built-in public ones,
+/// operator first, dropping duplicates.
+///
+/// Operator entries are a *higher* tier, not a replacement: configuring a paid
+/// provider should not silently remove the key-free safety net underneath it.
+fn with_public_safety_net(operator: &[String], builtin: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(operator.len() + builtin.len());
+    for url in operator
+        .iter()
+        .map(String::as_str)
+        .chain(builtin.iter().copied())
+    {
+        let url = url.trim();
+        if !url.is_empty() && !out.iter().any(|u| u == url) {
+            out.push(url.to_string());
+        }
+    }
+    out
+}
+
+/// Reads a comma-separated endpoint list from `var`, dropping blanks.
+fn parse_endpoint_list(var: &str) -> Vec<String> {
+    std::env::var(var)
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 fn build_resolver(config: &ApiConfig) -> SpecterResolver {
     let mut rc = ResolverConfig::new(
         &config.rpc_url,
@@ -732,6 +786,10 @@ fn build_resolver(config: &ApiConfig) -> SpecterResolver {
     if let Some(jwt) = &config.pinata_jwt {
         rc = rc.with_pinata_jwt(jwt);
     }
+    rc.ens = rc.ens.with_fallbacks(with_public_safety_net(
+        &config.rpc_fallback_urls,
+        ETH_MAINNET_RPC_FALLBACKS,
+    ));
     if !config.enable_cache {
         rc.ipfs = rc.ipfs.no_cache();
     }
@@ -748,6 +806,13 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
     if let Some(jwt) = &config.pinata_jwt {
         sc = sc.with_pinata_jwt(jwt);
     }
+    sc.suins = sc.suins.with_fallbacks(with_public_safety_net(
+        &config.sui_rpc_fallback_urls,
+        &default_sui_fallbacks(config.use_sui_testnet)
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    ));
     if !config.enable_cache {
         sc.ipfs = sc.ipfs.no_cache();
     }
@@ -757,6 +822,78 @@ fn build_suins_resolver(config: &ApiConfig) -> SuinsResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── endpoint tiering ────────────────────────────────────────────────
+
+    #[test]
+    fn operator_endpoints_come_first_and_public_nodes_stay_behind_them() {
+        // "Alchemy, then Infura, then public" — configuring paid providers
+        // must not remove the key-free safety net underneath.
+        let operator = vec![
+            "https://eth-mainnet.g.alchemy.com/v2/alch".to_string(),
+            "https://mainnet.infura.io/v3/inf".to_string(),
+        ];
+        let out = with_public_safety_net(&operator, ETH_MAINNET_RPC_FALLBACKS);
+        assert_eq!(out[0], operator[0], "primary must stay first");
+        assert_eq!(out[1], operator[1], "secondary must stay second");
+        assert_eq!(
+            out.len(),
+            operator.len() + ETH_MAINNET_RPC_FALLBACKS.len(),
+            "public nodes must survive: {out:?}"
+        );
+    }
+
+    #[test]
+    fn public_safety_net_applies_when_no_operator_endpoints_are_set() {
+        let out = with_public_safety_net(&[], ETH_MAINNET_RPC_FALLBACKS);
+        assert_eq!(out, ETH_MAINNET_RPC_FALLBACKS.to_vec());
+    }
+
+    #[test]
+    fn safety_net_dedupes_when_operator_repeats_a_public_node() {
+        let operator = vec![ETH_MAINNET_RPC_FALLBACKS[0].to_string()];
+        let out = with_public_safety_net(&operator, ETH_MAINNET_RPC_FALLBACKS);
+        assert_eq!(
+            out.len(),
+            ETH_MAINNET_RPC_FALLBACKS.len(),
+            "a repeated endpoint must not be tried twice: {out:?}"
+        );
+    }
+
+    #[test]
+    fn safety_net_drops_blank_entries() {
+        let operator = vec!["".to_string(), "  ".to_string(), "https://a.io".to_string()];
+        let out = with_public_safety_net(&operator, &[]);
+        assert_eq!(out, vec!["https://a.io".to_string()]);
+    }
+
+    #[test]
+    fn every_supported_source_chain_has_a_public_fallback() {
+        // Chains the publish path can verify against must degrade gracefully
+        // if the operator's provider dies mid-hackathon.
+        for chain in ["ethereum", "sepolia", "arbitrum", "monad-testnet"] {
+            assert!(
+                !chain_public_fallbacks(chain).is_empty(),
+                "{chain} has no public fallback"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_chain_simply_has_no_safety_net() {
+        assert!(chain_public_fallbacks("not-a-chain").is_empty());
+    }
+
+    #[test]
+    fn parse_endpoint_list_splits_and_trims() {
+        std::env::set_var("SPECTER_TEST_EPS", " https://a.io , ,https://b.io ");
+        let out = parse_endpoint_list("SPECTER_TEST_EPS");
+        std::env::remove_var("SPECTER_TEST_EPS");
+        assert_eq!(
+            out,
+            vec!["https://a.io".to_string(), "https://b.io".to_string()]
+        );
+    }
 
     /// `ChainConfig::from_env` reads process-global env vars, and `#[test]`
     /// functions run concurrently on separate threads by default — without

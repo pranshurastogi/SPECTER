@@ -174,10 +174,81 @@ pub const SUINS_PACKAGE_ID_TESTNET: &str =
     "0x22fa05f21b1ad71442491220bb9338f7b7095fe35000ef88d5400d28523bdd93";
 
 /// Default Sui mainnet RPC URL.
-pub const SUI_MAINNET_RPC_URL: &str = "https://fullnode.mainnet.sui.io:443";
+///
+/// Note: `fullnode.mainnet.sui.io` is deliberately *not* the default. Sui
+/// disabled JSON-RPC on the public fullnodes ("JSON-RPC on public fullnodes
+/// has been deprecated. Please migrate to gRPC or GraphQL"), so the SuiNS
+/// methods this crate calls — `suix_resolveNameServiceAddress` and
+/// `suix_getDynamicFieldObject` — now answer `-32601 Method not found` there.
+pub const SUI_MAINNET_RPC_URL: &str = "https://sui-rpc.publicnode.com";
 
-/// Default Sui testnet RPC URL.
-pub const SUI_TESTNET_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
+/// Default Sui testnet RPC URL. See [`SUI_MAINNET_RPC_URL`] for why the
+/// official public fullnode is not used.
+pub const SUI_TESTNET_RPC_URL: &str = "https://sui-testnet-rpc.publicnode.com";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLIC RPC FALLBACKS
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Key-free public endpoints tried in order when the configured primary RPC
+// fails (transport error, HTTP 401/403/429/5xx, or a JSON-RPC error that is
+// not a contract revert). A paid provider going down, hitting its rate limit,
+// or having its key revoked should degrade name resolution to "slower", never
+// to "broken" — and never to a false "this name has no SPECTER record".
+//
+// Every endpoint below was verified to answer the exact call this codebase
+// makes: `eth_call` against the ENS registry for the Ethereum lists, and
+// `suix_resolveNameServiceAddress` for the Sui lists.
+
+/// Public Ethereum **mainnet** RPC fallbacks (ENS resolution).
+pub const ETH_MAINNET_RPC_FALLBACKS: &[&str] =
+    &["https://ethereum.publicnode.com", "https://eth.drpc.org"];
+
+/// Public Ethereum **Sepolia** RPC fallbacks.
+pub const ETH_SEPOLIA_RPC_FALLBACKS: &[&str] = &[
+    "https://ethereum-sepolia-rpc.publicnode.com",
+    "https://1rpc.io/sepolia",
+];
+
+/// Public Sui **mainnet** RPC fallbacks (JSON-RPC still enabled).
+pub const SUI_MAINNET_RPC_FALLBACKS: &[&str] = &[
+    "https://sui-rpc.publicnode.com",
+    "https://mainnet.sui.rpcpool.com",
+    "https://rpc-mainnet.suiscan.xyz",
+    "https://sui-mainnet.nodeinfra.com",
+];
+
+/// Public RPC fallbacks for a source chain used in payment verification,
+/// keyed by the chain name used in `CHAIN_RPC_*` env vars and announcements.
+///
+/// Returns an empty slice for an unknown chain, which simply means "no public
+/// safety net" — the operator-configured endpoints are then the only ones.
+pub fn chain_public_fallbacks(chain: &str) -> &'static [&'static str] {
+    match chain {
+        "ethereum" => ETH_MAINNET_RPC_FALLBACKS,
+        "sepolia" => ETH_SEPOLIA_RPC_FALLBACKS,
+        "arbitrum" => &[
+            "https://sepolia-rollup.arbitrum.io/rpc",
+            "https://arbitrum-sepolia-rpc.publicnode.com",
+            "https://arbitrum-sepolia.drpc.org",
+        ],
+        "monad-testnet" => &[
+            "https://testnet-rpc.monad.xyz",
+            "https://rpc-testnet.monadinfra.com",
+            "https://monad-testnet.drpc.org",
+        ],
+        "base" => &["https://base.publicnode.com"],
+        "polygon" => &["https://polygon-bor-rpc.publicnode.com"],
+        _ => &[],
+    }
+}
+
+/// Public Sui **testnet** RPC fallbacks (JSON-RPC still enabled).
+pub const SUI_TESTNET_RPC_FALLBACKS: &[&str] = &[
+    "https://sui-testnet-rpc.publicnode.com",
+    "https://testnet.sui.rpcpool.com",
+    "https://sui-testnet-endpoint.blockvision.org",
+];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SERIALIZATION CONSTANTS
