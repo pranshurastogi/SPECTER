@@ -9,11 +9,15 @@ import { chain } from './chainConfig';
 import {
   ETH_MAINNET_FALLBACKS,
   ETH_SEPOLIA_FALLBACKS,
-  usableRpcUrls,
+  rpcChain,
 } from './rpcFallbacks';
 
 const defaults = chain.id === 1 ? ETH_MAINNET_FALLBACKS : ETH_SEPOLIA_FALLBACKS;
-const urls = usableRpcUrls(import.meta.env.VITE_ETH_RPC_URL, ...defaults);
+const urls = rpcChain(
+  import.meta.env.VITE_ETH_RPC_URL,
+  import.meta.env.VITE_ETH_RPC_URL_FALLBACK,
+  defaults,
+);
 
 export const publicClient = createPublicClient({
   chain,

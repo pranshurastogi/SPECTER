@@ -39,6 +39,25 @@ export function usableRpcUrls(...urls: (string | undefined)[]): string[] {
   return out;
 }
 
+/**
+ * Builds the endpoint chain for one network: the configured primary, then a
+ * configured secondary provider, then the key-free public nodes.
+ *
+ * Two configured tiers rather than one because a single provider outage (a
+ * revoked key, a plan lapse) should not drop straight to public rate limits.
+ *
+ * WARNING: both tiers come from VITE_* vars, which Vite inlines into the
+ * production bundle — any key placed here is public. Use domain-restricted
+ * keys only.
+ */
+export function rpcChain(
+  primary: string | undefined,
+  secondary: string | undefined,
+  publicFallbacks: string[],
+): string[] {
+  return usableRpcUrls(primary, secondary, ...publicFallbacks);
+}
+
 export const ETH_MAINNET_FALLBACKS = [
   'https://ethereum.publicnode.com',
   'https://eth.drpc.org',

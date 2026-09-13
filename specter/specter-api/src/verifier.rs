@@ -98,36 +98,62 @@ pub(crate) fn erc20_transfer_ok(
     v >= amount
 }
 
-/// Verifies that a payment transaction exists and succeeded on the given RPC.
+/// What one RPC endpoint concluded about a payment.
+enum VerifyOutcome {
+    /// The payment matches. Done.
+    Verified,
+    /// A definitive verdict from a healthy node — a reverted tx, a malformed
+    /// input, or a payment that does not match. Asking another provider would
+    /// return the same answer, so the outer loop stops here.
+    Rejected(ApiError),
+    /// This endpoint could not answer: throttled, unreachable, or the tx is
+    /// not visible to it yet. A different provider may well know better.
+    Inconclusive(ApiError),
+}
+
+/// Verifies that a payment transaction exists and succeeded, against exactly
+/// one RPC endpoint.
 ///
 /// Each RPC read is retried up to [`RPC_MAX_ATTEMPTS`] times with exponential
 /// backoff. Throttled/transient failures (HTTP 429, timeouts, 5xx) are told
 /// apart from a genuinely-absent transaction so a rate-limited provider is
-/// reported as such instead of a scary "transaction not found".
-///
-/// # Errors
-/// - `400 Bad Request` if the tx is genuinely absent after retries, or reverted.
-/// - `503 Service Unavailable` (code `RPC_RATE_LIMITED`) if the RPC only ever
-///   throttled us, so the caller can retry without alarming the user.
-pub async fn verify_payment_tx(
+/// reported as such instead of a scary "transaction not found" — and, now that
+/// callers walk a list of endpoints, so that a throttled provider yields to the
+/// next one instead of failing the publish.
+async fn verify_payment_tx_on_endpoint(
     rpc_url: &str,
     tx_hash_str: &str,
     stealth_address: &str,
     expected_amount: U256,
     expected_token: Option<Address>,
-) -> Result<(), ApiError> {
-    let url: url::Url = rpc_url.parse().map_err(|_| {
-        ApiError::internal("Invalid source chain RPC URL — check CHAIN_RPC_* env vars")
-    })?;
+) -> VerifyOutcome {
+    // A misconfigured endpoint is that endpoint's problem — let the next one try.
+    let url: url::Url = match rpc_url.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            return VerifyOutcome::Inconclusive(ApiError::internal(
+                "Invalid source chain RPC URL — check CHAIN_RPC_* env vars",
+            ))
+        }
+    };
 
-    let tx_hash: TxHash = tx_hash_str
-        .trim()
-        .parse()
-        .map_err(|_| ApiError::bad_request("payment_tx_hash is not a valid transaction hash"))?;
+    let tx_hash: TxHash = match tx_hash_str.trim().parse() {
+        Ok(h) => h,
+        Err(_) => {
+            return VerifyOutcome::Rejected(ApiError::bad_request(
+                "payment_tx_hash is not a valid transaction hash",
+            ))
+        }
+    };
 
-    let stealth: Address = stealth_address
-        .parse()
-        .map_err(|_| ApiError::bad_request("invalid stealth address for verification"))?;
+    let stealth: Address = match stealth_address.parse() {
+        Ok(a) => a,
+        Err(_) => {
+            return VerifyOutcome::Rejected(ApiError::bad_request(
+                "invalid stealth address for verification",
+            ))
+        }
+    };
 
     let provider = ProviderBuilder::new().on_http(url);
 
@@ -144,7 +170,7 @@ pub async fn verify_payment_tx(
         match provider.get_transaction_receipt(tx_hash).await {
             Ok(Some(receipt)) => {
                 if !receipt.status() {
-                    return Err(ApiError::bad_request(
+                    return VerifyOutcome::Rejected(ApiError::bad_request(
                         "Payment transaction was reverted. Cannot create announcement for a failed payment.",
                     ));
                 }
@@ -172,9 +198,9 @@ pub async fn verify_payment_tx(
 
     let receipt = match receipt_opt {
         Some(r) => r,
-        None if saw_transient => return Err(rate_limited_error()),
+        None if saw_transient => return VerifyOutcome::Inconclusive(rate_limited_error()),
         None => {
-            return Err(ApiError::bad_request(format!(
+            return VerifyOutcome::Inconclusive(ApiError::bad_request(format!(
                 "Payment transaction isn't visible on the source chain yet — it may still be \
                  confirming. Wait a moment and retry. ({})",
                 last_err.unwrap_or_default()
@@ -211,9 +237,9 @@ pub async fn verify_payment_tx(
     }
     let tx = match tx_opt {
         Some(t) => t,
-        None if tx_transient => return Err(rate_limited_error()),
+        None if tx_transient => return VerifyOutcome::Inconclusive(rate_limited_error()),
         None => {
-            return Err(ApiError::bad_request(format!(
+            return VerifyOutcome::Inconclusive(ApiError::bad_request(format!(
                 "Couldn't read the payment transaction from the source chain — wait a moment and \
                  retry. ({})",
                 tx_last_err.unwrap_or_default()
@@ -225,7 +251,7 @@ pub async fn verify_payment_tx(
     //    Only treated as native when no specific ERC-20 token was requested.
     if expected_token.is_none() && native_payment_ok(stealth, tx.to(), tx.value(), expected_amount)
     {
-        return Ok(());
+        return VerifyOutcome::Verified;
     }
 
     // 2. ERC-20 Transfer log to the stealth address for >= amount.
@@ -243,14 +269,66 @@ pub async fn verify_payment_tx(
                 log.data().data.as_ref(),
             )
         {
-            return Ok(());
+            return VerifyOutcome::Verified;
         }
     }
 
     // 3. Nothing matched — reject generically (don't leak which check failed).
-    Err(ApiError::bad_request(
+    VerifyOutcome::Rejected(ApiError::bad_request(
         "payment could not be verified to the stealth address",
     ))
+}
+
+/// Verifies a payment, trying each configured endpoint in turn.
+///
+/// Endpoints are ordered primary-first. A [`VerifyOutcome::Rejected`] verdict
+/// stops the walk — every healthy provider would say the same, and retrying a
+/// reverted or mismatched payment elsewhere would only mask a real answer.
+/// Only an inconclusive endpoint (throttled, unreachable, tx not yet visible)
+/// rolls over to the next provider.
+///
+/// # Errors
+/// - `400 Bad Request` if the tx is absent from every endpoint, reverted, or
+///   does not match the expected recipient/amount.
+/// - `503 Service Unavailable` (code `RPC_RATE_LIMITED`) if every endpoint only
+///   ever throttled us, so the caller can retry without alarming the user.
+pub async fn verify_payment_tx(
+    rpc_urls: &[String],
+    tx_hash_str: &str,
+    stealth_address: &str,
+    expected_amount: U256,
+    expected_token: Option<Address>,
+) -> Result<(), ApiError> {
+    let total = rpc_urls.len();
+    let mut last: Option<ApiError> = None;
+
+    for (idx, rpc_url) in rpc_urls.iter().enumerate() {
+        match verify_payment_tx_on_endpoint(
+            rpc_url,
+            tx_hash_str,
+            stealth_address,
+            expected_amount,
+            expected_token,
+        )
+        .await
+        {
+            VerifyOutcome::Verified => return Ok(()),
+            VerifyOutcome::Rejected(e) => return Err(e),
+            VerifyOutcome::Inconclusive(e) => {
+                warn!(
+                    endpoint = %specter_core::redact::redact_url(rpc_url),
+                    attempt = idx + 1,
+                    of = total,
+                    "payment verification inconclusive on this endpoint; trying next"
+                );
+                last = Some(e);
+            }
+        }
+    }
+
+    Err(last.unwrap_or_else(|| {
+        ApiError::internal("no source chain RPC configured — check CHAIN_RPC_* env vars")
+    }))
 }
 
 #[cfg(test)]
@@ -309,7 +387,7 @@ mod tests {
     fn invalid_tx_hash_returns_bad_request() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(verify_payment_tx(
-            "https://example.com",
+            &["https://example.com".to_string()],
             "not-a-tx-hash",
             "0x1111111111111111111111111111111111111111",
             U256::ZERO,
@@ -321,10 +399,50 @@ mod tests {
     }
 
     #[test]
+    fn a_rejected_verdict_stops_the_endpoint_walk() {
+        // A malformed tx hash is the caller's problem, not the endpoint's:
+        // every provider would say the same, so a second endpoint must not be
+        // consulted (and here the second URL is unusable, proving it wasn't).
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(verify_payment_tx(
+            &[
+                "https://example.com".to_string(),
+                "not a url !!!".to_string(),
+            ],
+            "not-a-tx-hash",
+            "0x1111111111111111111111111111111111111111",
+            U256::ZERO,
+            None::<Address>,
+        ));
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("payment_tx_hash"),
+            "the definitive verdict must survive, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_endpoint_list_is_a_configuration_error() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(verify_payment_tx(
+            &[],
+            "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+            "0x1111111111111111111111111111111111111111",
+            U256::ZERO,
+            None::<Address>,
+        ));
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("CHAIN_RPC_"),
+            "should point the operator at the env var, got {err:?}"
+        );
+    }
+
+    #[test]
     fn invalid_rpc_url_returns_internal_error() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(verify_payment_tx(
-            "not a url !!!",
+            &["not a url !!!".to_string()],
             "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
             "0x1111111111111111111111111111111111111111",
             U256::ZERO,

@@ -6,7 +6,7 @@ import {
   ETH_MAINNET_FALLBACKS,
   ETH_SEPOLIA_FALLBACKS,
   MONAD_TESTNET_FALLBACKS,
-  usableRpcUrls,
+  rpcChain,
 } from "./rpcFallbacks";
 import {
   CHAIN_STANDARDS,
@@ -197,17 +197,28 @@ const EVM_FALLBACK_RPCS: Partial<Record<EvmTxChain, string[]>> = {
   monad: MONAD_TESTNET_FALLBACKS,
 };
 
+// Optional second provider per chain, tried before the public nodes.
+const EVM_SECONDARY_RPCS: Partial<Record<EvmTxChain, string | undefined>> = {
+  ethereum: sendUseTestnet
+    ? import.meta.env.VITE_ETH_SEPOLIA_RPC_URL_FALLBACK
+    : import.meta.env.VITE_ETH_RPC_URL_FALLBACK,
+  arbitrum: import.meta.env.VITE_ARB_SEPOLIA_RPC_URL_FALLBACK,
+  monad: import.meta.env.VITE_MONAD_TESTNET_RPC_URL_FALLBACK,
+};
+
 const evmClients = new Map<EvmTxChain, PublicClient>();
 
 export function getPublicClientForEvm(chain: EvmTxChain): PublicClient {
   const existing = evmClients.get(chain);
   if (existing) return existing;
 
-  // usableRpcUrls drops blanks, duplicates, and hosts known to be dead, so a
-  // stale env var cannot pin the client to an endpoint that always fails.
-  const urls = usableRpcUrls(
+  // Primary, then an optional second provider, then the public nodes. Blanks,
+  // duplicates, and hosts known to be dead are dropped, so a stale env var
+  // cannot pin the client to an endpoint that always fails.
+  const urls = rpcChain(
     getRpcUrlForEvm(chain),
-    ...(EVM_FALLBACK_RPCS[chain] ?? []),
+    EVM_SECONDARY_RPCS[chain],
+    EVM_FALLBACK_RPCS[chain] ?? [],
   );
 
   const transport =

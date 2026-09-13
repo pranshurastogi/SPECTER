@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ETH_MAINNET_FALLBACKS,
   isBrokenRpcUrl,
+  rpcChain,
   usableRpcUrls,
 } from "@/lib/blockchain/rpcFallbacks";
 
@@ -55,5 +56,42 @@ describe("usableRpcUrls", () => {
     const urls = usableRpcUrls("https://cloudflare-eth.com", ...ETH_MAINNET_FALLBACKS);
     expect(urls).not.toContain("https://cloudflare-eth.com");
     expect(urls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("rpcChain (primary -> secondary -> public)", () => {
+  const ALCHEMY = "https://eth-mainnet.g.alchemy.com/v2/alch_key";
+  const INFURA = "https://mainnet.infura.io/v3/infura_key";
+
+  it("orders the tiers primary, secondary, then public", () => {
+    expect(rpcChain(ALCHEMY, INFURA, ETH_MAINNET_FALLBACKS)).toEqual([
+      ALCHEMY,
+      INFURA,
+      ...ETH_MAINNET_FALLBACKS,
+    ]);
+  });
+
+  it("keeps the public tier when no secondary is configured", () => {
+    // Configuring one paid provider must not remove the key-free safety net.
+    expect(rpcChain(ALCHEMY, undefined, ETH_MAINNET_FALLBACKS)).toEqual([
+      ALCHEMY,
+      ...ETH_MAINNET_FALLBACKS,
+    ]);
+  });
+
+  it("falls back to public only when nothing is configured", () => {
+    expect(rpcChain(undefined, undefined, ETH_MAINNET_FALLBACKS)).toEqual(
+      ETH_MAINNET_FALLBACKS,
+    );
+  });
+
+  it("drops a broken primary but keeps the tiers behind it", () => {
+    const urls = rpcChain("https://cloudflare-eth.com", INFURA, ETH_MAINNET_FALLBACKS);
+    expect(urls[0]).toBe(INFURA);
+    expect(urls).not.toContain("https://cloudflare-eth.com");
+  });
+
+  it("never yields an empty list", () => {
+    expect(rpcChain(undefined, undefined, ETH_MAINNET_FALLBACKS).length).toBeGreaterThan(0);
   });
 });

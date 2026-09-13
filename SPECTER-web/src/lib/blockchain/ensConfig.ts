@@ -5,7 +5,7 @@
 
 import { createPublicClient, fallback, http, type PublicClient } from 'viem';
 import { mainnet } from 'viem/chains';
-import { ETH_MAINNET_FALLBACKS, isBrokenRpcUrl, usableRpcUrls } from './rpcFallbacks';
+import { ETH_MAINNET_FALLBACKS, isBrokenRpcUrl, rpcChain } from './rpcFallbacks';
 
 export const ENS_CHAIN = mainnet;
 export const ENS_CHAIN_ID = mainnet.id;
@@ -22,7 +22,7 @@ function ensRpcUrls(): string[] {
   const configured =
     import.meta.env.VITE_ENS_RPC_URL || import.meta.env.VITE_ETH_MAINNET_RPC_URL;
   const primary = isBrokenRpcUrl(configured) ? undefined : configured;
-  return usableRpcUrls(primary, ...ETH_MAINNET_FALLBACKS);
+  return rpcChain(primary, import.meta.env.VITE_ENS_RPC_URL_FALLBACK, ETH_MAINNET_FALLBACKS);
 }
 
 export const ensPublicClient: PublicClient = createPublicClient({

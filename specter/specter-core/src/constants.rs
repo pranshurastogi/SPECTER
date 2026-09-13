@@ -218,6 +218,31 @@ pub const SUI_MAINNET_RPC_FALLBACKS: &[&str] = &[
     "https://sui-mainnet.nodeinfra.com",
 ];
 
+/// Public RPC fallbacks for a source chain used in payment verification,
+/// keyed by the chain name used in `CHAIN_RPC_*` env vars and announcements.
+///
+/// Returns an empty slice for an unknown chain, which simply means "no public
+/// safety net" — the operator-configured endpoints are then the only ones.
+pub fn chain_public_fallbacks(chain: &str) -> &'static [&'static str] {
+    match chain {
+        "ethereum" => ETH_MAINNET_RPC_FALLBACKS,
+        "sepolia" => ETH_SEPOLIA_RPC_FALLBACKS,
+        "arbitrum" => &[
+            "https://sepolia-rollup.arbitrum.io/rpc",
+            "https://arbitrum-sepolia-rpc.publicnode.com",
+            "https://arbitrum-sepolia.drpc.org",
+        ],
+        "monad-testnet" => &[
+            "https://testnet-rpc.monad.xyz",
+            "https://rpc-testnet.monadinfra.com",
+            "https://monad-testnet.drpc.org",
+        ],
+        "base" => &["https://base.publicnode.com"],
+        "polygon" => &["https://polygon-bor-rpc.publicnode.com"],
+        _ => &[],
+    }
+}
+
 /// Public Sui **testnet** RPC fallbacks (JSON-RPC still enabled).
 pub const SUI_TESTNET_RPC_FALLBACKS: &[&str] = &[
     "https://sui-testnet-rpc.publicnode.com",
